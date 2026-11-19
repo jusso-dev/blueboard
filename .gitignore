@@ -8,3 +8,4 @@ next-env.d.ts
 .agent-state
 *.log
 .DS_Store
+.deploy/

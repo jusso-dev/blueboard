@@ -1,4 +1,4 @@
-// blueboard on Azure Container Apps.
+// Stage 2 of 2: blueboard on Azure Container Apps. Run infra/foundation.bicep first (registry + identities).
 //
 //   board         Next.js (UI, REST, SSE, MCP, ingest poller, action broker). Easy Auth (Entra) for humans;
 //                 /api/mcp and /.well-known are excluded so agents authenticate with bearer tokens.
@@ -14,7 +14,9 @@ targetScope = 'resourceGroup'
 
 param location string = resourceGroup().location
 param namePrefix string = 'blueboard'
-@description('Container image for the board (Dockerfile target "board").')
+@description('Login server of the registry from foundation.bicep, e.g. blueboardacrxyz.azurecr.io.')
+param acrLoginServer string
+@description('Container image for the board (Dockerfile target "board"), in that registry.')
 param boardImage string
 @description('Container image for the migrate job and agent (Dockerfile target "tools").')
 param toolsImage string
@@ -30,6 +32,9 @@ param foundryResource string
 param foundryAccountId string = ''
 param claudeModel string = 'claude-opus-5-5'
 param claudeFallbackModel string = 'claude-opus-4-8'
+@description('Contents of policy.json (protected users/devices/indicators, auto-approve list). Mounted read-only at /etc/blueboard/policy.json. Kept out of deployment history.')
+@secure()
+param policyJson string
 @description('Leave false until policy.json is reviewed: approved actions are recorded as dry runs.')
 param brokerExecute bool = false
 param ingestEnabled bool = true
@@ -42,14 +47,13 @@ resource logs 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
   properties: { sku: { name: 'PerGB2018' }, retentionInDays: 90 }
 }
 
-resource idBoard 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
+// Created by foundation.bicep (they need AcrPull before the apps can pull images).
+resource idBoard 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = {
   name: '${namePrefix}-id-board'
-  location: location
 }
 
-resource idAgent 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
+resource idAgent 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = {
   name: '${namePrefix}-id-agent'
-  location: location
 }
 
 resource pg 'Microsoft.DBforPostgreSQL/flexibleServers@2024-08-01' = {
@@ -117,6 +121,8 @@ resource board 'Microsoft.App/containerApps@2024-03-01' = {
     managedEnvironmentId: env.id
     configuration: {
       ingress: { external: true, targetPort: 3000, transport: 'auto', allowInsecure: false }
+      registries: [{ server: acrLoginServer, identity: idBoard.id }]
+      secrets: [{ name: 'policy-json', value: policyJson }]
     }
     template: {
       containers: [
@@ -130,12 +136,15 @@ resource board 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'EASY_AUTH', value: 'true' }
             { name: 'INGEST_ENABLED', value: string(ingestEnabled) }
             { name: 'BROKER_EXECUTE', value: string(brokerExecute) }
+            { name: 'BLUEBOARD_POLICY_FILE', value: '/etc/blueboard/policy.json' }
           ])
+          volumeMounts: [{ volumeName: 'policy', mountPath: '/etc/blueboard' }]
           probes: [
             { type: 'Liveness', httpGet: { path: '/api/healthz', port: 3000 }, periodSeconds: 30 }
           ]
         }
       ]
+      volumes: [{ name: 'policy', storageType: 'Secret', secrets: [{ secretRef: 'policy-json', path: 'policy.json' }] }]
       // SSE and the ingest poller are fine across replicas (Postgres NOTIFY fan-out + advisory lock).
       scale: { minReplicas: 1, maxReplicas: 3 }
     }
@@ -173,7 +182,13 @@ resource migrate 'Microsoft.App/jobs@2024-03-01' = {
   identity: { type: 'UserAssigned', userAssignedIdentities: { '${idBoard.id}': {} } }
   properties: {
     environmentId: env.id
-    configuration: { triggerType: 'Manual', replicaTimeout: 600, replicaRetryLimit: 1, manualTriggerConfig: { parallelism: 1, replicaCompletionCount: 1 } }
+    configuration: {
+      triggerType: 'Manual'
+      replicaTimeout: 600
+      replicaRetryLimit: 1
+      manualTriggerConfig: { parallelism: 1, replicaCompletionCount: 1 }
+      registries: [{ server: acrLoginServer, identity: idBoard.id }]
+    }
     template: {
       containers: [
         {
@@ -194,7 +209,9 @@ resource enrichment 'Microsoft.App/containerApps@2024-03-01' = {
   identity: { type: 'UserAssigned', userAssignedIdentities: { '${idAgent.id}': {} } }
   properties: {
     managedEnvironmentId: env.id
-    configuration: {}
+    configuration: {
+      registries: [{ server: acrLoginServer, identity: idAgent.id }]
+    }
     template: {
       containers: [
         {
@@ -230,6 +247,9 @@ resource agentFoundryRole 'Microsoft.Authorization/roleAssignments@2022-04-01' =
   }
 }
 
+output boardFqdn string = board.properties.configuration.ingress.fqdn
+output pgServerName string = pg.name
+output migrateJobName string = migrate.name
 output boardUrl string = 'https://${board.properties.configuration.ingress.fqdn}'
 output boardIdentityPrincipalId string = idBoard.properties.principalId
 output agentIdentityPrincipalId string = idAgent.properties.principalId

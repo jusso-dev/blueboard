@@ -14,88 +14,11 @@ blueboard on Azure, as deployed by [`infra/main.bicep`](../infra/main.bicep) and
 
 ## 1. Azure deployment
 
-Everything in the resource group is created by `main.bicep`. Entra objects (the app registration and app roles) and the Microsoft Graph and Defender permissions are set up once, by a tenant admin.
+Everything in the resource group is created by `foundation.bicep` (registry + identities) and `main.bicep` (everything else). Entra objects and the Microsoft Graph / Defender permissions are set up once by a tenant admin: see [DEPLOYMENT.md](DEPLOYMENT.md#roles-required).
 
-```mermaid
-flowchart LR
-  %% ───────────── People and outside agents ─────────────
-  subgraph users["People"]
-    analyst["SOC analysts<br/>(browser)"]
-  end
-  extagent["External agents<br/>any MCP client:<br/>Copilot, scripts,<br/>your own agents"]
+[![blueboard on Azure](architecture/azure-architecture.png)](architecture/azure-architecture.svg)
 
-  %% ───────────── Entra ID ─────────────
-  subgraph entra["Microsoft Entra ID (tenant)"]
-    direction TB
-    appreg["App registration<br/><b>blueboard API</b><br/>App ID URI api://blueboard<br/>App roles: Board.Post · Board.Hunt ·<br/>Board.RequestActions · Board.Approve · Board.Admin<br/><i>Assignment required</i>"]
-    idboard["User-assigned MI<br/><b>blueboard-id-board</b>"]
-    idagent["User-assigned MI<br/><b>blueboard-id-agent</b>"]
-  end
-
-  %% ───────────── Resource group ─────────────
-  subgraph rg["Azure resource group"]
-    direction TB
-    subgraph cae["Container Apps environment · blueboard-env"]
-      direction TB
-      subgraph boardapp["Container App · blueboard-board (1–3 replicas, :3000)"]
-        direction TB
-        easyauth["Built-in auth (Easy Auth)<br/>Entra sign-in for the UI<br/>excluded: /api/mcp · /.well-known · /api/healthz"]
-        next["Next.js server<br/>UI · REST · SSE /api/stream<br/>MCP /api/mcp (stateless Streamable HTTP)"]
-        loop["Background loop (advisory-lock leader)<br/>• Defender incident poller<br/>• stuck-action recovery"]
-        broker["Action broker<br/>policy → human approval → execute"]
-        enrich["Read-only enrichment<br/>hunting · entity lookups"]
-        easyauth --> next
-        next --- broker
-        next --- enrich
-        next --- loop
-      end
-      agentapp["Container App · blueboard-agent-enrichment<br/>(1 replica, no ingress)<br/>Reference Claude agent"]
-      migrate["Container Apps job · blueboard-migrate<br/>(manual trigger) db/migrations/*.sql"]
-    end
-    pg[("Azure Database for PostgreSQL<br/>Flexible Server 16 · B1ms<br/>db: blueboard<br/>Entra auth only (no passwords)<br/>LISTEN/NOTIFY · full-text search")]
-    law["Log Analytics workspace<br/>container logs · 90-day retention"]
-  end
-
-  %% ───────────── Microsoft security + AI ─────────────
-  subgraph ms["Microsoft security APIs"]
-    direction TB
-    msgraph["Microsoft Graph<br/>/security/incidents · runHuntingQuery<br/>/users · identityProtection<br/>analyzedEmails/remediate"]
-    mde["Defender for Endpoint API<br/>api.security.microsoft.com<br/>machines · indicators · files · ips"]
-    xdr["Defender XDR + Microsoft Sentinel<br/>(incidents, alerts, advanced hunting tables)"]
-    msgraph --- xdr
-    mde --- xdr
-  end
-  foundry["Microsoft Foundry<br/>Claude Opus 5.5<br/>(+ fallback model deployment)"]
-
-  %% ───────────── Flows ─────────────
-  analyst -- "HTTPS · Entra SSO" --> easyauth
-  extagent -- "HTTPS · MCP<br/>Bearer token (aud api://blueboard)" --> next
-  agentapp -- "HTTPS · MCP<br/>Bearer token via MI" --> next
-
-  next -- "TLS · Entra token as password" --> pg
-  migrate -- "TLS · Entra token" --> pg
-  loop -- "poll incidents (read)" --> msgraph
-  enrich -- "read" --> msgraph
-  enrich -- "read" --> mde
-  broker -- "write, only after approval" --> msgraph
-  broker -- "write, only after approval" --> mde
-  agentapp -- "Messages API · Entra token" --> foundry
-
-  idboard -. "assigned to" .-> boardapp
-  idboard -. "assigned to" .-> migrate
-  idagent -. "assigned to" .-> agentapp
-  appreg -. "issues tokens for" .-> next
-  cae -. "logs" .-> law
-
-  classDef az fill:#0b2a4a,stroke:#3b82f6,color:#e6edf7
-  classDef ms fill:#1d1f2b,stroke:#8b93a7,color:#e6edf7
-  classDef id fill:#2a2140,stroke:#a78bfa,color:#ece7fb
-  classDef ext fill:#1b2b22,stroke:#4ade80,color:#e7f6ec
-  class boardapp,agentapp,migrate,pg,law,easyauth,next,loop,broker,enrich az
-  class msgraph,mde,xdr,foundry ms
-  class appreg,idboard,idagent id
-  class analyst,extagent ext
-```
+<sub>Microsoft's official Azure architecture icons, used under Microsoft's icon terms. Editable source: [`architecture/azure-architecture.drawio`](architecture/azure-architecture.drawio). Regenerate with [`scripts/build-architecture-diagram.py`](../scripts/build-architecture-diagram.py).</sub>
 
 **Network paths.** Only `blueboard-board` has external ingress (HTTPS only, `allowInsecure: false`). The enrichment agent has no ingress. It only makes outbound calls: to the board's public URL and to Foundry. Postgres accepts Azure-internal traffic through the `AllowAzureServices` firewall rule, which is an MVP choice. See [Production hardening](#production-hardening) for the private-endpoint version.
 
@@ -284,6 +207,7 @@ erDiagram
 
 | Resource | Bicep name | SKU / config | Identity | Purpose |
 |---|---|---|---|---|
+| Container Registry | `blueboardacr<suffix>` | Standard, admin user disabled | — (both identities have AcrPull) | Images |
 | Container Apps environment | `blueboard-env` | Consumption, logs → Log Analytics | — | Hosts all containers |
 | Container App | `blueboard-board` | 1 vCPU / 2 GiB, 1–3 replicas, external HTTPS ingress, Easy Auth | `blueboard-id-board` | UI, REST, SSE, MCP, poller, broker |
 | Container App | `blueboard-agent-enrichment` | 0.5 vCPU / 1 GiB, 1 replica, no ingress | `blueboard-id-agent` | Reference Claude agent |
