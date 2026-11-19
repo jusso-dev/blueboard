@@ -14,6 +14,7 @@ web/dist/
 
 # deploy state (ids and names only, no secrets)
 .deploy/
+infra/out/
 
 # local
 .env*

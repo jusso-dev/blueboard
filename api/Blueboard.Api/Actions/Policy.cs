@@ -38,8 +38,13 @@ public sealed record Policy
     private static readonly JsonSerializerOptions Strict = new(Json.Options) { UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow };
 
     /// <summary>Loads BLUEBOARD_POLICY_FILE. No file configured means the built-in defaults; a configured file that is missing or invalid throws.</summary>
+    /// <summary>Where this policy was loaded from (setup page), or null for the built-in default. Not a policy key.</summary>
+    [JsonIgnore] public string? Source { get; init; }
+    /// <summary>Always false: a configured policy that is missing stops start-up (kept for the setup page's wording).</summary>
+    [JsonIgnore] public bool Missing => false;
+
     public static Policy Load(Settings settings) =>
-        settings.PolicyFile is { } path ? LoadFile(path) : new Policy();
+        settings.PolicyFile is { } path ? LoadFile(path) with { Source = settings.PolicySource ?? path } : new Policy();
 
     public static Policy LoadFile(string path)
     {

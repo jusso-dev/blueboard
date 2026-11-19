@@ -3,6 +3,7 @@ using Blueboard.Api.Core;
 using Blueboard.Api.Data;
 using Blueboard.Api.Graph;
 using Blueboard.Api.Webhooks;
+using Blueboard.Api.Ops;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
 using Npgsql;
@@ -13,11 +14,13 @@ namespace Blueboard.Api.Jobs;
 /// Background work. Timer triggers run on one instance at a time (singleton lock in host storage);
 /// a Postgres advisory lock makes that hold even across deployment slots.
 /// </summary>
-public sealed class Timers(Db db, Ingest ingest, Broker broker, WebhookService hooks, Settings settings, ILogger<Timers> log)
+public sealed class Timers(Db db, Ingest ingest, Broker broker, WebhookService hooks, Notifier notifier, AuditExporter auditExport, Settings settings, ILogger<Timers> log)
 {
     private const long LockKey = 7_340_001;
     /// <summary>The webhook loop has its own lock so a slow ingest never delays an agent's wake-up.</summary>
     private const long WebhookLockKey = 7_340_004;
+    private const long NotifyLockKey = 7_340_005;
+    private const long AuditLockKey = 7_340_006;
 
     [Function("ingest-incidents")]
     public async Task IngestIncidents([TimerTrigger("0 */1 * * * *")] TimerInfo timer, CancellationToken ct)
@@ -25,8 +28,20 @@ public sealed class Timers(Db db, Ingest ingest, Broker broker, WebhookService h
         if (!settings.IngestEnabled) return;
         await WithLock(LockKey, async () =>
         {
-            var r = await ingest.RunOnceAsync(ct);
-            log.LogInformation("ingest {@Result}", r);
+            var kv = new KvState(db);
+            try
+            {
+                var r = await ingest.RunOnceAsync(ct);
+                await kv.SetAsync(KvState.IngestLastSuccess, new Setup.IngestRun(DateTimeOffset.UtcNow, r.Fetched), ct);
+                log.LogInformation("ingest {@Result}", r);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // The setup page shows this; the message is Graph's error text, never a token.
+                var msg = ex is BoardException ? ex.Message : ex.GetType().Name;
+                await kv.SetAsync(KvState.IngestLastError, new Setup.IngestRun(DateTimeOffset.UtcNow, 0, msg.Length > 300 ? msg[..300] : msg), CancellationToken.None);
+                throw;
+            }
         }, ct);
     }
 
@@ -53,6 +68,30 @@ public sealed class Timers(Db db, Ingest ingest, Broker broker, WebhookService h
         {
             var r = await hooks.RunOnceAsync(ct);
             log.LogDebug("agent wake-ups {@Result}", r);
+        }, ct);
+    }
+
+    /// <summary>Approver notifications: every 15 seconds, so a new request is announced within 30.</summary>
+    [Function("notify-approvers")]
+    public async Task NotifyApprovers([TimerTrigger("*/15 * * * * *")] TimerInfo timer, CancellationToken ct)
+    {
+        if (notifier.Sinks().Count == 0) return;
+        await WithLock(NotifyLockKey, async () =>
+        {
+            var sent = await notifier.RunOnceAsync(ct);
+            if (sent > 0) log.LogInformation("sent {Count} approver notification(s)", sent);
+        }, ct);
+    }
+
+    /// <summary>Audit log to Sentinel (production profile): every minute, so rows land within about five.</summary>
+    [Function("export-audit")]
+    public async Task ExportAudit([TimerTrigger("45 */1 * * * *")] TimerInfo timer, CancellationToken ct)
+    {
+        if (!auditExport.Enabled) return;
+        await WithLock(AuditLockKey, async () =>
+        {
+            var n = await auditExport.RunOnceAsync(ct);
+            if (n > 0) log.LogInformation("exported {Count} audit row(s)", n);
         }, ct);
     }
 

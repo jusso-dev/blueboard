@@ -50,6 +50,15 @@ export type Action = {
   approvals?: string[];
   /** Set for kinds in the policy's confirm_target list: the approver types this name back to approve. */
   confirm_prompt?: string | null;
+  held_at?: string | null;
+};
+/** Shell banner state: broker mode, pause, whether a policy file is loaded. Cheap, polled with everything else. */
+export type BoardStatus = {
+  broker: "live" | "dry_run" | "paused";
+  paused_by: string | null;
+  paused_at: string | null;
+  policy: "loaded" | "default" | "missing";
+  held: number;
 };
 export type Me = { handle: string; display_name: string; kind: string; roles: string[] };
 

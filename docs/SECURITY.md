@@ -83,6 +83,7 @@ The trusted computing base is the Function App's code, its managed identity (`bl
 | T10 | **Stuck or duplicated execution** | Crash mid-action; double approval | Single `approved → running` transition in SQL (exactly-once claim) · recovery sweep never re-runs a `running` action, marks it "outcome unknown" | A crash after Defender accepted the call but before it was recorded: the analyst must check Defender. |
 | T11 | **Database compromise** | Attacker edits `actions` to inject parameters | Postgres accepts Entra tokens only (no passwords) · stored params are re-validated against the schema before execution · every query is parameterised (Npgsql) | An attacker with DB write could still forge approvals. Restrict the Entra admin; use a private endpoint. |
 | T12 | **Supply chain** | Malicious npm or NuGet package | Pinned `pnpm-lock.yaml` + `--frozen-lockfile`, pinned NuGet versions, warnings as errors, CI on GitHub-hosted runners | Review `pnpm audit` / `dotnet list package --vulnerable`; enable Dependabot. |
+| T12b | **Notification channel abuse** | Untrusted incident text turned into a phishing link in Teams or email; a webhook URL redirected to an attacker | No justification text leaves the board · titles and handles escaped for Adaptive Card markdown and HTML · the only link is the board's own deep link · https only, exact host allowlist, no redirects followed, responses not read · webhook bodies signed (HMAC-SHA256) · approval never possible from a notification · URLs and keys never logged | A compromised Teams channel or mailbox learns that an action is pending (no justification, no tokens). |
 | T13 | **Leaked deployment credentials** | Publishing profile, storage keys | FTP and basic-auth publishing are off on both apps, so deployments need Entra (`az functionapp deploy`, `az webapp deploy`) · no storage keys exist (`allowSharedKeyAccess: false`) · App Insights local auth disabled · no client secret on the app registration (public client with PKCE) | n/a |
 | T14 | **SSRF through agent webhooks** | An agent subscribes `https://169.254.169.254/...` or a name that later resolves inside the VNet | Webhooks off unless an admin sets `WEBHOOK_ALLOWED_HOSTS` (exact hosts) and `WEBHOOK_SIGNING_KEY` · https only, ports 443/8443, no IP literals, no credentials in the URL · every resolved address must be public (no private, loopback, link-local, CGNAT, multicast or NAT64) at subscribe time **and** at connect time (the socket connects only to the address just checked, defeating DNS rebinding) · no redirects, no proxy, 10 s timeout · payloads carry ids only, never message content | A compromised allowlisted host learns that something happened (ids and timing). Keep the allowlist short. |
 | T15 | **Demo switches in production** | `DEMO_MODE`/base-URL override points Graph calls (with the managed identity's token) at an attacker's host | The override is honoured only with `DEMO_MODE` **and** `DEV_AUTH`; both are refused when `WEBSITE_INSTANCE_ID` is set; base URLs without `DEMO_MODE` stop start-up; demo mode never requests a token; real mode keeps the exact-origin check (unit-tested) | n/a |
@@ -136,6 +137,9 @@ Regression tests: `api/Blueboard.Api.Tests` (policy, aliases, parameter validati
 | Microsoft Graph | `User-PasswordProfile.ReadWrite.All` | `reset_password` | **write, high impact** |
 | Microsoft Graph | `SecurityAnalyzedMessage.ReadWrite.All` | `purge_email` | **write, high impact** |
 | Microsoft Graph | `SecurityIncident.ReadWrite.All` | `update_incident`, `add_incident_comment` | **write** |
+| Microsoft Graph | `Mail.Send` (optional, `NOTIFY_MAIL=1`) | approver email from one shared mailbox | **write**: limit it with an [application access policy](OPERATIONS.md#email) |
+
+The Setup page and `blueboard doctor` show which of these the board's token actually carries, without calling a write endpoint ([OPERATIONS.md](OPERATIONS.md#setup-checklist-and-blueboard-doctor)).
 
 Agent identities get **no** Microsoft security permissions: three board app roles, plus `Cognitive Services User` on the Foundry resource for the reference agent. The Web App has no identity at all.
 
@@ -166,6 +170,8 @@ Further keys (`require_two_approvers`, `confirm_target`, `expiry_hours`, `limits
 - [ ] Agents use **managed identities or workload identity federation**, never client secrets.
 - [ ] `grant-permissions.sh` was run with `ACTIONS=` limited to the actions you broker, and reviewed by a second person.
 
+`BB_PROFILE=production ./infra/up.sh` covers the network, Key Vault, high availability and Sentinel export items below ([OPERATIONS.md](OPERATIONS.md#production-profile)).
+
 **Network**
 - [ ] Function App **VNet integration** (Flex Consumption supports it); PostgreSQL behind a **private endpoint**; `AllowAzureServices` firewall rule removed.
 - [ ] Function App reachability: browsers call it directly, so keep it public with token auth, or put both apps behind Front Door and restrict the Function App to Front Door and known agent egress IPs.
@@ -188,7 +194,7 @@ Further keys (`require_two_approvers`, `confirm_target`, `expiry_hours`, `limits
 
 ## Monitoring and detection
 
-Send these signals to Sentinel and alert on them:
+Send these signals to Sentinel and alert on them. The production profile ships `audit_log` to `BlueboardAudit_CL`, and [`infra/sentinel/`](../infra/sentinel) has analytics rule templates for the `audit_log` rows and the managed identity sign-ins below:
 
 | Signal | Source | Alert when |
 |---|---|---|
@@ -201,6 +207,8 @@ Send these signals to Sentinel and alert on them:
 | The board's managed identity used outside the board | Entra **managed identity sign-in logs** for `blueboard-id-api` | Sign-ins not attributed to the Function App resource |
 | Graph / MDE calls by the board identity | `MicrosoftGraphActivityLogs`, MDE `DeviceEvents` / action center | Isolation or disable volume above baseline |
 | API errors | Application Insights `exceptions` / `traces` | `database migration failed`, `MCP tool … failed`, repeated 401/403 from Graph |
+| Approvers not being told | `audit_log` `notify.failed` | Repeated failures: pending containment may sit unseen |
+| Broker paused, principal disabled | `audit_log` `broker.paused`, `principal.disabled` | Any, to confirm it was planned |
 
 Example Sentinel analytics rule for `limit.hit`, assuming `audit_log` rows are exported to a custom table `BlueboardAudit_CL`:
 
@@ -216,11 +224,11 @@ BlueboardAudit_CL
 
 If you suspect the board, an agent, or an approver account is compromised:
 
-1. **Stop writes** (seconds):
+1. **Stop writes** (seconds): a board admin opens **Admin → Participants → Pause broker** and gives a reason. Every instance stops executing at once; approvals are still recorded and held until an approver chooses Run now after you resume ([OPERATIONS.md](OPERATIONS.md#participants-and-the-broker-pause)). If the board itself can't be trusted or reached, use the app setting instead (needs Azure rights, restarts the app):
    ```sh
    az functionapp config appsettings set -g <rg> -n <api-name> --settings BROKER_EXECUTE=false
    ```
-2. **Cut the agent off:** disable its service principal in Entra (Enterprise applications → the agent → Properties → *Enabled for users to sign-in* = No), or remove its `Board.*` role assignments. The board re-reads roles on every request, so this takes effect at once for new tokens.
+2. **Cut the agent off:** disable its principal on **Admin → Participants** (its next call is refused), then disable its service principal in Entra (Enterprise applications → the agent → Properties → *Enabled for users to sign-in* = No), or remove its `Board.*` role assignments. The board re-reads roles on every request, so this takes effect at once for new tokens.
 3. **Remove write permissions** from `blueboard-id-api` (Entra → Enterprise applications → Managed identities → blueboard-id-api → Permissions → revoke the write permissions). Existing tokens expire within about an hour; restart the Function App to drop cached tokens immediately.
 4. **Review:** `select * from actions where created_at > now() - interval '24 hours' order by created_at;` and `audit_log` for the same window. Check Defender's Action center for anything the board ran.
 5. **Reverse** any harmful actions in Defender or Entra: release isolation, re-enable accounts, delete the custom indicators.

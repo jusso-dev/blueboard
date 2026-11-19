@@ -1,0 +1,59 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "description": "blueboard: Sentinel analytics rule (board-identity-misuse). Generated from docs/SECURITY.md detections."
+  },
+  "parameters": {
+    "workspace": {
+      "type": "string",
+      "metadata": {
+        "description": "Log Analytics workspace with Microsoft Sentinel enabled"
+      }
+    }
+  },
+  "resources": [
+    {
+      "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+      "apiVersion": "2023-02-01",
+      "name": "[concat(parameters('workspace'), '/Microsoft.SecurityInsights/c1469c80-1202-52a0-b7ba-9deee3fa7581')]",
+      "kind": "Scheduled",
+      "location": "[resourceGroup().location]",
+      "properties": {
+        "displayName": "blueboard: board managed identity signed in from outside the board",
+        "description": "The board identity (blueboard-id-api) holds tenant-wide Graph and Defender permissions. A sign-in not attributed to the board Function App resource suggests its credential is being used elsewhere. Set the identity name if you changed namePrefix.",
+        "severity": "High",
+        "enabled": true,
+        "query": "let boardIdentity = \"blueboard-id-api\";\nAADManagedIdentitySignInLogs\n| where ServicePrincipalName == boardIdentity\n| where ResourceIdentity !has \"Microsoft.Web/sites\"\n| project TimeGenerated, ServicePrincipalName, ResourceDisplayName, ResourceIdentity, IPAddress",
+        "queryFrequency": "PT15M",
+        "queryPeriod": "PT15M",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "suppressionDuration": "PT1H",
+        "suppressionEnabled": false,
+        "tactics": [
+          "CredentialAccess",
+          "PrivilegeEscalation"
+        ],
+        "techniques": [
+          "T1528"
+        ],
+        "incidentConfiguration": {
+          "createIncident": true,
+          "groupingConfiguration": {
+            "enabled": false,
+            "reopenClosedIncident": false,
+            "lookbackDuration": "PT5H",
+            "matchingMethod": "AllEntities",
+            "groupByEntities": [],
+            "groupByAlertDetails": [],
+            "groupByCustomDetails": []
+          }
+        },
+        "eventGroupingSettings": {
+          "aggregationKind": "AlertPerResult"
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,56 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "description": "blueboard: Sentinel analytics rule (notify-failed). Generated from docs/SECURITY.md detections."
+  },
+  "parameters": {
+    "workspace": {
+      "type": "string",
+      "metadata": {
+        "description": "Log Analytics workspace with Microsoft Sentinel enabled"
+      }
+    }
+  },
+  "resources": [
+    {
+      "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+      "apiVersion": "2023-02-01",
+      "name": "[concat(parameters('workspace'), '/Microsoft.SecurityInsights/863f3657-74cb-552d-b3dc-f00bd3feb50a')]",
+      "kind": "Scheduled",
+      "location": "[resourceGroup().location]",
+      "properties": {
+        "displayName": "blueboard: approver notifications are failing",
+        "description": "The board could not deliver approval notifications, so pending containment may sit unseen.",
+        "severity": "Medium",
+        "enabled": true,
+        "query": "BlueboardAudit_CL\n| where Event == \"notify.failed\"\n| summarize Failures = count(), Sinks = make_set(tostring(Detail.sink)) by bin(TimeGenerated, 15m)\n| where Failures >= 3",
+        "queryFrequency": "PT15M",
+        "queryPeriod": "PT15M",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "suppressionDuration": "PT1H",
+        "suppressionEnabled": false,
+        "tactics": [
+          "Impact"
+        ],
+        "techniques": [],
+        "incidentConfiguration": {
+          "createIncident": true,
+          "groupingConfiguration": {
+            "enabled": false,
+            "reopenClosedIncident": false,
+            "lookbackDuration": "PT5H",
+            "matchingMethod": "AllEntities",
+            "groupByEntities": [],
+            "groupByAlertDetails": [],
+            "groupByCustomDetails": []
+          }
+        },
+        "eventGroupingSettings": {
+          "aggregationKind": "AlertPerResult"
+        }
+      }
+    }
+  ]
+}

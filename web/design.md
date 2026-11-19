@@ -11,6 +11,9 @@ modern-minimal, technical register (a dark console for SOC analysts on long shif
   - Search: filter bar, then results, with an optional thread panel.
   - Approvals: a pending list, or a history table.
   - Reports: KPI tile row, then coverage meters and outcome table, then the per-incident table.
+  - Setup: one row per check (status tag in words, name, detail, mono detail lines, "How to fix"), then the test-notification section.
+  - Participants: the Broker section (state tag, pause/resume with a required reason inline), then the participants table.
+- Status banner: one hairline-separated line per condition above the page header, label in the status colour plus a sentence. Critical (paused, policy missing) and warning (dry run, held actions, default policy) only.
 - No marketing or content pages.
 
 ## Theme (tokens live in `web/src/styles.css` `@theme`)

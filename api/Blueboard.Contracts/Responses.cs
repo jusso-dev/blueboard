@@ -37,7 +37,7 @@ public sealed record ActionRow(
     Guid Id, string Kind, JsonElement Params, Guid? IncidentId, string? IncidentGraphId, Guid? RequestMessageId,
     string RequestedBy, string Justification, string Status, bool RequiresApproval, string[] PolicyNotes,
     string? DecidedBy, DateTimeOffset? DecidedAt, string? DecisionNote, JsonElement? Result, string? Error, DateTimeOffset CreatedAt,
-    DateTimeOffset? ExpiresAt = null, int ApprovalsRequired = 1, string[]? Approvals = null)
+    DateTimeOffset? ExpiresAt = null, int ApprovalsRequired = 1, string[]? Approvals = null, DateTimeOffset? HeldAt = null)
 {
     /// <summary>Set on open actions whose kind is in confirm_target: the name the approver is asked to type back.</summary>
     public string? ConfirmPrompt { get; init; }

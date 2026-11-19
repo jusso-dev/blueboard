@@ -6,6 +6,7 @@ using Blueboard.Api.Data;
 using Blueboard.Api.Graph;
 using Blueboard.Api.Mcp;
 using Blueboard.Api.Webhooks;
+using Blueboard.Api.Ops;
 using Microsoft.Azure.Functions.Worker.Builder;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -39,6 +40,13 @@ builder.Services.AddSingleton<WebhookService>(sp => new WebhookService(
     sp.GetRequiredService<Db>(), sp.GetRequiredService<Audit>(), sp.GetRequiredService<BoardService>(),
     sp.GetRequiredService<SystemPrincipal>(), settings, sp.GetRequiredService<ILogger<WebhookService>>()));
 builder.Services.AddSingleton<Migrator>();
+// Outbound notifications and audit export: no redirects (a redirect could leave the host allowlist), short timeouts,
+// and no HttpClient request logging (it would write the webhook URL, which is a secret, to the logs).
+static HttpMessageHandler NoRedirects() => new SocketsHttpHandler { AllowAutoRedirect = false, ConnectTimeout = TimeSpan.FromSeconds(10) };
+builder.Services.AddHttpClient<Notifier>().ConfigurePrimaryHttpMessageHandler(NoRedirects).RemoveAllLoggers();
+builder.Services.AddHttpClient<AuditExporter>().ConfigurePrimaryHttpMessageHandler(NoRedirects).RemoveAllLoggers();
+builder.Services.AddSingleton<Setup>();
+builder.Services.AddSingleton<Participants>();
 builder.Services.AddHostedService<MigrateOnStart>();
 builder.Services.AddSingleton<Blueboard.Api.Http.Endpoint>();
 

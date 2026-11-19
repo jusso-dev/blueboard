@@ -40,7 +40,9 @@ else
 fi
 
 log "Resource providers"
-for ns in Microsoft.Web Microsoft.Storage Microsoft.DBforPostgreSQL Microsoft.OperationalInsights Microsoft.Insights Microsoft.ManagedIdentity; do
+providers="Microsoft.Web Microsoft.Storage Microsoft.DBforPostgreSQL Microsoft.OperationalInsights Microsoft.Insights Microsoft.ManagedIdentity"
+[[ "${BB_PROFILE:-mvp}" == "production" ]] && providers="$providers Microsoft.Network Microsoft.KeyVault Microsoft.App"
+for ns in $providers; do
   state="$(az provider show -n "$ns" --query registrationState -o tsv 2>/dev/null || echo Unknown)"
   if [[ "$state" == "Registered" ]]; then ok "$ns"; else note "$ns is $state: deploy.sh will register it (needs */register/action)"; fi
 done

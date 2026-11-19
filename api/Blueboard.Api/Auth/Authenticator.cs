@@ -30,17 +30,20 @@ public sealed class Authenticator(Settings settings, TokenValidator tokens, Db d
 
     private async Task<Principal> DevPrincipalAsync(string handle, CancellationToken ct)
     {
-        Principal p;
-        // Scoped, not disposed twice: a data-source reader's second dispose can hit a pooled connection another request now owns.
-        await using (var cmd = db.Command("select id, handle, display_name, kind, roles, enabled from principals where handle = @h").With("h", handle))
-        await using (var r = await cmd.ExecuteReaderAsync(ct))
-        {
-            if (!await r.ReadAsync(ct) || !r.GetBoolean(5)) throw BoardException.Unauthorized($"unknown dev principal {handle}");
-            p = new Principal(r.GetGuid(0), r.GetString(1), r.GetString(2), r.GetString(3), r.GetFieldValue<string[]>(4));
-        }
-        await using (var touch = db.Command(string.Format(TouchSql, "id = @id")).With("r", p.Roles).With("id", p.Id))
-            await touch.ExecuteNonQueryAsync(ct);
-        return p;
+        // Local development: one statement reads the principal and records activity like the Entra path does (at most
+        // once a minute, PERF-01), so last-seen works on the admin pages. One statement keeps the pooled connection simple.
+        await using var cmd = db.Command("""
+            with p as (select id from principals where handle = @h),
+            touched as (
+              update principals t set last_seen_at = now() from p
+              where t.id = p.id and t.enabled and (t.last_seen_at is null or t.last_seen_at < now() - interval '1 minute')
+              returning t.id)
+            select id, handle, display_name, kind, roles, enabled from principals where handle = @h
+            """).With("h", handle);
+        await using var r = await cmd.ExecuteReaderAsync(ct);
+        if (!await r.ReadAsync(ct)) throw BoardException.Unauthorized($"unknown dev principal {handle}");
+        if (!r.GetBoolean(5)) throw BoardException.Forbidden("principal disabled");
+        return new Principal(r.GetGuid(0), r.GetString(1), r.GetString(2), r.GetString(3), r.GetFieldValue<string[]>(4));
     }
 
     /// <summary>

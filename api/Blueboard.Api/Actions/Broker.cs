@@ -15,18 +15,23 @@ public static class ActionStatus
     public static readonly string[] Open = ["pending_approval", "approved_once"];
 }
 
+/// <summary>The broker pause switch, stored in kv_state so every instance sees it on the next execute.</summary>
+public sealed record BrokerPause(bool Paused, string? By = null, DateTimeOffset? At = null, string? Reason = null);
+
 /// <summary>
 /// Request → policy → (human approval) → execute exactly once → post the result. Every step is audited.
 /// Destructive actions never run without a decision from a human approver who isn't the requester.
 /// </summary>
 public sealed class Broker(Db db, Audit audit, BoardService board, MsClient ms, Settings settings, Policy policy, SystemPrincipal system, RateLimiter? limiter = null)
 {
+    private readonly KvState _kv = new(db);
     private const string Select = """
         select a.id, a.kind, a.params::text as params, a.incident_id, i.graph_id as incident_graph_id, a.request_message_id,
                rp.handle as requested_by, a.justification, a.status, a.requires_approval, a.policy_notes,
                dp.handle as decided_by, a.decided_at, a.decision_note, a.result::text as result, a.error, a.created_at,
                a.expires_at, a.approvals_required,
-               array(select ap.handle from action_approvals x join principals ap on ap.id = x.approver_id where x.action_id = a.id order by x.at) as approvals
+               array(select ap.handle from action_approvals x join principals ap on ap.id = x.approver_id where x.action_id = a.id order by x.at) as approvals,
+               a.held_at
         from actions a
         join principals rp on rp.id = a.requested_by
         left join principals dp on dp.id = a.decided_by
@@ -38,7 +43,7 @@ public sealed class Broker(Db db, Audit audit, BoardService board, MsClient ms, 
         r.Get<Guid?>("request_message_id"), r.GetString(6), r.GetString(7), r.GetString(8), r.GetBoolean(9), r.GetFieldValue<string[]>(10),
         r.Get<string>("decided_by"), r.Get<DateTimeOffset?>("decided_at"), r.Get<string>("decision_note"),
         r.Get<string>("result") is { } res ? JsonDocument.Parse(res).RootElement.Clone() : null, r.Get<string>("error"), r.GetFieldValue<DateTimeOffset>(16),
-        r.Get<DateTimeOffset?>("expires_at"), r.GetInt32(18), r.GetFieldValue<string[]>(19));
+        r.Get<DateTimeOffset?>("expires_at"), r.GetInt32(18), r.GetFieldValue<string[]>(19), r.Get<DateTimeOffset?>("held_at"));
 
     public async Task<ActionRow?> GetAsync(Guid id, CancellationToken ct = default)
     {
@@ -50,10 +55,12 @@ public sealed class Broker(Db db, Audit audit, BoardService board, MsClient ms, 
     /// <summary>Actions, newest first. status: one status, or "open" for everything waiting on a human (pending or 1 of 2).</summary>
     public async Task<IReadOnlyList<ActionRow>> ListAsync(string? status, CancellationToken ct = default)
     {
+        // "held": approved while the broker was paused, waiting for an approver's Run now.
         await using var cmd = status switch
         {
             null => db.Command($"{Select} order by a.created_at desc limit 100"),
             "open" => db.Command($"{Select} where a.status = any(@s) order by a.created_at desc limit 100").With("s", ActionStatus.Open),
+            "held" => db.Command($"{Select} where a.status = 'approved' and a.held_at is not null order by a.created_at desc limit 100"),
             _ => db.Command($"{Select} where a.status = @s order by a.created_at desc limit 100").With("s", status),
         };
         var list = new List<ActionRow>();
@@ -330,11 +337,59 @@ public sealed class Broker(Db db, Audit audit, BoardService board, MsClient ms, 
         return n;
     }
 
-    /// <summary>Run an approved action exactly once (claimed by the approved → running transition).</summary>
+
+    public async Task<BrokerPause> GetPauseAsync(CancellationToken ct = default) =>
+        await _kv.GetAsync<BrokerPause>(KvState.BrokerPaused, ct) ?? new BrokerPause(false);
+
+    /// <summary>Admin pause switch. Read from the database on every execute, so it holds on every instance at once.</summary>
+    public async Task<BrokerPause> SetPauseAsync(Principal p, bool paused, string? reason, CancellationToken ct = default)
+    {
+        p.Require(Roles.Admin);
+        if (!p.IsHuman) throw BoardException.Forbidden("only people can pause or resume the broker");
+        reason = reason?.Trim();
+        if (reason is not { Length: >= 5 and <= 500 }) throw new BoardException("reason must be 5–500 characters");
+        var state = new BrokerPause(paused, p.Handle, DateTimeOffset.UtcNow, reason);
+        await _kv.SetAsync(KvState.BrokerPaused, state, ct);
+        await audit.WriteAsync(p.Id, paused ? "broker.paused" : "broker.resumed", null, new { reason }, ct);
+        await board.PostAsync(await system.GetAsync(ct), new PostInput("general", paused
+            ? $"@{p.Handle} **paused the broker**: no action runs until an admin resumes it. Approvals are still recorded. Reason: {reason}"
+            : $"@{p.Handle} **resumed the broker**. Actions approved during the pause wait for an approver to choose Run now. Reason: {reason}",
+            "status", Json.Element(new { state = paused ? "broker_paused" : "broker_resumed" })), system: true, ct);
+        return state;
+    }
+
+    /// <summary>Run an action that was approved while the broker was paused. A human approver who isn't the requester.</summary>
+    public async Task<ActionRow> RunNowAsync(Principal p, Guid id, CancellationToken ct = default)
+    {
+        if (!p.IsHuman || !p.Has(Roles.Approver)) throw BoardException.Forbidden("only human approvers can run held actions");
+        var pause = await GetPauseAsync(ct);
+        if (pause.Paused) throw BoardException.Conflict($"broker paused by @{pause.By}");
+        var a = await GetAsync(id, ct) ?? throw BoardException.NotFound("action");
+        if (a.RequestedBy == p.Handle) throw BoardException.Forbidden("you cannot run your own request");
+        await using (var cmd = db.Command("update actions set held_at = null, updated_at = now() where id = @id and status = 'approved' and held_at is not null returning id").With("id", id))
+            if (await cmd.ExecuteScalarAsync(ct) is null) throw BoardException.Conflict(a.Status == "approved" ? "action is not held" : $"action is {a.Status}");
+        await audit.WriteAsync(p.Id, "action.released", id.ToString(), null, ct);
+        await ExecuteAsync(id, ct);
+        return (await GetAsync(id, ct))!;
+    }
+
+    /// <summary>
+    /// Run an approved action exactly once (claimed by the approved → running transition). The pause switch is part
+    /// of the claim, so a pause set on any instance stops the next execution everywhere; the action is held instead.
+    /// </summary>
     public async Task ExecuteAsync(Guid id, CancellationToken ct = default)
     {
-        await using (var claim = db.Command("update actions set status = 'running', started_at = now(), updated_at = now() where id = @id and status = 'approved' returning id").With("id", id))
-            if (await claim.ExecuteScalarAsync(ct) is null) return;
+        await using (var claim = db.Command($"""
+            update actions set status = 'running', started_at = now(), updated_at = now()
+            where id = @id and status = 'approved' and held_at is null
+              and not exists (select 1 from kv_state where key = '{KvState.BrokerPaused}' and (value ->> 'paused')::boolean)
+            returning id
+            """).With("id", id))
+            if (await claim.ExecuteScalarAsync(ct) is null)
+            {
+                await HoldIfPausedAsync(id, ct);
+                return;
+            }
         var a = (await GetAsync(id, ct))!;
         var def = Catalog.Get(a.Kind);
         var approvers = a.Approvals is { Length: > 0 } list ? string.Join(" and ", list) : a.DecidedBy;
@@ -366,6 +421,19 @@ public sealed class Broker(Db db, Audit audit, BoardService board, MsClient ms, 
             Json.Element(new { action_id = id, status, error }), a.RequestMessageId, a.IncidentId?.ToString()), system: true, ct);
     }
 
+    private async Task HoldIfPausedAsync(Guid id, CancellationToken ct)
+    {
+        var pause = await GetPauseAsync(ct);
+        if (!pause.Paused) return;
+        await using (var hold = db.Command("update actions set held_at = now(), updated_at = now() where id = @id and status = 'approved' and held_at is null returning id").With("id", id))
+            if (await hold.ExecuteScalarAsync(ct) is null) return;
+        var a = (await GetAsync(id, ct))!;
+        await audit.WriteAsync(null, "action.held", id.ToString(), new { paused_by = pause.By }, ct);
+        await board.PostAsync(await system.GetAsync(ct), new PostInput("containment",
+            $"**{Catalog.Get(a.Kind).Title}** is approved but **held**: broker paused by @{pause.By}. Once the broker is resumed, an approver can choose Run now on the Approvals page.",
+            "status", Json.Element(new { state = "action_held", action_id = id }), a.RequestMessageId, a.IncidentId?.ToString()), system: true, ct);
+    }
+
     /// <summary>
     /// Recovery for actions a crash left behind. approved &gt; 1 min: never started, safe to run.
     /// running &gt; 10 min: may or may not have reached Defender, so never re-run blindly: mark failed and say so.
@@ -373,7 +441,7 @@ public sealed class Broker(Db db, Audit audit, BoardService board, MsClient ms, 
     public async Task<(int Resumed, int Interrupted)> RecoverAsync(CancellationToken ct = default)
     {
         var stuck = new List<Guid>();
-        await using (var cmd = db.Command("select id from actions where status = 'approved' and updated_at < now() - interval '1 minute' order by created_at limit 20"))
+        await using (var cmd = db.Command("select id from actions where status = 'approved' and held_at is null and updated_at < now() - interval '1 minute' order by created_at limit 20"))
         await using (var r = await cmd.ExecuteReaderAsync(ct))
             while (await r.ReadAsync(ct)) stuck.Add(r.GetGuid(0));
         foreach (var id in stuck) await ExecuteAsync(id, ct);
