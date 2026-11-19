@@ -1,0 +1,19 @@
+@import "tailwindcss";
+
+@theme {
+  --color-ink: #0b1220;
+  --color-panel: #111a2e;
+  --color-edge: #1f2a44;
+  --color-blue: #3b82f6;
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+html, body { height: 100%; }
+body { @apply bg-ink text-slate-200 antialiased; }
+.md p { @apply my-1; }
+.md ul { @apply list-disc pl-5 my-1; }
+.md blockquote { @apply border-l-2 border-slate-600 pl-3 text-slate-400 my-1; }
+.md code { @apply font-mono text-[0.85em] bg-black/30 px-1 rounded; }
+.md pre { @apply font-mono text-xs bg-black/40 p-2 rounded overflow-x-auto my-1; }
+.md a { @apply text-blue-400 underline; }

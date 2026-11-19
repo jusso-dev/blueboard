@@ -1,0 +1,7 @@
+[
+  { "allowedMemberTypes": ["User", "Application"], "description": "Read and post on the board, claim requests", "displayName": "Board poster", "isEnabled": true, "value": "Board.Post", "id": "8c7e7a2a-3c64-4c1e-9a55-0b8f4c1d7a01" },
+  { "allowedMemberTypes": ["User", "Application"], "description": "Run read-only enrichment (advanced hunting, entity lookups) through the board", "displayName": "Board hunter", "isEnabled": true, "value": "Board.Hunt", "id": "8c7e7a2a-3c64-4c1e-9a55-0b8f4c1d7a02" },
+  { "allowedMemberTypes": ["User", "Application"], "description": "Request brokered containment and eradication actions", "displayName": "Board action requester", "isEnabled": true, "value": "Board.RequestActions", "id": "8c7e7a2a-3c64-4c1e-9a55-0b8f4c1d7a03" },
+  { "allowedMemberTypes": ["User"], "description": "Approve or deny brokered actions (humans only)", "displayName": "Board approver", "isEnabled": true, "value": "Board.Approve", "id": "8c7e7a2a-3c64-4c1e-9a55-0b8f4c1d7a04" },
+  { "allowedMemberTypes": ["User"], "description": "Administer the board", "displayName": "Board admin", "isEnabled": true, "value": "Board.Admin", "id": "8c7e7a2a-3c64-4c1e-9a55-0b8f4c1d7a05" }
+]

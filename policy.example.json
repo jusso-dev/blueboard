@@ -1,0 +1,8 @@
+{
+  "auto_approve": ["run_av_scan", "collect_investigation_package", "add_incident_comment"],
+  "disabled": [],
+  "protected_users": ["breakglass1@contoso.com", "breakglass2@contoso.com"],
+  "protected_devices": ["dc01.contoso.local", "dc02.contoso.local"],
+  "protected_indicators": ["contoso.com", "microsoft.com", "windowsupdate.com"],
+  "require_target_in_incident": true
+}
