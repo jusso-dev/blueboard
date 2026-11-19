@@ -8,17 +8,17 @@ using Blueboard.Api.Graph;
 namespace Blueboard.Api.Board;
 
 public sealed record SummaryVerdict(
-    Guid MessageId, string Classification, double Confidence, string? Determination,
+    Guid MessageId, Guid ThreadId, string Classification, double Confidence, string? Determination,
     string Author, string AuthorName, string AuthorKind, DateTimeOffset At, string[] NotInEvidence);
 
 public sealed record SummaryIoc(
-    string Kind, string Value, string Verdict, DateTimeOffset FirstSeen, string[] Reporters, Guid[] MessageIds,
+    string Kind, string Value, string Verdict, DateTimeOffset FirstSeen, string[] Reporters, Guid[] MessageIds, Guid ThreadId,
     bool InEvidence, bool NotInEvidence);
 
 public sealed record SummaryAction(Guid Id, string Kind, string Title, string Status, string StatusText, string RequestedBy, Guid? RequestMessageId, DateTimeOffset CreatedAt);
-public sealed record SummaryAsk(Guid MessageId, string Excerpt, string Author, DateTimeOffset CreatedAt, long AgeSeconds);
+public sealed record SummaryAsk(Guid MessageId, Guid ThreadId, string Excerpt, string Author, DateTimeOffset CreatedAt, long AgeSeconds);
 public sealed record SummaryEntity(string Kind, string Id, string Label);
-public sealed record SummaryStep(string Id, string Title, string Stage, string State, Guid? MessageId, string? ClaimedBy, string? SuggestedAction);
+public sealed record SummaryStep(string Id, string Title, string Stage, string State, Guid? MessageId, Guid? ThreadId, string? ClaimedBy, string? SuggestedAction);
 public sealed record SummaryPlaybook(string Id, string Title, int Done, int Total, IReadOnlyList<SummaryStep> Steps);
 
 public sealed record IncidentSummaryResult(
@@ -95,14 +95,14 @@ public static partial class IncidentSummary
         var ordered = messages.OrderBy(m => long.Parse(m.Seq)).ToList();
 
         var verdicts = ordered.Where(m => m.Type == "verdict" && Str(m.Payload, "classification") is not null)
-            .Select(m => new SummaryVerdict(m.Id, Str(m.Payload, "classification")!, Num(m.Payload, "confidence") ?? 0, Str(m.Payload, "determination"),
+            .Select(m => new SummaryVerdict(m.Id, m.ParentId ?? m.Id, Str(m.Payload, "classification")!, Num(m.Payload, "confidence") ?? 0, Str(m.Payload, "determination"),
                 m.Author.Handle, m.Author.DisplayName, m.Author.Kind, m.CreatedAt,
                 Identifiers(m.Body).Where(v => !Grounded(v)).ToArray()))
             .ToList();
         var latestPerAuthor = verdicts.GroupBy(v => v.Author).Select(g => g.Last()).OrderBy(v => v.At).ToList();
         var disagree = latestPerAuthor.Select(v => v.Classification).Distinct().Count() > 1;
 
-        var iocs = new Dictionary<(string, string), (string Kind, string Value, string Verdict, DateTimeOffset First, List<string> Reporters, List<Guid> Ids)>();
+        var iocs = new Dictionary<(string, string), (string Kind, string Value, string Verdict, DateTimeOffset First, List<string> Reporters, List<Guid> Ids, Guid Thread)>();
         foreach (var m in ordered.Where(m => m.Type == "ioc"))
         {
             if (m.Payload is not { } p || !p.TryGetProperty("indicators", out var list) || list.ValueKind != JsonValueKind.Array) continue;
@@ -111,7 +111,7 @@ public static partial class IncidentSummary
                 if (Str(i, "kind") is not { } kind || Str(i, "value") is not { Length: > 0 } value) continue;
                 var verdict = Str(i, "verdict") ?? "unknown";
                 var key = (kind, value.Trim().ToLowerInvariant());
-                if (!iocs.TryGetValue(key, out var e)) e = (kind, value.Trim(), verdict, m.CreatedAt, [], []);
+                if (!iocs.TryGetValue(key, out var e)) e = (kind, value.Trim(), verdict, m.CreatedAt, [], [], m.ParentId ?? m.Id);
                 if (VerdictRank.GetValueOrDefault(verdict) > VerdictRank.GetValueOrDefault(e.Verdict)) e.Verdict = verdict;
                 if (!e.Reporters.Contains(m.Author.Handle)) e.Reporters.Add(m.Author.Handle);
                 if (!e.Ids.Contains(m.Id)) e.Ids.Add(m.Id);
@@ -119,7 +119,7 @@ public static partial class IncidentSummary
             }
         }
         var iocRows = iocs.Values
-            .Select(e => new SummaryIoc(e.Kind, e.Value, e.Verdict, e.First, [.. e.Reporters], [.. e.Ids], InEvidence(e.Value.ToLowerInvariant()), !Grounded(e.Value.ToLowerInvariant())))
+            .Select(e => new SummaryIoc(e.Kind, e.Value, e.Verdict, e.First, [.. e.Reporters], [.. e.Ids], e.Thread, InEvidence(e.Value.ToLowerInvariant()), !Grounded(e.Value.ToLowerInvariant())))
             .OrderByDescending(i => VerdictRank.GetValueOrDefault(i.Verdict)).ThenBy(i => i.FirstSeen).ToList();
 
         var actionRows = actions.OrderBy(a => a.CreatedAt)
@@ -128,7 +128,7 @@ public static partial class IncidentSummary
             .ToList();
 
         var asks = ordered.Where(m => m.Type == "question" && m.ClaimState == "open" && !PlaybookRunner.IsChecklist(m.Payload))
-            .Select(m => new SummaryAsk(m.Id, Excerpt(m.Body), m.Author.Handle, m.CreatedAt, (long)Math.Max(0, (now - m.CreatedAt).TotalSeconds)))
+            .Select(m => new SummaryAsk(m.Id, m.ParentId ?? m.Id, Excerpt(m.Body), m.Author.Handle, m.CreatedAt, (long)Math.Max(0, (now - m.CreatedAt).TotalSeconds)))
             .ToList();
 
         var chips = new List<SummaryEntity>();
@@ -152,10 +152,10 @@ public static partial class IncidentSummary
         var byStep = posted.GroupBy(p => Str(p.Checklist, "step") ?? "").ToDictionary(g => g.Key, g => g.First().Message);
         IEnumerable<SummaryStep> steps = playbook is not null
             ? playbook.Steps.Select(s => byStep.TryGetValue(s.Id, out var m)
-                ? new SummaryStep(s.Id, s.Title, s.Stage, m.ClaimState, m.Id, m.ClaimedBy, s.SuggestedAction)
-                : new SummaryStep(s.Id, s.Title, s.Stage, "hidden", null, null, s.SuggestedAction))
+                ? new SummaryStep(s.Id, s.Title, s.Stage, m.ClaimState, m.Id, m.ParentId ?? m.Id, m.ClaimedBy, s.SuggestedAction)
+                : new SummaryStep(s.Id, s.Title, s.Stage, "hidden", null, null, null, s.SuggestedAction))
             : posted.Select(p => new SummaryStep(Str(p.Checklist, "step") ?? "", Excerpt(p.Message.Body), Str(p.Checklist, "stage") ?? "",
-                p.Message.ClaimState, p.Message.Id, p.Message.ClaimedBy, Str(p.Checklist, "suggested_action")));
+                p.Message.ClaimState, p.Message.Id, p.Message.ParentId ?? p.Message.Id, p.Message.ClaimedBy, Str(p.Checklist, "suggested_action")));
         var list = steps.ToList();
         var id = playbook?.Id ?? Str(posted[0].Checklist, "playbook") ?? "";
         var title = playbook?.Title ?? Str(posted[0].Checklist, "playbook_title") ?? id;

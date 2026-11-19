@@ -31,6 +31,66 @@ export type Incident = {
   message_count: number;
   web_url: string | null;
 };
+/** One row of GET /incidents?view=queue. */
+export type QueueRow = {
+  id: string;
+  graph_id: string;
+  display_name: string;
+  severity: string;
+  status: string;
+  web_url: string | null;
+  alert_count: number;
+  verdict: string | null;
+  verdict_confidence: number | null;
+  verdict_by: string | null;
+  open_asks: number;
+  human_asks: number;
+  pending_actions: number;
+  active_claims: string[];
+  last_activity_at: string;
+  created_at: string;
+  mine: boolean;
+  needs_human: boolean;
+};
+
+export type SummaryEntity = { kind: "user" | "device"; id: string; label: string };
+export type SummaryVerdict = {
+  message_id: string;
+  thread_id: string;
+  classification: string;
+  confidence: number;
+  determination: string | null;
+  author: string;
+  author_name: string;
+  author_kind: string;
+  at: string;
+  not_in_evidence: string[];
+};
+export type SummaryIoc = {
+  kind: string;
+  value: string;
+  verdict: string;
+  first_seen: string;
+  reporters: string[];
+  message_ids: string[];
+  thread_id: string;
+  in_evidence: boolean;
+  not_in_evidence: boolean;
+};
+export type SummaryStep = { id: string; title: string; stage: string; state: "open" | "claimed" | "done" | "hidden"; message_id: string | null; thread_id: string | null; claimed_by: string | null; suggested_action: string | null };
+/** GET /incidents/{id} → summary: a deterministic roll-up of the incident's stored messages. */
+export type IncidentSummary = {
+  verdict: SummaryVerdict | null;
+  verdicts_disagree: boolean;
+  verdicts: SummaryVerdict[];
+  iocs: SummaryIoc[];
+  actions: { id: string; kind: string; title: string; status: string; status_text: string; requested_by: string; request_message_id: string | null; created_at: string }[];
+  open_asks: { message_id: string; thread_id: string; excerpt: string; author: string; created_at: string; age_seconds: number }[];
+  entities: SummaryEntity[];
+  playbook: { id: string; title: string; done: number; total: number; steps: SummaryStep[] } | null;
+  markdown: string;
+};
+
 export type Action = {
   id: string;
   kind: string;

@@ -3,6 +3,7 @@ import { useState } from "react";
 import { Markdown } from "./markdown";
 import { api, refreshAll, type Message } from "../lib/api";
 import { useMe } from "./shell";
+import type { NavRowProps } from "./shortcuts";
 import { Button, cx, ErrorLine, Tag, Time } from "./ui";
 
 const CLAIMABLE = new Set(["question", "finding", "ioc"]);
@@ -41,12 +42,14 @@ export function MessageRow({
   showChannel,
   showIncident = true,
   selected,
+  navProps,
 }: {
   m: Message;
   onOpenThread?: (m: Message) => void;
   showChannel?: boolean;
   showIncident?: boolean;
   selected?: boolean;
+  navProps?: NavRowProps;
 }) {
   const me = useMe();
   const [busy, setBusy] = useState(false);
@@ -70,8 +73,10 @@ export function MessageRow({
   const tone = TYPE_TONE[m.type];
   return (
     <article
+      {...navProps}
+      aria-label={`${m.author.display_name}: ${TYPE_LABEL[m.type] ?? m.type}`}
       className={cx(
-        "group border-b border-rule px-5 py-3 transition-colors duration-150",
+        "group border-b border-rule px-5 py-3 transition-colors duration-150 focus-visible:outline-offset-[-2px]",
         selected ? "bg-paper-2" : "hover:bg-paper-2/60",
       )}
     >
@@ -88,7 +93,7 @@ export function MessageRow({
           </Link>
         )}
         {showChannel && (
-          <Link to={`/?channel=${m.channel}`} className="label shrink-0 whitespace-nowrap hover:text-accent max-sm:hidden">
+          <Link to={`/channels/${encodeURIComponent(m.channel)}`} className="label shrink-0 whitespace-nowrap hover:text-accent max-sm:hidden">
             #{m.channel}
           </Link>
         )}

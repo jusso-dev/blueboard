@@ -1,9 +1,12 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import { api, refreshAll, useLiveQuery, type Message } from "../lib/api";
+import { iocPayload, IOC_KINDS, IOC_VERDICTS, type IocDraft } from "../lib/ioc";
 import { MessageRow } from "./message";
-import { Button, cx, Empty, ErrorLine, Select } from "./ui";
+import { useListNav } from "./shortcuts";
+import { Button, cx, Empty, ErrorLine, Input, Select } from "./ui";
 
-const POST_TYPES = ["chat", "question", "finding", "verdict", "status"] as const;
+const POST_TYPES = ["chat", "question", "finding", "ioc", "verdict", "status"] as const;
+const NEW_IOC: IocDraft = { kind: "ip", value: "", verdict: "suspicious" };
 
 export function Composer({
   channel,
@@ -18,21 +21,27 @@ export function Composer({
 }) {
   const [body, setBody] = useState("");
   const [type, setType] = useState<(typeof POST_TYPES)[number]>("chat");
+  const [ioc, setIoc] = useState<IocDraft>(NEW_IOC);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const isIoc = type === "ioc";
 
   const submit = async () => {
-    const text = body.trim();
+    const payload = isIoc ? iocPayload(ioc) : undefined;
+    if (typeof payload === "string") return setErr(payload);
+    // An IOC needs no prose: the body defaults to a one-line description of the indicator.
+    const text = body.trim() || (isIoc ? `Indicator: ${ioc.kind} ${ioc.value.trim()} (${ioc.verdict})` : "");
     if (!text || busy) return;
     setBusy(true);
     setErr(null);
     try {
       await api("/messages", {
         method: "POST",
-        body: JSON.stringify({ channel, type, body: text, parent_id: parentId, incident: incident ?? undefined }),
+        body: JSON.stringify({ channel, type, body: text, payload, parent_id: parentId, incident: incident ?? undefined }),
       });
       setBody("");
       setType("chat");
+      setIoc(NEW_IOC);
       refreshAll();
     } catch (e) {
       setErr((e as Error).message);
@@ -55,8 +64,35 @@ export function Composer({
           err ? "border-critical" : "border-control",
         )}
       >
+        {isIoc && (
+          <fieldset className="flex flex-wrap items-center gap-2 border-b border-rule px-2 py-2">
+            <legend className="sr-only">Indicator</legend>
+            <Select aria-label="Indicator kind" value={ioc.kind} onChange={(e) => setIoc({ ...ioc, kind: e.target.value as IocDraft["kind"] })} className="h-7 text-xs">
+              {IOC_KINDS.map((k) => (
+                <option key={k} value={k}>
+                  {k}
+                </option>
+              ))}
+            </Select>
+            <Input
+              aria-label="Indicator value"
+              value={ioc.value}
+              onChange={(e) => setIoc({ ...ioc, value: e.target.value })}
+              placeholder="203.0.113.50, bad.example, a hash"
+              maxLength={2048}
+              className="h-7 min-w-40 flex-1 font-mono text-xs"
+            />
+            <Select aria-label="Indicator verdict" value={ioc.verdict} onChange={(e) => setIoc({ ...ioc, verdict: e.target.value as IocDraft["verdict"] })} className="h-7 text-xs">
+              {IOC_VERDICTS.map((v) => (
+                <option key={v} value={v}>
+                  {v}
+                </option>
+              ))}
+            </Select>
+          </fieldset>
+        )}
         <label className="sr-only" htmlFor={`composer-${parentId ?? channel}`}>
-          {placeholder}
+          {isIoc ? "Note about the indicator (optional)" : placeholder}
         </label>
         <textarea
           id={`composer-${parentId ?? channel}`}
@@ -69,7 +105,7 @@ export function Composer({
             }
           }}
           rows={2}
-          placeholder={placeholder}
+          placeholder={isIoc ? "Why it matters (optional)" : placeholder}
           className="block w-full resize-none bg-transparent px-3 pt-2.5 text-sm text-ink placeholder:text-faint focus:outline-none"
         />
         <div className="flex items-center gap-2 px-2 pb-2">
@@ -83,7 +119,7 @@ export function Composer({
           <span className="label ml-auto truncate max-sm:hidden" title="Enter to send · Shift+Enter for a new line">
             {parentId ? "Enter to send" : "Enter to send · Shift+Enter for a new line"}
           </span>
-          <Button type="submit" size="sm" variant="primary" loading={busy} disabled={!body.trim()}>
+          <Button type="submit" size="sm" variant="primary" loading={busy} disabled={isIoc ? !ioc.value.trim() : !body.trim()}>
             Send
           </Button>
         </div>
@@ -97,7 +133,7 @@ export function Composer({
   );
 }
 
-export function ThreadPanel({ rootId, onClose }: { rootId: string; onClose: () => void }) {
+export function ThreadPanel({ rootId, onClose, focusReply }: { rootId: string; onClose: () => void; focusReply?: number }) {
   const { data, error } = useLiveQuery<{ root: Message; replies: Message[] }>(`/threads/${rootId}`);
   const end = useRef<HTMLDivElement>(null);
   const count = data?.replies.length ?? 0;
@@ -125,46 +161,86 @@ export function ThreadPanel({ rootId, onClose }: { rootId: string; onClose: () =
           </>
         )}
       </div>
+      {data && <ReplyFocus rootId={data.root.id} signal={focusReply} />}
       {data && <Composer channel={data.root.channel} parentId={data.root.id} placeholder="Reply in thread" />}
     </aside>
   );
 }
 
-/** Feed + optional thread panel. Used for channel and incident views. */
+/** Moves focus to the thread's reply box when `signal` changes (the `r` shortcut). */
+function ReplyFocus({ rootId, signal }: { rootId: string; signal?: number }) {
+  useEffect(() => {
+    if (signal) document.getElementById(`composer-${rootId}`)?.focus();
+  }, [signal, rootId]);
+  return null;
+}
+
+/**
+ * Feed + optional thread panel. Used for channel and incident views. Keyboard: j/k select a message, Enter opens
+ * its thread, r opens it and focuses the reply box, Esc closes the panel. Pass `thread`/`onThread` to open a thread
+ * from outside (the incident summary does).
+ */
 export function Feed({
   query,
   composer,
   emptyTitle,
   showChannel,
+  thread: controlled,
+  onThread,
 }: {
   query: string;
   composer: { channel: string; incident?: string | null; placeholder: string };
   emptyTitle: string;
   showChannel?: boolean;
+  thread?: string | null;
+  onThread?: (id: string | null) => void;
 }) {
   const { data, error } = useLiveQuery<{ messages: Message[] }>(`/messages?${query}&limit=100`);
-  const [thread, setThread] = useState<string | null>(null);
+  const [own, setOwn] = useState<string | null>(null);
+  const thread = controlled !== undefined ? controlled : own;
+  const setThread = onThread ?? setOwn;
+  const [replySignal, setReplySignal] = useState(0);
   const end = useRef<HTMLDivElement>(null);
   const count = data?.messages.length ?? 0;
+  const rootOf = (m: Message) => m.parent_id ?? m.id;
+  const nav = useListNav(data?.messages, (m) => m.id, {
+    onOpen: (m) => setThread(rootOf(m)),
+    onReply: (m) => {
+      setThread(rootOf(m));
+      setReplySignal((n) => n + 1);
+    },
+    onEscape: () => {
+      if (!thread) return false;
+      setThread(null);
+      return true;
+    },
+  });
   useEffect(() => {
     end.current?.scrollIntoView({ block: "end" });
   }, [count, query]);
-  useEffect(() => setThread(null), [query]);
+  useEffect(() => setThread(null), [query]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className={cx("grid min-h-0 flex-1", thread ? "grid-cols-[minmax(0,1fr)_minmax(340px,440px)] max-lg:grid-cols-1" : "grid-cols-1")}>
       <section className="flex min-h-0 min-w-0 flex-col">
-        <div className="min-h-0 flex-1 overflow-y-auto" aria-live="polite" aria-busy={!data && !error}>
+        <div ref={nav.container as RefObject<HTMLDivElement>} className="min-h-0 flex-1 overflow-y-auto" aria-live="polite" aria-busy={!data && !error}>
           {error && <Empty title="Couldn't load messages">{error.message}</Empty>}
           {data && data.messages.length === 0 && <Empty title={emptyTitle} />}
           {data?.messages.map((m) => (
-            <MessageRow key={m.id} m={m} onOpenThread={(x) => setThread(x.id)} showChannel={showChannel} selected={thread === m.id} />
+            <MessageRow
+              key={m.id}
+              m={m}
+              onOpenThread={(x) => setThread(x.id)}
+              showChannel={showChannel}
+              selected={thread === m.id || nav.selected === m.id}
+              navProps={nav.rowProps(m)}
+            />
           ))}
           <div ref={end} />
         </div>
         <Composer {...composer} />
       </section>
-      {thread && <ThreadPanel rootId={thread} onClose={() => setThread(null)} />}
+      {thread && <ThreadPanel rootId={thread} onClose={() => setThread(null)} focusReply={replySignal} />}
     </div>
   );
 }

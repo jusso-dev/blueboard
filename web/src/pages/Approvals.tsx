@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { PageHeader, useMe } from "../components/shell";
+import { useListNav, type NavRowProps } from "../components/shortcuts";
 import { api, refreshAll, useLiveQuery, type Action } from "../lib/api";
 import { Button, cx, Empty, ErrorLine, Input, Segmented, Tag, Time } from "../components/ui";
 
@@ -17,7 +18,7 @@ function title(kind: string) {
   return kind.replaceAll("_", " ").replace(/^./, (c) => c.toUpperCase());
 }
 
-function Pending({ a, canDecide, mine }: { a: Action; canDecide: boolean; mine: boolean }) {
+function Pending({ a, canDecide, mine, navProps }: { a: Action; canDecide: boolean; mine: boolean; navProps?: NavRowProps }) {
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState<"approve" | "deny" | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -33,7 +34,8 @@ function Pending({ a, canDecide, mine }: { a: Action; canDecide: boolean; mine: 
     }
   };
   return (
-    <article className="border-b border-rule px-5 py-4">
+    // j/k move between requests. Deliberately no Enter or single-key shortcut here: approving is always a click.
+    <article {...navProps} aria-label={`${title(a.kind)} requested by @${a.requested_by}`} className="border-b border-rule px-5 py-4 focus-visible:outline-offset-[-2px]">
       <header className="flex flex-wrap items-center gap-2">
         <h2 className="text-sm font-semibold">{title(a.kind)}</h2>
         {a.incident_graph_id && <span className="label tnum text-ink-2">INC {a.incident_graph_id}</span>}
@@ -103,6 +105,7 @@ export default function ApprovalsPage() {
   const { data: all } = useLiveQuery<Action[]>(view === "history" ? "/actions" : null);
   const canDecide = me?.kind === "human" && me.roles.includes("approver");
   const history = all?.filter((a) => a.status !== "pending_approval");
+  const nav = useListNav(view === "pending" ? pending : undefined, (a) => a.id);
 
   return (
     <>
@@ -117,10 +120,10 @@ export default function ApprovalsPage() {
           ]}
         />
       </PageHeader>
-      <div className="min-h-0 flex-1 overflow-y-auto" aria-live="polite">
+      <div ref={nav.container as React.RefObject<HTMLDivElement>} className="min-h-0 flex-1 overflow-y-auto" aria-live="polite">
         {error && <Empty title="Couldn't load actions">{error.message}</Empty>}
         {view === "pending" && pending?.length === 0 && <Empty title="Nothing waiting for approval" />}
-        {view === "pending" && pending?.map((a) => <Pending key={a.id} a={a} canDecide={!!canDecide} mine={a.requested_by === me?.handle} />)}
+        {view === "pending" && pending?.map((a) => <Pending key={a.id} a={a} canDecide={!!canDecide} mine={a.requested_by === me?.handle} navProps={nav.rowProps(a)} />)}
 
         {view === "history" && (
           <div className="overflow-x-auto"><table className="w-full min-w-[40rem] text-left text-[13px]">
