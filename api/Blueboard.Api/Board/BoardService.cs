@@ -112,10 +112,15 @@ public sealed partial class BoardService(Db db, Audit audit, Settings settings, 
     public async Task<Message> PostAsync(Principal author, PostInput input, bool system = false, CancellationToken ct = default)
     {
         if (!system && limiter is not null) await limiter.TakeAsync(author, "post", ct);
-        await using var conn = await db.OpenAsync(ct);
-        await using var tx = await conn.BeginTransactionAsync(ct);
-        var id = await PostInTransactionAsync(conn, tx, author, input, system, ct);
-        await tx.CommitAsync(ct);
+        Guid id;
+        // Release the transaction's connection before reading the message back, so a post never holds two pooled
+        // connections at once (under load that deadlocks the pool: everyone holds one and waits for another).
+        await using (var conn = await db.OpenAsync(ct))
+        await using (var tx = await conn.BeginTransactionAsync(ct))
+        {
+            id = await PostInTransactionAsync(conn, tx, author, input, system, ct);
+            await tx.CommitAsync(ct);
+        }
         return (await GetAsync(id, ct))!;
     }
 

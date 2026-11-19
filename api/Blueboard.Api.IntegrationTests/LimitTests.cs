@@ -102,13 +102,14 @@ public sealed class LimitTests(TestBoard t) : IClassFixture<TestBoard>
         var app = A1.Build(t, WithAgent(new LimitSet { Post = new(60, 60) }), limited: true);
         var agent = await NewPrincipal("agent");
         var started = DateTimeOffset.UtcNow;
-        // 20 concurrent senders × 50 posts, paced to finish in about 10 seconds.
-        var perWorker = await Task.WhenAll(Enumerable.Range(0, 20).Select(w => Task.Run(async () =>
+        // 10 concurrent senders × 100 posts, paced to finish in about 10 seconds. Fewer senders than the pool has
+        // connections (20), so a slow CI database queues requests instead of timing out on the pool.
+        var perWorker = await Task.WhenAll(Enumerable.Range(0, 10).Select(w => Task.Run(async () =>
         {
             var ok = new List<bool>();
-            for (var n = 0; n < 50; n++)
+            for (var n = 0; n < 100; n++)
             {
-                var due = started.AddMilliseconds(n * 200);
+                var due = started.AddMilliseconds(n * 100);
                 if (due > DateTimeOffset.UtcNow) await Task.Delay(due - DateTimeOffset.UtcNow, Ct);
                 try { await app.Board.PostAsync(agent, new PostInput("general", $"flood {w}-{n}"), ct: Ct); ok.Add(true); }
                 catch (BoardException ex) when (ex.Status == 429) { ok.Add(false); }
