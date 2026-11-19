@@ -76,6 +76,19 @@ public sealed partial class Enrichment(Db db, Audit audit, BoardService board, M
         };
     }
 
+    /// <summary>
+    /// Board-built KQL (threat intel and exposure checks): the query comes from a builder that only accepts validated
+    /// values, never from a caller. Audited like every hunt; actor is null when the board runs it on a schedule.
+    /// </summary>
+    internal async Task<IReadOnlyList<JsonElement>> RunBoardQueryAsync(Guid? actorId, string evt, string query, string timespan, object? detail, CancellationToken ct = default)
+    {
+        await audit.WriteAsync(actorId, evt, null, new { query, timespan, detail }, ct);
+        var res = await ms.SendAsync(MsApi.Graph, "/v1.0/security/runHuntingQuery", HttpMethod.Post, new { query, timespan }, ct);
+        return res is { } r && r.TryGetProperty("results", out var rows) && rows.ValueKind == JsonValueKind.Array
+            ? rows.EnumerateArray().Select(x => x.Clone()).ToList()
+            : [];
+    }
+
     public async Task<object> LookupAsync(Principal p, string kind, string value, CancellationToken ct = default)
     {
         p.Require(Roles.Hunter);

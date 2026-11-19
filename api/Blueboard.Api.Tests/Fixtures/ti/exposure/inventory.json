@@ -1,0 +1,25 @@
+{
+ "_note": "Hand-built from Microsoft's published schema (checked 19-11-2026); not recorded from a tenant. Columns: DeviceTvmSoftwareInventory (SoftwareVendor, SoftwareName).",
+ "results": [
+  {
+   "SoftwareVendor": "microsoft",
+   "SoftwareName": "edge",
+   "Devices": 120
+  },
+  {
+   "SoftwareVendor": "google",
+   "SoftwareName": "android",
+   "Devices": 35
+  },
+  {
+   "SoftwareVendor": "apache",
+   "SoftwareName": "log4j",
+   "Devices": 14
+  },
+  {
+   "SoftwareVendor": "sonicwall",
+   "SoftwareName": "sonicos",
+   "Devices": 2
+  }
+ ]
+}

@@ -9,4 +9,7 @@
   <ItemGroup>
     <ProjectReference Include="../Blueboard.Api/Blueboard.Api.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <None Include="Fixtures/ti/**/*" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>

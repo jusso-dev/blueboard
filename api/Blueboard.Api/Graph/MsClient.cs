@@ -9,7 +9,7 @@ using Blueboard.Api.Core;
 
 namespace Blueboard.Api.Graph;
 
-public enum MsApi { Graph, Defender }
+public enum MsApi { Graph, Defender, SentinelTi }
 
 /// <summary>
 /// Authenticated calls to Microsoft Graph and the Defender for Endpoint API with the Function App's
@@ -20,11 +20,14 @@ public sealed partial class MsClient(HttpClient http, TokenCredential? credentia
 {
     public const string GraphOrigin = "https://graph.microsoft.com";
     public const string DefenderOrigin = "https://api.security.microsoft.com";
+    /// <summary>Microsoft Sentinel threat intelligence upload API (publish_ti_indicator). Token audience: Azure Resource Manager.</summary>
+    public const string SentinelTiOrigin = "https://api.ti.sentinel.azure.com";
     private readonly TokenCredential _cred = credential ?? new DefaultAzureCredential();
 
     private static (string Origin, string Scope) Target(MsApi api) => api switch
     {
         MsApi.Graph => (GraphOrigin, "https://graph.microsoft.com/.default"),
+        MsApi.SentinelTi => (SentinelTiOrigin, "https://management.azure.com/.default"),
         _ => (DefenderOrigin, "https://api.securitycenter.microsoft.com/.default"),
     };
 
@@ -66,7 +69,7 @@ public sealed partial class MsClient(HttpClient http, TokenCredential? credentia
             if (!res.IsSuccessStatusCode)
             {
                 var msg = json?.TryGetProperty("error", out var e) == true && e.TryGetProperty("message", out var m) ? m.GetString() : res.ReasonPhrase;
-                throw new BoardException($"{req.Method} {uri.AbsolutePath}: {(int)res.StatusCode} {msg}", 502);
+                throw new BoardException($"{req.Method} {uri.AbsolutePath}: {(int)res.StatusCode} {msg}", 502) { UpstreamStatus = (int)res.StatusCode };
             }
             return json;
         }

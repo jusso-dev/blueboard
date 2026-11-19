@@ -72,6 +72,8 @@ public sealed class Broker(Db db, Audit audit, BoardService board, MsClient ms, 
             await using var ic = db.Command("select graph_id, data::text from incidents where id = @id").With("id", iid);
             await using var ir = await ic.ExecuteReaderAsync(ct);
             if (await ir.ReadAsync(ct)) incident = new IncidentContext(ir.GetString(0), JsonDocument.Parse(ir.GetString(1)).RootElement.Clone());
+            if (incident is not null && Catalog.NeedsMaliciousIoc.Contains(def.Kind))
+                incident = incident with { MaliciousIocs = await MaliciousIocsAsync(iid, ct) };
         }
 
         var decision = PolicyEngine.Evaluate(def, prms, incident, policy);
@@ -103,6 +105,20 @@ public sealed class Broker(Db db, Audit audit, BoardService board, MsClient ms, 
 
         if (status == "approved") await ExecuteAsync(actionId, ct);
         return (await GetAsync(actionId, ct))!;
+    }
+
+    /// <summary>Indicators marked malicious in ioc messages on an incident, as normalised "kind:value".</summary>
+    private async Task<HashSet<string>> MaliciousIocsAsync(Guid incidentId, CancellationToken ct)
+    {
+        var set = new HashSet<string>();
+        await using var cmd = db.Command("""
+            select i->>'kind', i->>'value' from messages m, jsonb_array_elements(m.payload->'indicators') i
+            where m.incident_id = @i and m.type = 'ioc' and i->>'verdict' = 'malicious'
+            """).With("i", incidentId);
+        await using var r = await cmd.ExecuteReaderAsync(ct);
+        while (await r.ReadAsync(ct))
+            if (Intel.Indicators.Normalise(r.GetString(0), r.GetString(1)) is { } v) set.Add($"{r.GetString(0)}:{v}");
+        return set;
     }
 
     /// <summary>Human decision: approver role, a person (never an agent), and not the requester.</summary>
@@ -160,10 +176,14 @@ public sealed class Broker(Db db, Audit audit, BoardService board, MsClient ms, 
         object? result = null;
         string? error = null;
         JsonObject? prms = null;
+        JsonObject? prepared = null;
         try
         {
             prms = def.Validate(a.Params); // never run a write from unchecked stored JSON
-            result = settings.BrokerExecute ? await def.Run(ms, prms, comment, ct) : new { dry_run = true, would = def.Describe(prms) };
+            prepared = def.Prepare?.Invoke(prms, new ActionContext(id, a.IncidentGraphId, a.IncidentId, a.RequestedBy, a.DecidedBy, a.Justification, settings.Ti, DateTimeOffset.UtcNow));
+            result = settings.BrokerExecute
+                ? await def.Run(ms, prepared ?? prms, comment, ct)
+                : new { dry_run = true, would = def.Describe(prms), request = prepared };
             status = "succeeded";
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -177,9 +197,21 @@ public sealed class Broker(Db db, Audit audit, BoardService board, MsClient ms, 
         await audit.WriteAsync(null, $"action.{status}", id.ToString(), new { error }, ct);
         var text = status == "succeeded"
             ? $"**{def.Title}** {(settings.BrokerExecute ? "completed" : "completed (dry run: BROKER_EXECUTE is off)")}: {def.Describe(prms!)}"
+              + ResultDetail(settings.BrokerExecute, prepared, result)
             : $"**{def.Title}** failed: {error}";
         await board.PostAsync(await system.GetAsync(ct), new PostInput("containment", text, "action_result",
             Json.Element(new { action_id = id, status, error }), a.RequestMessageId, a.IncidentId?.ToString()), system: true, ct);
+    }
+
+    /// <summary>Dry run: the exact request that would be sent. Live: the result fields (for example the STIX id and where to find it).</summary>
+    private static string ResultDetail(bool executed, JsonObject? prepared, object? result)
+    {
+        var indented = new JsonSerializerOptions { WriteIndented = true };
+        if (!executed && prepared is not null)
+            return $"\n\nExact request that would be sent:\n\n```\n{prepared.ToJsonString(indented)}\n```";
+        if (executed && prepared is not null && result is not null)
+            return $"\n\n```\n{JsonSerializer.Serialize(result, indented)}\n```";
+        return "";
     }
 
     /// <summary>

@@ -14,4 +14,7 @@
   <ItemGroup>
     <None Include="../../db/migrations/*.sql" LinkBase="migrations"><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory></None>
   </ItemGroup>
+  <ItemGroup>
+    <None Include="../Blueboard.Api.Tests/Fixtures/ti/**/*" LinkBase="Fixtures/ti" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>

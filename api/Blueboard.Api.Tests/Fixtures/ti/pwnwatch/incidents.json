@@ -1,0 +1,917 @@
+{
+ "site": "https://pwn.watch",
+ "generatedAt": "2026-11-08T20:22:39.494Z",
+ "updatedAt": "2026-11-08T20:19:52Z",
+ "live": [
+  "tensorlake-vendor-sandbox-github-access-nov-2026",
+  "keycloak-inline-js-policy-import-rce-cve-2026-120984",
+  "unrealircd-6-2-7-1-labeled-response-ircop-command-cve-2026-114713",
+  "craft-cms-sqli-priv-esc-nov-2026",
+  "lxd-malicious-image-host-escape-ghsa-2026-11",
+  "web3auth-keplr-google-apple-login-key-breach-nov-2026",
+  "avast-sandbox-escape-wfp-cve-2026-80301-80303",
+  "aws-babelfish-tds-parser-cve-2026-119923-119924",
+  "aws-rex-example-ssm-command-injection-cve-2026-122193",
+  "charmbracelet-wish-git-middleware-path-traversal-cve-2026-53980",
+  "d-link-dgs-3130-ddp-firmware-zero-days-nov-2026",
+  "foxit-workspace-ssrf-xss-cve-2026-119431",
+  "line-armeria-1-43-0-path-decorator-thrift-saml-fixes-nov-2026",
+  "sonicwall-sonicos-sslvpn-saml-bypass-cve-2026-19868",
+  "tum-it-security-incident-mytum-tumonline-nov-2026",
+  "alpine-openssh-musl-crypt-password-auth-bypass-nov-2026",
+  "ibm-api-connect-v12-1-1-3-security-bulletin-nov-2026",
+  "keycloak-saml-redirect-signature-bypass-cve-2026-117691",
+  "microsoft-entra-device-registration-eop-cve-2026-109469",
+  "tpc-matchpoint-static-credential-idor-cluster-nov-2026",
+  "claude-code-settings-local-json-secrets-exposure-nov-2026",
+  "claude-dispatch-thisbash-extension-to-desktop-rce-nov-2026",
+  "frankenphp-1-13-5-caddy-2-11-9-security-releases-nov-2026",
+  "infinitt-ulite-share-link-brute-force-xss-nov-2026",
+  "iterm2-x-man-page-argument-injection-cve-2026-123014",
+  "nodejs-undici-7-30-2-8-12-4-cache-redirect-sri-fixes-nov-2026",
+  "truenas-scale-ha-heartbeat-auth-bypass-cve-2026-123033",
+  "android-ghostmap-apk-zip-crash-loop-unpatched",
+  "claude-code-account-email-user-agent-leak-nov-2026",
+  "apache-ofbiz-24-09-08-unauthenticated-rce-auth-bypass-nov-2026",
+  "rails-active-storage-imagemagick-file-write-ghsa-f3w6-w445-fwh9",
+  "cisco-ucs-central-authenticated-rce-cve-2026-76506",
+  "credit-mutuel-arkea-cyberattack-nov-2026",
+  "debian-apt-http-resume-mitm-root-rce-cve-2026-109518",
+  "freerdp-3-32-2-memory-corruption-cert-bypass-cves",
+  "litespeed-cache-woocommerce-cart-pii-leak-cve-2026-93389",
+  "maru-jan-online-mahjong-1-86m-passwords-leak-nov-2026",
+  "mcp-go-jsonrpc-case-folding-proxy-bypass-go-2026-6911",
+  "signalplus-telegram-teams-social-engineering-api-keys-nov-2026",
+  "symfony-serializer-uploadedfile-datauri-cve-2026-118515-121623",
+  "watchguard-authpoint-gateway-auth-bypass-cve-2026-121637",
+  "kyiv-independent-cms-newsletter-hack-fake-nuclear-alert-nov-2026",
+  "barracuda-authorization-bypass-command-injection-cve-2026-116606",
+  "better-auth-expo-account-takeover-cve-2026-121802",
+  "cwp2shell-control-web-panel-pre-auth-root-rce-chain-nov-2026",
+  "puppet-openvox-server-rce-impersonation-cve-2026-115731",
+  "solarwinds-dameware-cve-2026-28336",
+  "subnet-powersystem-center-authz-sqli-icsa-26-307-01",
+  "xen-xsa-523-grant-copy-guest-escape-cve-2026-102703",
+  "calif-lockdown-mode-bypass-airdrop-pdf-nov-2026",
+  "chrome-157-security-update-nov-2026",
+  "gnosis-pay-legacy-card-system-breach-nov-2026",
+  "msecure-password-manager-cloud-vault-database-theft-nov-2026",
+  "sonicwall-gms-eol-unpatched-file-read-sqli-cve-2026-109593",
+  "swiss-luethi-fleischwaren-volg-refrigeration-cyberattack-nov-2026",
+  "queens-public-library-ransomware-nov-2026",
+  "android-november-2026-security-bulletin-cve-2026-58868",
+  "beget-hosting-cloud-wipe-cyberattack-nov-2026",
+  "gitbook-sso-flaw-infrastructure-breach-nov-2026",
+  "mercado-bitcoin-hot-wallet-hack-nov-2026",
+  "btcpay-server-hot-wallet-drains-2-4-1-and-earlier-nov-2026",
+  "cpguard-opsshield-update-channel-compromise-nov-2026",
+  "gitea-28-3-0-security-release-nov-2026",
+  "strutil-core-rubygems-testmetest-worm-nov-2026",
+  "trigger-dev-env-vars-api-keys-breach-nov-2026",
+  "b14g-core-staking-zero-withdrawal-drain-oct-2026",
+  "claude-code-vscode-extension-ssh-backdoor-oct-2026",
+  "clickhouse-server-unauth-rce-cve-2026-116366",
+  "imgproxy-ico-loader-rce-dos-ghsa-hff9-5pqw-6w9f",
+  "lmdeploy-update-weights-pickle-rce-cve-2026-119706",
+  "node-red-missing-authentication-cve-2026-58115",
+  "northflank-paas-security-incident-env-vars-oct-2026",
+  "pgadmin-4-9-19-import-export-rce-login-bypass-cve-2026-116241",
+  "thales-sentinel-keys-server-unauth-rce-cve-2026-78403",
+  "chainalysis-internal-systems-unauthorized-access-oct-2026",
+  "lm-studio-model-downloader-path-traversal-cve-2026-119979",
+  "norad-grants-portal-breach-nov-2026",
+  "who-gives-a-crap-marketing-vendor-customer-data-breach-nov-2026",
+  "workos-internal-sales-app-breach-artex-oct-2026",
+  "binance-hot-wallet-outflow-suspected-hack-oct-2026",
+  "contact-form-7-unauthenticated-file-upload-cve-2026-114432",
+  "progress-ws-ftp-server-cve-2026-84295-90868-oct-2026",
+  "rancher-fleet-oct-2026-security-release-cluster-admin-escalation",
+  "android-sms-of-death-wap-push-dos-cve-2026-58882",
+  "embrace-ai-assistant-embedded-browsers-oct-2026",
+  "kubeflow-pipelines-volume-artifact-path-traversal-cve-2026-118758",
+  "muji-ryohin-keikaku-app-breach-card-numbers-nov-2026",
+  "polymarket-frontend-third-party-provider-drain-oct-2026",
+  "revolve-saved-payment-card-data-breach-oct-2026",
+  "telegram-android-voice-call-mediastate-rce-oct-2026",
+  "zitadel-login-v2-account-takeover-cve-2026-119127-oct-2026",
+  "ao3-archive-of-our-own-security-incident-oct-2026",
+  "au-small-finance-bank-salesforce-data-leak-oct-2026",
+  "ireland-employment-permits-portal-data-breach-oct-2026",
+  "cisco-sd-wan-keydrift-uat-11473-cve-2026-20127",
+  "drupal-commerce-core-access-bypass-cve-2026-118539",
+  "freeswitch-api-chat-rce-cve-2026-116779",
+  "juniper-session-smart-router-cve-2026-103409",
+  "langflow-oss-multiple-rce-cve-2026-110186-oct-2026",
+  "sophos-utm-email-proxy-preauth-rce-cve-2026-118633",
+  "cisco-asa-ftd-ssl-vpn-dos-zero-day-cve-2026-76418",
+  "dhs-icepick-okta-leak-41k-employees-oct-2026",
+  "iris-ohyama-iris-plaza-cloud-breach-7-7m-nov-2026",
+  "istyle-cosme-member-data-breach-3m-nov-2026",
+  "jenkins-core-security-advisory-2026-10-28",
+  "wordpress-7-1-4-security-release-oct-2026",
+  "zklink-nova-bridge-forged-batch-root-exploit-oct-2026",
+  "amplitude-vendor-incident-coinbase-contact-data-oct-2026",
+  "belgium-fod-financien-cyberattack-myminfin-offline-oct-2026",
+  "bitcoin-core-ai-found-node-crash-bugs-oct-2026",
+  "bunny-net-armenia-cdn-node-provider-compromise-oct-2026",
+  "gitee-26400-live-credentials-public-repos-oct-2026",
+  "epics-base-7-0-11-critical-memory-bugs-oct-2026",
+  "nomachine-nxwebrunner-cve-2026-114549",
+  "seppmail-secure-email-gateway-cve-2026-114424",
+  "veeam-october-2026-security-updates-cve-2026-108142",
+  "watchguard-fireware-2026-4-security-update-oct-2026",
+  "avada-theme-form-upload-rce-cve-2026-115346",
+  "bithumb-groupware-breach-oct-2026",
+  "firefox-159-esr-153-6-security-release-oct-2026",
+  "teamviewer-15-83-security-update-oct-2026",
+  "diamante-diam-contract-key-theft-mint-oct-2026",
+  "engie-france-customer-data-breach-oct-2026",
+  "fence-finance-avalanche-tranche-vault-drain-oct-2026",
+  "solflare-staking-provider-validator-key-compromise-oct-2026",
+  "warhorse-studios-cyberattack-oct-2026",
+  "bubble-security-incident-third-party-tokens-oct-2026",
+  "chainstack-production-systems-breach-nov-2026",
+  "dahua-cameras-easy4ip-p2p-hijacking-ukraine-oct-2026",
+  "docker-sandboxes-git-config-escape-cve-2026-121614",
+  "fec-electronic-filing-attack-oct-2026",
+  "unm-health-cyberattack-byod-ransomware-oct-2026",
+  "anthropic-cathedral-business-systems-access-oct-2026",
+  "fgc-credit-guarantor-fund-data-breach-nov-2026",
+  "atlantis-0-49-0-security-fixes-fork-bypass-rce-oct-2026",
+  "tailscale-tailworm-ssh-forwarding-privesc",
+  "allium-blockchain-data-unauthorized-access-oct-2026",
+  "postiz-account-takeover-file-read-cve-2026-115933",
+  "convertr-plausible-tracker-magecart-skimmer-oct-2026",
+  "electrum-malicious-server-rbf-fee-bump-theft",
+  "kernel-sh-browser-infra-breach-cryptominer-nov-2026",
+  "labstack-echo-proxy-websocket-auth-bypass-ghsa-cxf3-9h37-7rr8",
+  "laravel-tokenguard-auth-bypass-cve-2026-114509",
+  "pillow-fpx-heap-overflow-cve-2026-112398",
+  "ruby-regexp-compilation-fixes-gitlab-cves",
+  "initia-movevm-infinite-mint-exploit-oct-2026",
+  "microsoft-authenticator-android-authmask-cve-2026-80097",
+  "popcorn-time-time4popcorn-updater-cve-2026-30612",
+  "amadeus-passenger-system-breach-jal-92k-customers-oct-2026",
+  "cox-automotive-vinsolutions-dealer-crm-incident-oct-2026",
+  "dreamhost-email-ftp-password-reset-incident-oct-2026",
+  "warp-vendor-exploitation-agent-telemetry-oct-2026",
+  "arista-velocloud-orchestrator-cve-2026-114625",
+  "hpe-aruba-aos-critical-rce-oct-2026",
+  "okta-access-gateway-cve-2026-115547-115546",
+  "openam-16-1-4-saml-session-token-admin-takeover-cves-nov-2026",
+  "x402-sdk-critical-flaws-v12",
+  "blackx-uefi-bootkit-baton-drop-secure-boot-bypass",
+  "swell-sweth-rsweth-admin-key-compromise-oct-2026",
+  "luanti-contentdb-breach-oct-2026",
+  "predict-fun-user-wallet-drain-400k-usdt-oct-2026",
+  "us-banks-unauthorized-ai-agents-customer-accounts",
+  "zilliqa-x-bridge-zrc2-exploit-oct-2026",
+  "university-hospitals-cleveland-systems-offline-oct-2026",
+  "fortinet-ai-found-flaws-hardening-release-oct-2026",
+  "gitlab-cve-2026-110264-regex-rce",
+  "keycloak-cve-2026-18963-reset-credentials-takeover",
+  "linux-kernel-zdi-reports-leaked-to-lkml",
+  "litellm-1-107-0-pypi-compromise",
+  "nodejs-october-2026-security-releases",
+  "deadtag-coruna-darksword-iphone-exploits",
+  "isc-bind-cve-2026-94300",
+  "nuxt-content-query-api-sqli-dos-cve-2026-102650",
+  "quest-diagnostics-quanum-lsm-breach",
+  "railway-env-var-security-disclosure",
+  "coindcx-deprecated-tron-wallet-16m-loss-oct-2026",
+  "jackson-databind-ptv-bypass-cve-2026-110879",
+  "kyverno-1-19-2-multi-tenant-privesc-image-verify-bypass-nov-2026",
+  "oracle-ebs-tcf-sqli-rce-cve-2026-101767",
+  "chrome-156-security-update-oct-2026",
+  "eg-secure-solutions-siteguard-server-edition-cve-2026-106931",
+  "keystone-hardware-wallet-auth-key-stolen-oct-2026",
+  "onamae-desktop-cloud-malware-oct",
+  "siemens-software-center-cve-2026-110936",
+  "university-of-copenhagen-breach-525k-oct-2026",
+  "http3-qpack-header-accordions",
+  "wasmtime-cranelift-sandbox-escapes-cve-2026-115889-115893",
+  "capcom-id-breach-oct-2026",
+  "florida-department-of-education-financial-aid-breach-oct-2026",
+  "good-smile-company-online-shop-breach-oct-2026",
+  "opencode-mcp-oauth-rce-windows",
+  "pizza-hut-japan-payment-api-breach-oct-2026",
+  "sony-so-net-member-database-breach-oct-2026",
+  "canadian-law-firms-help-desk-vishing-m365-breaches-oct-2026",
+  "emudhra-intermediate-ca-compromise",
+  "airbyte-connector-builder-rce-ghsa-g35w-6r6v-h4r7",
+  "connectwise-cloud-backup-m365-hijack",
+  "php2shell-cve-2026-109618-109619",
+  "opencode-console-provider-key-breach",
+  "furusato-choice-trustbank-data-breach-oct-2026",
+  "qubic-wallets-weak-seed-drain-oct-2026",
+  "plex2shell-cve-2026-96652",
+  "fortinet-multiple-products-cve-2025-61624",
+  "joshin-unauthorized-access-6m-member-records-oct-2026",
+  "linux-kernel-infinity-core-lpes-cve-2026-98260",
+  "state-bank-of-india-dark-web-data-leak-oct-2026",
+  "edk2-pxe-icmp-preboot-rce-cve-2026-97631",
+  "linux-kernel-ipv4-tcp-uaf-cve-2026-98432",
+  "lightning-ai-studio-credential-breach-oct-2026",
+  "atlassian-multiple-products-cve-2026-21589",
+  "drupal-core-field-ui-rce-cve-2026-108097",
+  "nextjs-october-2026-rce-security-release",
+  "zeabur-october-2026-breach-shutdown",
+  "ahsay-ahsaycbs-cve-2026-105134",
+  "cisco-secure-email-gateway-cve-2026-76519",
+  "palo-alto-networks-pan-os-cve-2026-0322",
+  "godaddy-mass-certificate-revocation-oct-2026",
+  "adobe-commerce-magento-blockstrap-cve-2026-103849",
+  "esri-arcgis-server-sqli-cve-2026-10757",
+  "fortinet-fortisandbox-cve-2026-107656",
+  "microsoft-paint-rce-cve-2026-83844-store-fix-nov-2026",
+  "goahead-6-1-1-tls-auth-cgi-flaws-oct-2026",
+  "ahold-delhaize-october-2026-cyberattack",
+  "french-supermarket-refrigeration-controller-attacks",
+  "ngrave-liquid-fake-push-alert-phishing",
+  "ledger-cryptobilis-lte-implant-recovery-phrase-theft",
+  "pwnescape-cve-2026-99999",
+  "artex-ai-pentest-backdoored-docker-image-tomicdd",
+  "ghostaction-github-workflows-oct-2026",
+  "bricksforge-wordpress-rce-cve-2026-85097",
+  "tensorlake-npm-shai-hulud-worm",
+  "nikkei-cloud-dev-credentials-breach-oct-2026",
+  "sonicwall-sma1000-ssrf-cve-2026-102255",
+  "white-house-eop-as2650-residential-proxy-exits-nov-2026",
+  "citrix-netscaler-cve-2026-88779",
+  "zammad-gmbh-zammad-cve-2026-102490",
+  "synology-dsm-cerber-c3rb3r-ransomware-cve-2026-13639-13684",
+  "ivanti-connect-secure-cve-2026-104935",
+  "scribd-slideshare-everand-user-data-breach-oct-2026",
+  "fortimail-cve-2026-104286",
+  "citrix-netscaler-rce-zero-days-cve-2026-88771-88772",
+  "nikke-pc-launcher-cdn-scripts-tampered-k2f-malware-nov-2026",
+  "park24-times-car-data-breach-6-6m-accounts",
+  "fbijobs-gov-shinyhunters-breach-fbi-doj-employees-2026",
+  "hugging-face-qwen2-tiny-cryptominer-models-oct-2026",
+  "123-reg-ai-driven-cyberattack-customer-data-oct-2026",
+  "gheist-stolen-github-tokens-secret-dump-workflows",
+  "nextcloud-collabora-built-in-code-server-cve-2026-110447",
+  "pingcap-tidb-cloud-breach",
+  "afd-alternita-email-hosting-breach-sep-2026",
+  "github-issue-workflow-command-injection-campaign-61-repos",
+  "beyondtrust-remote-support-cve-2026-102764",
+  "apt29-watering-hole-ios-android-n-day-exploits-plerdy",
+  "cloudflare-workers-ai-glm-5-3-sglang-kv-cache-cross-tenant-leak",
+  "us-military-commissary-refrigeration-outages-aug-2026",
+  "zyxel-gs1900-switches-zero-day-cve-2026-107441",
+  "frontline-education-k12-data-breach-oct-2026",
+  "vmware-esx-insufficient-logging-cve-2026-41709-cisa-kev",
+  "testmetest-npm-worm-42-armed-github-repos",
+  "jupyterlab-desktop-xss-token-leak-rce-cve-2026-102530",
+  "chartbrew-default-secret-sqli-ato-nov-2026",
+  "control-web-panel-cwpdoor-backdoor-nov-2026",
+  "digicert-business-system-validation-data-breach-oct-2026",
+  "irhythm-zio-patient-data-breach-8-2m",
+  "palo-alto-networks-pan-os-cve-2026-0257",
+  "csx-vishing-microsoft-365-employee-data-breach-2026",
+  "linux-fragnesia-lpe-cve-2026-46300-cisa-kev",
+  "navigate360-p3-crime-stoppers-tip-breach",
+  "magento-cms-block-loader-deepveindrilling-oct-2026",
+  "fearless-wallet-extension-key-leak"
+ ],
+ "categories": {
+  "patch": {
+   "label": "Patch now",
+   "incidents": 761,
+   "live": 155,
+   "url": "https://pwn.watch/",
+   "rss": "https://pwn.watch/feed.xml",
+   "json": "https://pwn.watch/feed.json",
+   "llms": "https://pwn.watch/llms.txt",
+   "changes": "https://pwn.watch/changes.json"
+  },
+  "breach": {
+   "label": "Breaches & attacks",
+   "incidents": 145,
+   "live": 99,
+   "url": "https://pwn.watch/c/breach",
+   "rss": "https://pwn.watch/c/breach/feed.xml",
+   "json": "https://pwn.watch/c/breach/feed.json",
+   "llms": "https://pwn.watch/c/breach/llms.txt",
+   "changes": "https://pwn.watch/c/breach/changes.json"
+  },
+  "supply-chain": {
+   "label": "Supply chain",
+   "incidents": 45,
+   "live": 16,
+   "url": "https://pwn.watch/c/supply-chain",
+   "rss": "https://pwn.watch/c/supply-chain/feed.xml",
+   "json": "https://pwn.watch/c/supply-chain/feed.json",
+   "llms": "https://pwn.watch/c/supply-chain/llms.txt",
+   "changes": "https://pwn.watch/c/supply-chain/changes.json"
+  }
+ },
+ "incidents": [
+  {
+   "slug": "tensorlake-vendor-sandbox-github-access-nov-2026",
+   "title": "Tensorlake: attacker reached engineering GitHub via vendor-hosted sandboxes after unrotated env vars",
+   "url": "https://pwn.watch/i/tensorlake-vendor-sandbox-github-access-nov-2026",
+   "json": "https://pwn.watch/i/tensorlake-vendor-sandbox-github-access-nov-2026.json",
+   "category": "breach",
+   "status": "live",
+   "severity": "high",
+   "patchStatus": "partial",
+   "product": "Tensorlake (AI sandbox platform)",
+   "stacks": [
+    "hosting",
+    "github-actions"
+   ],
+   "tags": [
+    "hosting",
+    "github-actions",
+    "tensorlake",
+    "railway",
+    "github",
+    "environment-variables",
+    "data-breach",
+    "api-keys",
+    "sandboxes"
+   ],
+   "cveIds": [],
+   "affectedVersions": [
+    "Tensorlake cloud customers (founder asks everyone to rotate API keys; says customer API keys and sandboxes were not impacted)"
+   ],
+   "fixedVersions": [],
+   "startedAt": "2026-11-08",
+   "closedAt": null,
+   "updatedAt": "2026-11-08T01:27:31Z",
+   "summary": "On Nov 8 2026 Tensorlake founder Diptanu Choudhury disclosed a security incident. He said an application running on an upstream provider spun up sandboxes in Tensorlake engineering-team accounts that had access to the company’s GitHub repositories; an attacker pushed malicious code to branches and triggered GitHub Actions to probe for secrets those workflows can access. The first published version of the post named the provider as Railway; later edits of the same post say “an upstream provider” and add that the provider had a security breach a couple of weeks earlier that exposed environment variables, that Tensorlake had not rotated those env vars because the application was not critical for production, and that this was an oversight. He said there was no impact to customer information such as API keys or sandboxes, that Tensorlake has no evidence any critical systems were accessed beyond probing for secrets, that it has rotated all secrets and undeployed the internal application, and that paying customers have been notified by email. Out of abundant caution he asked customers to rotate Tensorlake API keys. Further details are promised by email and on Tensorlake’s trust center. This is separate from the October 2026 tensorlake npm Shai-Hulud worm.",
+   "xPost": {
+    "id": "2119247029998338249",
+    "postedAt": "2026-11-08T01:54:00.697Z",
+    "url": "https://x.com/pwnwatch_app/status/2119247029998338249"
+   },
+   "isExample": false
+  },
+  {
+   "slug": "unrealircd-6-2-7-1-labeled-response-ircop-command-cve-2026-114713",
+   "title": "UnrealIRCd before 6.2.7.1: any normal user can run commands with server/IRCOp authority (critical CVE-2026-114713) plus 8 more fixes",
+   "url": "https://pwn.watch/i/unrealircd-6-2-7-1-labeled-response-ircop-command-cve-2026-114713",
+   "json": "https://pwn.watch/i/unrealircd-6-2-7-1-labeled-response-ircop-command-cve-2026-114713.json",
+   "category": "patch",
+   "status": "live",
+   "severity": "critical",
+   "patchStatus": "patched",
+   "product": "UnrealIRCd",
+   "stacks": [],
+   "tags": [
+    "unrealircd",
+    "irc",
+    "privilege-escalation",
+    "information-disclosure",
+    "dos",
+    "hot-patch"
+   ],
+   "cveIds": [
+    "CVE-2026-114713"
+   ],
+   "affectedVersions": [
+    "UnrealIRCd 6.0.0 through 6.2.7",
+    "UnrealIRCd 5 (end of life, also affected by the critical issue; no fix, workaround only)",
+    "Older end-of-life versions (3.2.x, 4) not checked by the vendor; several of the other bugs likely go back to 3.2.x"
+   ],
+   "fixedVersions": [
+    "UnrealIRCd 6.2.7.1",
+    "UnrealIRCd 6.0.0–6.2.7 with hot-patch bundle-20261107 (./unrealircd hot-patch bundle-20261107, no restart)"
+   ],
+   "startedAt": "2026-11-07",
+   "closedAt": null,
+   "updatedAt": "2026-11-08T03:30:37Z",
+   "summary": "UnrealIRCd released 6.2.7.1 and a no-restart hot-patch (bundle-20261107) on Nov 7 2026 fixing 9 security issues found in an AI-assisted internal audit. The critical one, CVE-2026-114713, is in the labeled-response module, which does not escape the IRCv3 \"label\" message tag when echoing it into replies; on a network with two or more linked servers any ordinary user can inject server-to-server commands that run with server or IRCOp authority (KILL, GLINE and more). Maintainer Syzop calls it the most critical issue found in UnrealIRCd in the past 15 years. The other 8 fixes cover two IP-address leaks (including \"decloaking\" another user), a blacklist-recheck hang, a user-triggerable crash on CHGIDENT from Services, a counting error that can lock out all new connections with \"This server is full\", no cap on how many bans Services can set (now 2x set::maxbans), a TLS renegotiation flood issue and a possible whowasdb crash. UnrealIRCd 5 (end of life since 2023) is also affected by the critical bug. Apply the SPAMFILTER workaround first, then hot-patch or upgrade.",
+   "xPost": {
+    "id": "2119281759061971238",
+    "postedAt": "2026-11-08T04:12:00.662Z",
+    "url": "https://x.com/pwnwatch_app/status/2119281759061971238"
+   },
+   "isExample": false
+  },
+  {
+   "slug": "microsoft-entra-device-registration-eop-cve-2026-109469",
+   "title": "Microsoft Entra Device Registration elevation of privilege CVE-2026-109469 (CVSS 10.0) — already mitigated in the cloud service",
+   "url": "https://pwn.watch/i/microsoft-entra-device-registration-eop-cve-2026-109469",
+   "json": "https://pwn.watch/i/microsoft-entra-device-registration-eop-cve-2026-109469.json",
+   "category": "patch",
+   "status": "live",
+   "severity": "critical",
+   "patchStatus": "patched",
+   "product": "Microsoft Entra Device Registration (hosted cloud service)",
+   "stacks": [],
+   "tags": [
+    "microsoft",
+    "entra",
+    "entra-id",
+    "device-registration",
+    "privilege-escalation",
+    "saas"
+   ],
+   "cveIds": [
+    "CVE-2026-109469"
+   ],
+   "affectedVersions": [
+    "Microsoft Entra Device Registration before Microsoft's cloud-side mitigation (fixed in service; no customer update)"
+   ],
+   "fixedVersions": [
+    "Entra Device Registration as mitigated by Microsoft (no customer action required; CVE for transparency)"
+   ],
+   "startedAt": "2026-11-05",
+   "closedAt": null,
+   "updatedAt": "2026-11-07T02:30:25Z",
+   "summary": "CVE-2026-109469 is an authorization bypass through a user-controlled key in Microsoft Entra Device Registration that Microsoft rates Critical with CVSS 3.1 10.0 (AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:H). It lets an unauthorized attacker elevate privileges over a network against the Entra Device Registration service. Microsoft says the vulnerability has already been fully mitigated in the hosted service, customers need no action, and the CVE is published for transparency under Microsoft's cloud-service CVE program. Not known to be exploited or publicly disclosed before publication; Exploitation Less Likely per MSRC.",
+   "xPost": {
+    "id": "2118850920520011833",
+    "postedAt": "2026-11-06T23:40:00.745Z",
+    "url": "https://x.com/pwnwatch_app/status/2118850920520011833"
+   },
+   "isExample": false
+  },
+  {
+   "slug": "android-november-2026-security-bulletin-cve-2026-58868",
+   "title": "Android November 2026 bulletin: critical Framework RCE with no user interaction (CVE-2026-58868)",
+   "url": "https://pwn.watch/i/android-november-2026-security-bulletin-cve-2026-58868",
+   "json": "https://pwn.watch/i/android-november-2026-security-bulletin-cve-2026-58868.json",
+   "category": "patch",
+   "status": "live",
+   "severity": "critical",
+   "patchStatus": "patched",
+   "product": "Android (Framework / System)",
+   "stacks": [],
+   "tags": [
+    "android",
+    "google",
+    "rce",
+    "mobile",
+    "security-bulletin"
+   ],
+   "cveIds": [
+    "CVE-2026-58868",
+    "CVE-2026-58876",
+    "CVE-2026-58936"
+   ],
+   "affectedVersions": [
+    "Android 14, 15, 16, 16-qpr2, 17 (CVE-2026-58868 and related Framework/System issues)"
+   ],
+   "fixedVersions": [
+    "Security patch level 2026-11-01 or later",
+    "Security patch level 2026-11-05 or later (full bulletin including kernel/vendor)"
+   ],
+   "startedAt": "2026-11-02",
+   "closedAt": null,
+   "updatedAt": "2026-11-07T10:28:19Z",
+   "summary": "Google's Android Security Bulletin for November 2026, published Nov 2, says the most severe issue is CVE-2026-58868, a critical Framework remote-code-execution bug that needs no additional privileges and no user interaction. It affects Android 14, 15, 16, 16-qpr2 and 17. The same 2026-11-01 patch level also includes two critical System RCEs (CVE-2026-58876, CVE-2026-58936) and the already-tracked SMS-of-death DoS (CVE-2026-58882). The 2026-11-05 patch level adds kernel and vendor fixes. Update devices to security patch level 2026-11-01 or later (2026-11-05 for the full set). Google said it notifies partners at least a month before publication; there was no claim of in-the-wild exploitation for CVE-2026-58868 in the bulletin.",
+   "xPost": {
+    "id": "2117952751888117853",
+    "postedAt": "2026-11-04T12:11:00.880Z",
+    "url": "https://x.com/pwnwatch_app/status/2117952751888117853"
+   },
+   "isExample": false
+  },
+  {
+   "slug": "microsoft-authenticator-android-authmask-cve-2026-80097",
+   "title": "Microsoft Authenticator for Android: any app could impersonate Teams or Outlook and get work-account tokens (AuthMask, CVE-2026-80097)",
+   "url": "https://pwn.watch/i/microsoft-authenticator-android-authmask-cve-2026-80097",
+   "json": "https://pwn.watch/i/microsoft-authenticator-android-authmask-cve-2026-80097.json",
+   "category": "patch",
+   "status": "live",
+   "severity": "high",
+   "patchStatus": "patched",
+   "product": "Microsoft Authenticator for Android",
+   "stacks": [],
+   "tags": [
+    "microsoft",
+    "microsoft-authenticator",
+    "android",
+    "token-theft",
+    "mfa"
+   ],
+   "cveIds": [
+    "CVE-2026-80097"
+   ],
+   "affectedVersions": [
+    "Microsoft Authenticator for Android 6.0.0 to before 6.2606.4246"
+   ],
+   "fixedVersions": [
+    "Microsoft Authenticator for Android 6.2606.4246"
+   ],
+   "startedAt": "2026-10-23",
+   "closedAt": null,
+   "updatedAt": "2026-11-07T02:30:25Z",
+   "summary": "Microsoft Authenticator on Android acts as the sign-in broker for Microsoft apps, and an exported activity in it handed out tokens without checking which app was really asking. A malicious app with zero permissions could claim to be an installed Microsoft app such as Teams and get that app's tokens for the work account signed into Authenticator. Enclave researcher Ofek Levin, who found it, says the tokens gave full delegated mailbox, files and calendar access, and that by posing as Authenticator itself an attacker could change the account's sign-in methods, including adding passkeys that keep access after the app is removed. It needs a malicious app installed on the phone. Microsoft fixed it in September 2026; update Authenticator for Android to 6.2606.4246 or later.",
+   "xPost": {
+    "id": "2114968336903873006",
+    "postedAt": "2026-10-27T06:32:00+00:00",
+    "url": "https://x.com/pwnwatch_app/status/2114968336903873006"
+   },
+   "isExample": false
+  },
+  {
+   "slug": "blackx-uefi-bootkit-baton-drop-secure-boot-bypass",
+   "title": "BlackX UEFI bootkit bypasses Secure Boot on patched Windows machines that never applied the Baton Drop revocation",
+   "url": "https://pwn.watch/i/blackx-uefi-bootkit-baton-drop-secure-boot-bypass",
+   "json": "https://pwn.watch/i/blackx-uefi-bootkit-baton-drop-secure-boot-bypass.json",
+   "category": "patch",
+   "status": "live",
+   "severity": "high",
+   "patchStatus": "partial",
+   "product": "Microsoft Windows Secure Boot (Windows Boot Manager signed by Windows Production PCA 2011)",
+   "stacks": [],
+   "tags": [
+    "microsoft",
+    "windows",
+    "secure-boot",
+    "uefi",
+    "bootkit",
+    "apt41",
+    "kaspersky"
+   ],
+   "cveIds": [
+    "CVE-2022-21894"
+   ],
+   "affectedVersions": [
+    "Windows machines with Secure Boot where the Windows Production PCA 2011 certificate has not been added to the Secure Boot DBX, even when fully updated"
+   ],
+   "fixedVersions": [
+    "Protection requires manually enabling Microsoft's Secure Boot revocation (registry flag plus the Secure-Boot-Update scheduled task); see Microsoft's Boot Manager revocation guide",
+    "Microsoft's automatic enforcement phase has not shipped yet"
+   ],
+   "startedAt": "2026-10-22",
+   "closedAt": null,
+   "updatedAt": "2026-11-07T02:30:25Z",
+   "summary": "Kaspersky GReAT found a new UEFI bootkit, BlackX, used in early 2026 against diplomatic organizations in Tajikistan, Uzbekistan and Turkmenistan and attributed with medium confidence to China-linked APT41. It is a copycat of BlackLotus and exploits Baton Drop (CVE-2022-21894) to install its own Machine Owner Keys, load arbitrary EFI files and inject a kernel driver that blinds security software. The targeted machines were fully patched: Microsoft's fix only revokes the vulnerable \"Windows Production PCA 2011\" signing certificate after an admin manually sets a registry flag under HKLM\\SYSTEM\\CurrentControlSet\\Control\\Secureboot and runs the Secure-Boot-Update task, and Microsoft's planned automatic enforcement phase has not shipped. The certificate expired on Oct 19, 2026, but that does not stop vulnerable boot binaries from loading unless it is in the DBX blocklist. Attackers need admin rights or physical access first, so this is a persistence tool, not an initial access vector. Windows admins should apply Microsoft's Secure Boot revocation steps manually.",
+   "xPost": {
+    "id": "2113711555657543822",
+    "postedAt": "2026-10-23T19:18:00.686Z",
+    "url": "https://x.com/pwnwatch_app/status/2113711555657543822"
+   },
+   "isExample": false
+  },
+  {
+   "slug": "sonicwall-sonicos-sslvpn-saml-bypass-cve-2026-19868",
+   "title": "SonicWall SonicOS SSLVPN: SAML / MFA bypass via alternate auth (CVE-2026-19868, CISA KEV) — SNWLID-2026-0014 batch",
+   "url": "https://pwn.watch/i/sonicwall-sonicos-sslvpn-saml-bypass-cve-2026-19868",
+   "json": "https://pwn.watch/i/sonicwall-sonicos-sslvpn-saml-bypass-cve-2026-19868.json",
+   "category": "patch",
+   "status": "live",
+   "severity": "high",
+   "patchStatus": "partial",
+   "product": "SonicWall SonicOS (Gen7 / Gen8) SSLVPN and related services",
+   "stacks": [],
+   "tags": [
+    "sonicwall",
+    "sslvpn",
+    "saml",
+    "mfa-bypass",
+    "cisa-kev",
+    "auth-bypass"
+   ],
+   "cveIds": [
+    "CVE-2026-19868",
+    "CVE-2026-82308",
+    "CVE-2026-107154",
+    "CVE-2026-107155",
+    "CVE-2026-19703",
+    "CVE-2026-77708",
+    "CVE-2026-77709"
+   ],
+   "affectedVersions": [
+    "SonicOS Gen7 7.3.3-7015 and older versions (NVD / PSIRT)",
+    "SonicOS Gen8 8.2.2-8015 and older versions (NVD / PSIRT)"
+   ],
+   "fixedVersions": [
+    "SonicOS Gen7 7.3.4-7013 (BleepingComputer / SonicWall PSIRT SNWLID-2026-0014)",
+    "SonicOS Gen8 8.2.3-8015 (BleepingComputer / SonicWall PSIRT SNWLID-2026-0014)"
+   ],
+   "startedAt": "2026-11-06",
+   "closedAt": null,
+   "updatedAt": "2026-11-07T14:58:23Z",
+   "summary": "SonicWall published SNWLID-2026-0014 covering multiple SonicOS flaws. Primary tracked here: CVE-2026-19868, a use-of-single-factor-authentication issue in the SonicOS SSLVPN service that may allow a user with valid credentials for an alternate authentication method to bypass SAML authentication controls and SAML-enforced MFA (CWE-308). CISA added it to the KEV catalog on 2026-11-06 (due 2026-11-20; ransomware use Unknown). NVD (published 2026-11-06T19:17:48Z by PSIRT@sonicwall.com) lists Gen7 SonicOS 7.3.3-7015 and older and Gen8 8.2.2-8015 and older as affected; no CVSS in NVD yet. Same advisory also covers sibling SonicOS CVEs CVE-2026-82308 (pre-auth SSL-VPN heap overflow DoS), CVE-2026-107154 / CVE-2026-107155 (management interface), CVE-2026-19703 (weak password hashing on virtual appliances), and CVE-2026-77708 / CVE-2026-77709 (pre-auth TACACS+ buffer overflows). Confirm fixed builds on the vendor advisory.",
+   "xPost": {
+    "id": "2118813171343564862",
+    "postedAt": "2026-11-06T21:10:00.634Z",
+    "url": "https://x.com/pwnwatch_app/status/2118813171343564862"
+   },
+   "isExample": false
+  },
+  {
+   "slug": "apple-multiple-products-cve-2024-27834",
+   "title": "Apple Multiple Products: WebKit Pointer Authentication bypass (CVE-2024-27834) added to CISA KEV",
+   "url": "https://pwn.watch/i/apple-multiple-products-cve-2024-27834",
+   "json": "https://pwn.watch/i/apple-multiple-products-cve-2024-27834.json",
+   "category": "patch",
+   "status": "closed",
+   "severity": "high",
+   "patchStatus": "patched",
+   "product": "Apple Multiple Products (WebKit)",
+   "stacks": [],
+   "tags": [
+    "apple",
+    "webkit",
+    "ios",
+    "macos",
+    "safari",
+    "cisa-kev",
+    "auth-bypass"
+   ],
+   "cveIds": [
+    "CVE-2024-27834"
+   ],
+   "affectedVersions": [
+    "Safari before 17.5",
+    "iOS/iPadOS before 17.5 and before 16.7.8",
+    "macOS before Sonoma 14.5",
+    "tvOS before 17.5",
+    "watchOS before 10.5"
+   ],
+   "fixedVersions": [
+    "Safari 17.5",
+    "iOS 17.5 / iPadOS 17.5",
+    "iOS 16.7.8 / iPadOS 16.7.8",
+    "macOS Sonoma 14.5",
+    "tvOS 17.5",
+    "watchOS 10.5"
+   ],
+   "startedAt": "2026-11-04",
+   "closedAt": "2026-11-04",
+   "updatedAt": "2026-11-05T01:18:12Z",
+   "summary": "Apple iOS, iPadOS, macOS, Safari, tvOS and watchOS contained an improper authentication issue in WebKit that could let an attacker who already had arbitrary read and write capability bypass Pointer Authentication. Apple fixed it in Safari 17.5, iOS/iPadOS 17.5 and 16.7.8, macOS Sonoma 14.5, tvOS 17.5 and watchOS 10.5 (May 2024). CISA added CVE-2024-27834 to the Known Exploited Vulnerabilities catalog on Nov 4 2026 (due Nov 18 2026) based on evidence of active exploitation.",
+   "xPost": null,
+   "isExample": false
+  },
+  {
+   "slug": "cisco-sd-wan-keydrift-uat-11473-cve-2026-20127",
+   "title": "KeyDrift malware steals SD-WAN encryption keys from Cisco Catalyst SD-WAN controllers hacked through CVE-2026-20127",
+   "url": "https://pwn.watch/i/cisco-sd-wan-keydrift-uat-11473-cve-2026-20127",
+   "json": "https://pwn.watch/i/cisco-sd-wan-keydrift-uat-11473-cve-2026-20127.json",
+   "category": "patch",
+   "status": "live",
+   "severity": "critical",
+   "patchStatus": "patched",
+   "product": "Cisco Catalyst SD-WAN Controller, Manager and Validator",
+   "stacks": [],
+   "tags": [
+    "cisco",
+    "sd-wan",
+    "apt",
+    "volt-typhoon",
+    "exploited",
+    "cisa-kev",
+    "auth-bypass",
+    "backdoor"
+   ],
+   "cveIds": [
+    "CVE-2026-20127"
+   ],
+   "affectedVersions": [
+    "Cisco Catalyst SD-WAN releases earlier than 20.9 (migrate to a fixed release)",
+    "20.9 before 20.9.8.2",
+    "20.11 (end of maintenance; fixed in 20.12.6.1)",
+    "20.12 before 20.12.5.3 / 20.12.6.1",
+    "20.13, 20.14 (end of maintenance) and 20.15 before 20.15.4.2",
+    "20.16 (end of maintenance) and 20.18 before 20.18.2.1"
+   ],
+   "fixedVersions": [
+    "20.9.8.2",
+    "20.12.5.3",
+    "20.12.6.1",
+    "20.15.4.2",
+    "20.18.2.1"
+   ],
+   "startedAt": "2026-10-28",
+   "closedAt": null,
+   "updatedAt": "2026-11-07T02:30:25Z",
+   "summary": "Cisco Talos said on Oct 28 2026 that an APT it tracks as UAT-11473 exploited CVE-2026-20127, the CVSS 10.0 authentication bypass in Cisco Catalyst SD-WAN Controller, Manager and Validator that Cisco fixed in February, and installed a custom malware framework called KeyDrift. Its PolyFlame module is injected into the controller's vdaemon processes as an in-memory backdoor and relay, and its LittleFilch module hooks SSL_read to pull AES-256 key material for a preset list of edge routers out of decrypted control traffic, staging it encrypted for exfiltration. Talos calls the activity historical, says targets included space and satellite services, defense and aerospace technology and policy research, and assesses with high confidence that the group's infrastructure overlaps with Volt Typhoon's Silent Train covert network. There is no workaround; upgrade to a fixed release and check controllers for compromise.",
+   "xPost": {
+    "id": "2115733629628469527",
+    "postedAt": "2026-10-29T09:13:00.743Z",
+    "url": "https://x.com/pwnwatch_app/status/2115733629628469527"
+   },
+   "isExample": false
+  },
+  {
+   "slug": "dahua-cameras-easy4ip-p2p-hijacking-ukraine-oct-2026",
+   "title": "Dahua cameras and recorders hijacked through Easy4IP P2P cloud access, CERT-UA warns",
+   "url": "https://pwn.watch/i/dahua-cameras-easy4ip-p2p-hijacking-ukraine-oct-2026",
+   "json": "https://pwn.watch/i/dahua-cameras-easy4ip-p2p-hijacking-ukraine-oct-2026.json",
+   "category": "patch",
+   "status": "live",
+   "severity": "high",
+   "patchStatus": "partial",
+   "product": "Dahua IP cameras, NVRs and DVRs (Easy4IP P2P cloud access)",
+   "stacks": [],
+   "tags": [
+    "dahua",
+    "ip-camera",
+    "iot",
+    "auth-bypass",
+    "cisa-kev",
+    "ukraine"
+   ],
+   "cveIds": [
+    "CVE-2021-33044",
+    "CVE-2021-33045"
+   ],
+   "affectedVersions": [
+    "Dahua IP cameras, NVRs and DVRs with P2P/Cloud Access (Easy4IP) enabled",
+    "Dahua devices on firmware older than the fixes for CVE-2021-33044 and CVE-2021-33045"
+   ],
+   "fixedVersions": [
+    "Firmware with Dahua's fixes for CVE-2021-33044 and CVE-2021-33045 (see Dahua's advisory); no fix for the P2P serial-number exposure, which is mitigated by turning P2P off"
+   ],
+   "startedAt": "2026-10-26",
+   "closedAt": null,
+   "updatedAt": "2026-11-07T02:30:25Z",
+   "summary": "Ukraine's CERT-UA warns that attackers are taking over Dahua IP cameras, NVRs and DVRs: they watch the video stream, change device settings and add their own accounts. The main way in is Dahua's P2P cloud access (Easy4IP), which reaches devices by serial number through the manufacturer's cloud, bypassing NAT and firewalls. Serial numbers follow a predictable pattern, so attackers appear to guess them in bulk, meaning any device with P2P turned on is at risk even if it is not exposed to the internet. Logins are then beaten with weak or default passwords or, on outdated firmware, the 2021 authentication bypasses CVE-2021-33044 and CVE-2021-33045. The methods match Hunt.io's Operation CameraSwarm, which compromised 14,530+ Dahua devices in Ukraine and Russia between June 17 and July 22, 2026 and left a backdoor account on 1,923 of them, though no link between the two has been shown. Turn off P2P/Cloud Access if you don't need it, keep cameras off the open internet, remove unknown accounts and update firmware.",
+   "xPost": {
+    "id": "2114980919484527065",
+    "postedAt": "2026-10-27T07:22:00.585Z",
+    "url": "https://x.com/pwnwatch_app/status/2114980919484527065"
+   },
+   "isExample": false
+  },
+  {
+   "slug": "ruby-regexp-compilation-fixes-gitlab-cves",
+   "title": "Ruby 4.0.9, 3.4.12 and 3.3.13 fix Regexp compiler memory bugs behind GitLab's CVSS 10 RCEs",
+   "url": "https://pwn.watch/i/ruby-regexp-compilation-fixes-gitlab-cves",
+   "json": "https://pwn.watch/i/ruby-regexp-compilation-fixes-gitlab-cves.json",
+   "category": "patch",
+   "status": "live",
+   "severity": "critical",
+   "patchStatus": "patched",
+   "product": "Ruby (CRuby / Onigmo regex engine)",
+   "stacks": [
+    "ruby"
+   ],
+   "tags": [
+    "ruby",
+    "gitlab",
+    "rce",
+    "cisa-kev",
+    "exploited",
+    "alpine-linux"
+   ],
+   "cveIds": [
+    "CVE-2026-89078",
+    "CVE-2026-93577",
+    "CVE-2026-97229",
+    "CVE-2026-110264"
+   ],
+   "affectedVersions": [
+    "Ruby 4.0 before 4.0.9",
+    "Ruby 3.4 before 3.4.12",
+    "Ruby 3.3 before 3.3.13",
+    "Ruby 3.2 and older: end-of-life (3.2 since 2026-04-01), no fixed release",
+    "Only apps that compile a regular expression from an attacker-controlled string"
+   ],
+   "fixedVersions": [
+    "4.0.9",
+    "3.4.12",
+    "3.3.13"
+   ],
+   "startedAt": "2026-10-23",
+   "closedAt": null,
+   "updatedAt": "2026-11-07T09:29:57Z",
+   "summary": "Ruby released 4.0.9, 3.4.12 and 3.3.13 on Oct 23 2026 to fix bugs in its Onigmo regular-expression engine (a double free and integer overflows) that GitLab turned into remote code execution on its servers, tracked by GitLab as CVE-2026-89078, CVE-2026-93577, CVE-2026-97229 and CVE-2026-110264. Any Ruby app that compiles a regex from an attacker-controlled string (Regexp.new, Regexp.union, Regexp.compile or /#{input}/) is exposed; Regexp.timeout and pattern-length limits do not protect. Apps that only use their own hard-coded regexes are not affected. Ruby 3.2 and older are end-of-life and get no fix.",
+   "xPost": {
+    "id": "2113584216948765166",
+    "postedAt": "2026-10-23T10:52:00.865Z",
+    "url": "https://x.com/pwnwatch_app/status/2113584216948765166"
+   },
+   "isExample": false
+  },
+  {
+   "slug": "arista-velocloud-orchestrator-cve-2026-114625",
+   "title": "Arista VeloCloud Orchestrator zero-day CVE-2026-114625 exploited in attacks",
+   "url": "https://pwn.watch/i/arista-velocloud-orchestrator-cve-2026-114625",
+   "json": "https://pwn.watch/i/arista-velocloud-orchestrator-cve-2026-114625.json",
+   "category": "patch",
+   "status": "live",
+   "severity": "critical",
+   "patchStatus": "patched",
+   "product": "Arista VeloCloud Orchestrator (VCO) On-Prem",
+   "stacks": [],
+   "tags": [
+    "arista",
+    "velocloud",
+    "sd-wan",
+    "sql-injection",
+    "zero-day",
+    "privilege-escalation",
+    "cisa-kev"
+   ],
+   "cveIds": [
+    "CVE-2026-114625"
+   ],
+   "affectedVersions": [
+    "VCO 5.2.x before 5.2.3.18",
+    "VCO 6.1.x before 6.1.3.10",
+    "VCO 6.4.x before 6.4.2.12"
+   ],
+   "fixedVersions": [
+    "5.2.3.18",
+    "6.1.3.10",
+    "6.4.2.12"
+   ],
+   "startedAt": "2026-10-22",
+   "closedAt": null,
+   "updatedAt": "2026-11-07T02:30:25Z",
+   "summary": "Arista patched an actively exploited critical SQL injection flaw (CVE-2026-114625, CVSS 9.9) in on-prem VeloCloud Orchestrator that lets any authenticated user gain operator privileges and masquerade as the local 'superuser operator'. Hosted VCO is already patched; on-prem admins need to upgrade.",
+   "xPost": {
+    "id": "2113331616257077699",
+    "postedAt": "2026-10-22T18:08:16.065Z",
+    "url": "https://x.com/pwnwatch_app/status/2113331616257077699"
+   },
+   "isExample": false
+  },
+  {
+   "slug": "cpguard-opsshield-update-channel-compromise-nov-2026",
+   "title": "Attackers hijacked cPGuard's update channel and backdoored about 2,950 Linux hosting servers",
+   "url": "https://pwn.watch/i/cpguard-opsshield-update-channel-compromise-nov-2026",
+   "json": "https://pwn.watch/i/cpguard-opsshield-update-channel-compromise-nov-2026.json",
+   "category": "supply-chain",
+   "status": "live",
+   "severity": "critical",
+   "patchStatus": "patched",
+   "product": "OPSSHIELD cPGuard (Linux web hosting security agent)",
+   "stacks": [
+    "linux",
+    "hosting"
+   ],
+   "tags": [
+    "linux",
+    "hosting",
+    "cpguard",
+    "opsshield",
+    "supply-chain",
+    "update-channel",
+    "backdoor",
+    "web-hosting"
+   ],
+   "cveIds": [],
+   "affectedVersions": [
+    "cPGuard 5.88.12 through 5.88.19 (malicious updates served ~02:08–03:20 UTC on 2026-11-02)",
+    "OPSSHIELD billing portal accounts at manage.opsshield.com"
+   ],
+   "fixedVersions": [
+    "cPGuard 5.88.25 or later (5.88.26 removes the hidden root shell and follow-up cleans the i93677 task)"
+   ],
+   "startedAt": "2026-11-01",
+   "closedAt": null,
+   "updatedAt": "2026-11-07T02:30:25Z",
+   "summary": "OPSSHIELD, maker of the cPGuard web-hosting security suite, says that between Nov 1 and 2 2026 an attacker registered a fake customer account, broke into its billing and licensing server at manage.opsshield.com, stole the keys used to publish updates, and for about 70 minutes on Nov 2 (02:08–03:20 UTC) pushed a malicious cPGuard update (versions 5.88.12–5.88.19). The fake update ran as root on servers that checked for updates in that window, stole /etc/shadow and /etc/passwd, root SSH material, MySQL root credentials, root shell history and some S3 keys, uploaded the loot, and left a hidden root shell. OPSSHIELD estimates about 2,950 customer servers ran the fake update and that about 7,900 billing-portal account records (name, company, address, email, bcrypt password hash) were copied. It says the attacker retrieved 32 collected loot files, revoked the stolen update key, published clean cPGuard 5.88.25/5.88.26 to remove the backdoor, and is rebuilding its billing and licensing systems. Hosts that installed 5.88.12–5.88.19 must treat the server as compromised, update to 5.88.25 or later, rotate root and DB passwords, replace SSH keys, and reset their OPSSHIELD billing password.",
+   "xPost": {
+    "id": "2117951745070715281",
+    "postedAt": "2026-11-04T12:07:00.600Z",
+    "url": "https://x.com/pwnwatch_app/status/2117951745070715281"
+   },
+   "isExample": false
+  },
+  {
+   "slug": "strutil-core-rubygems-testmetest-worm-nov-2026",
+   "title": "Malicious Ruby gem strutil-core delivers testmetest/Shai-Hulud-descendant worm",
+   "url": "https://pwn.watch/i/strutil-core-rubygems-testmetest-worm-nov-2026",
+   "json": "https://pwn.watch/i/strutil-core-rubygems-testmetest-worm-nov-2026.json",
+   "category": "supply-chain",
+   "status": "live",
+   "severity": "high",
+   "patchStatus": "patched",
+   "product": "RubyGems package strutil-core (related: PyPI pystr-codec; lineage shared with npm testmetest worm)",
+   "stacks": [
+    "ruby"
+   ],
+   "tags": [
+    "ruby",
+    "rubygems",
+    "shai-hulud",
+    "supply-chain",
+    "credential-theft",
+    "worm",
+    "wiper"
+   ],
+   "cveIds": [],
+   "affectedVersions": [
+    "strutil-core 1.0.1 (malicious)",
+    "strutil-core 1.0.0 (clean seed by same account; both removed)"
+   ],
+   "fixedVersions": [
+    "Malicious versions removed from RubyGems; do not install strutil-core — rebuild any host that installed 1.0.1"
+   ],
+   "startedAt": "2026-11-01",
+   "closedAt": null,
+   "updatedAt": "2026-11-07T02:30:25Z",
+   "summary": "Socket Threat Research (Nov 6 2026) analyzed strutil-core 1.0.1 on RubyGems, published by account jamnajiea: a clean 1.0.0 on Nov 1 was followed less than two hours later by malicious 1.0.1. During gem install, ext/strutil-core/extconf.rb downloads Bun and runs a 5.48 MB credential-stealing worm (testmetest / Miasma lineage descended from the public Shai-Hulud toolkit). The worm steals cloud/CI/registry/SSH/AI-tool/wallet credentials, exfiltrates to paleasbest.top (GitHub/GitLab fallbacks), can republish to RubyGems/npm/PyPI, poisons AI coding tool configs, and can wipe the home directory if a stolen GitHub token returns 401/403. Socket flagged it 70 seconds after publication; RubyGems removed both versions about five hours later. No public dependents or confirmed victims found. Related PyPI sibling pystr-codec used the same collection endpoint. See also the npm-focused testmetest incident.",
+   "xPost": {
+    "id": "2118791528852434958",
+    "postedAt": "2026-11-06T19:44:00.653Z",
+    "url": "https://x.com/pwnwatch_app/status/2118791528852434958"
+   },
+   "isExample": false
+  },
+  {
+   "title": "malformed: no slug"
+  }
+ ]
+}

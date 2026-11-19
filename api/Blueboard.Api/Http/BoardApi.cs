@@ -3,6 +3,7 @@ using Blueboard.Api.Board;
 using Blueboard.Api.Core;
 using Blueboard.Api.Data;
 using Blueboard.Api.Graph;
+using Blueboard.Api.Intel;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Azure.Functions.Worker;
@@ -13,7 +14,7 @@ namespace Blueboard.Api.Http;
 /// REST API for the React app, called cross-origin from the web app with an Entra bearer token (CORS allows only the web origin).
 /// Every route needs Board.Post (Board.Admin for reports), except /me which tells a role-less user why.
 /// </summary>
-public sealed class BoardApi(Endpoint ep, BoardService board, Search search, Reporting reporting, Broker broker, Enrichment enrich, Db db)
+public sealed class BoardApi(Endpoint ep, BoardService board, Search search, Reporting reporting, Broker broker, Enrichment enrich, IntelService intel, Db db)
 {
     private static string? Q(HttpRequest r, string k) => r.Query[k].ToString() is { Length: > 0 } v ? v : null;
     private static long? Long(HttpRequest r, string k) => long.TryParse(Q(r, k), out var v) ? v : null;
@@ -92,7 +93,57 @@ public sealed class BoardApi(Endpoint ep, BoardService board, Search search, Rep
 
     [Function("incident-get")]
     public Task<IActionResult> Incident([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "incidents/{id}")] HttpRequest req, string id) =>
-        ep.RunAsync(req, async _ => await enrich.GetIncidentAsync(id, req.HttpContext.RequestAborted));
+        ep.RunAsync(req, async _ =>
+        {
+            var inc = await enrich.GetIncidentAsync(id, req.HttpContext.RequestAborted);
+            await intel.AnnotateIncidentAsync(inc, req.HttpContext.RequestAborted);
+            return inc;
+        });
+
+    // ── threat intel (/intel pages) ────────────────────────────────────────────────────────────
+    public sealed record IntelKeyBody(string Key);
+    public sealed record WatchBody(string? Kind, string? Value, bool? Enabled);
+    public sealed record ExposureBody(string[] CveIds);
+
+    [Function("intel-index")]
+    public Task<IActionResult> IntelIndex([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "intel")] HttpRequest req) =>
+        ep.RunAsync(req, async me => await intel.IndexAsync(me, req.HttpContext.RequestAborted));
+
+    [Function("intel-lookup")]
+    public Task<IActionResult> IntelLookup([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "intel/lookup")] HttpRequest req) =>
+        ep.RunAsync(req, async me => await intel.LookupAsync(me, Q(req, "key") ?? throw new BoardException("key required"), req.HttpContext.RequestAborted));
+
+    [Function("intel-post")]
+    public Task<IActionResult> IntelPost([HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "intel/post")] HttpRequest req) =>
+        ep.RunAsync(req, async me => await intel.PostSummaryAsync(me, (await Endpoint.BodyAsync<IntelKeyBody>(req)).Key, req.HttpContext.RequestAborted));
+
+    [Function("intel-badges")]
+    public Task<IActionResult> IntelBadges([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "intel/badges")] HttpRequest req) =>
+        ep.RunAsync(req, async _ => await intel.BadgesAsync(Many(req, "cve") ?? [], req.HttpContext.RequestAborted));
+
+    [Function("intel-pwnwatch-brief")]
+    public Task<IActionResult> IntelBrief([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "intel/pwnwatch/{slug}")] HttpRequest req, string slug) =>
+        ep.RunAsync(req, async _ => await intel.PwnBriefAsync(slug, req.HttpContext.RequestAborted));
+
+    [Function("intel-exposure")]
+    public Task<IActionResult> IntelExposure([HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "intel/exposure")] HttpRequest req) =>
+        ep.RunAsync(req, async me => await intel.ExposureAsync(me, (await Endpoint.BodyAsync<ExposureBody>(req)).CveIds ?? [], req.HttpContext.RequestAborted));
+
+    [Function("intel-watch-add")]
+    public Task<IActionResult> WatchAdd([HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "intel/watches")] HttpRequest req) =>
+        ep.RunAsync(req, async me =>
+        {
+            var b = await Endpoint.BodyAsync<WatchBody>(req);
+            return await intel.AddWatchAsync(me, b.Kind ?? "", b.Value ?? "", req.HttpContext.RequestAborted);
+        });
+
+    [Function("intel-watch-set")]
+    public Task<IActionResult> WatchSet([HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "intel/watches/{id}")] HttpRequest req, string id) =>
+        ep.RunAsync(req, async me =>
+        {
+            var b = await Endpoint.BodyAsync<WatchBody>(req);
+            return await intel.SetWatchAsync(me, Id(id), b.Enabled ?? throw new BoardException("enabled required"), req.HttpContext.RequestAborted);
+        });
 
     [Function("actions-list")]
     public Task<IActionResult> Actions([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "actions")] HttpRequest req) =>

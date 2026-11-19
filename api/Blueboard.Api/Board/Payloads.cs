@@ -7,7 +7,7 @@ namespace Blueboard.Api.Board;
 /// <summary>Validates and normalises typed message payloads (ioc, verdict, finding, status).</summary>
 public static class Payloads
 {
-    private static readonly string[] IocKinds = ["ip", "domain", "url", "sha1", "sha256", "md5", "email", "user", "device"];
+    private static readonly string[] IocKinds = ["ip", "domain", "url", "sha1", "sha256", "md5", "email", "user", "device", "cve"];
     private static readonly string[] IocVerdicts = ["malicious", "suspicious", "benign", "unknown"];
     private static readonly string[] Classifications = ["truePositive", "falsePositive", "informationalExpectedActivity", "unknown"];
 
@@ -37,6 +37,8 @@ public static class Payloads
             var value = Str(i, "value");
             if (kind is null || !IocKinds.Contains(kind)) throw new BoardException($"invalid ioc kind '{kind}'");
             if (value is null || value.Length is < 1 or > 2048) throw new BoardException("invalid ioc value");
+            // CVE ids are stored upper case so search and /intel match them exactly, like hashes.
+            if (kind == "cve") value = Intel.Indicators.NormaliseCve(value) ?? throw new BoardException("invalid ioc value: cve must look like CVE-2024-12345");
             var verdict = Str(i, "verdict") ?? "unknown";
             if (!IocVerdicts.Contains(verdict)) throw new BoardException($"invalid ioc verdict '{verdict}'");
             var o = new JsonObject { ["kind"] = kind, ["value"] = value, ["verdict"] = verdict };
