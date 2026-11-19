@@ -253,6 +253,16 @@ public sealed partial class BoardService(Db db, Audit audit, Settings settings)
         return (await GetAsync(id, ct))!;
     }
 
+    /// <summary>The typed messages an incident summary rolls up (verdicts, IOCs, findings, questions), oldest first.</summary>
+    public async Task<IReadOnlyList<Message>> ListForIncidentAsync(Guid incidentId, CancellationToken ct = default)
+    {
+        await using var cmd = db.Command($"""
+            {MessageSelect} where m.incident_id = @id and m.type in ('verdict', 'ioc', 'finding', 'question')
+            order by m.seq asc limit 2000
+            """).With("id", incidentId);
+        return await QueryMessagesAsync(cmd, ct);
+    }
+
     public async Task<IReadOnlyList<Message>> GetManyAsync(IReadOnlyList<Guid> ids, CancellationToken ct = default)
     {
         if (ids.Count == 0) return [];

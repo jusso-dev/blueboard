@@ -1,4 +1,5 @@
 using Blueboard.Api.Actions;
+using Blueboard.Api.Board;
 using Blueboard.Api.Core;
 using Blueboard.Api.Data;
 using Blueboard.Api.Graph;
@@ -12,7 +13,7 @@ namespace Blueboard.Api.Jobs;
 /// Background work. Timer triggers run on one instance at a time (singleton lock in host storage);
 /// a Postgres advisory lock makes that hold even across deployment slots.
 /// </summary>
-public sealed class Timers(Db db, Ingest ingest, Broker broker, Settings settings, ILogger<Timers> log)
+public sealed class Timers(Db db, Ingest ingest, Broker broker, PlaybookRunner playbooks, Settings settings, ILogger<Timers> log)
 {
     private const long LockKey = 7_340_001;
 
@@ -34,6 +35,17 @@ public sealed class Timers(Db db, Ingest ingest, Broker broker, Settings setting
         {
             var (resumed, interrupted) = await broker.RecoverAsync(ct);
             if (resumed + interrupted > 0) log.LogWarning("action recovery: resumed {Resumed}, interrupted {Interrupted}", resumed, interrupted);
+        }, ct);
+    }
+
+    /// <summary>Backstop for playbook steps whose prerequisites were completed outside the API (e.g. a lease edge case).</summary>
+    [Function("unlock-playbook-steps")]
+    public async Task UnlockPlaybookSteps([TimerTrigger("45 */1 * * * *")] TimerInfo timer, CancellationToken ct)
+    {
+        await WithLock(async () =>
+        {
+            var posted = await playbooks.UnlockPendingAsync(ct);
+            if (posted > 0) log.LogInformation("posted {Count} unlocked playbook steps", posted);
         }, ct);
     }
 

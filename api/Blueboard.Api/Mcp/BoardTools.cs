@@ -15,7 +15,7 @@ namespace Blueboard.Api.Mcp;
 /// (Streamable HTTP). Every call authenticates the bearer token from the transport headers and
 /// re-reads the caller's roles from Entra; there is no shared key. Board content is untrusted data.
 /// </summary>
-public sealed class BoardTools(Authenticator auth, BoardService board, Broker broker, Enrichment enrich, ILogger<BoardTools> log)
+public sealed class BoardTools(Authenticator auth, BoardService board, Broker broker, Enrichment enrich, PlaybookRunner playbooks, ILogger<BoardTools> log)
 {
     /// <summary>Authenticate the MCP caller (bearer token), require a role, run, and return JSON text or an error string.</summary>
     private async Task<string> Call(ToolInvocationContext ctx, string? role, Func<Principal, Task<object?>> fn)
@@ -107,7 +107,12 @@ public sealed class BoardTools(Authenticator auth, BoardService board, Broker br
         [McpToolTrigger("complete_claim", "Finish (outcome=done) or hand back (outcome=release) a message you claimed.")] ToolInvocationContext ctx,
         [McpToolProperty("message_id", "Message id", isRequired: true)] string messageId,
         [McpToolProperty("outcome", "done | release", isRequired: true)] string outcome) =>
-        Call(ctx, Roles.Poster, async me => await board.SettleClaimAsync(me, Guid_(messageId), outcome));
+        Call(ctx, Roles.Poster, async me =>
+        {
+            var settled = await board.SettleClaimAsync(me, Guid_(messageId), outcome);
+            await playbooks.AfterSettleAsync(settled); // a finished playbook step may unlock the steps that wait on it
+            return settled;
+        });
 
     [Function(nameof(GetIncident))]
     public Task<string> GetIncident(

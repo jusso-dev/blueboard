@@ -6,7 +6,8 @@ using Blueboard.Api.Data;
 using Blueboard.Api.Graph;
 
 // blueboard migrate                 apply db/migrations (DATABASE_URL, or PGHOST + PG_ENTRA_AUTH=true)
-// blueboard seed-dev [--sample]     local principals with roles, plus an optional sample incident (refused in Azure)
+// blueboard seed-dev [--sample]     local principals with roles, plus optional sample incidents (refused in Azure)
+// blueboard playbooks [dir]         validate playbooks/*.md and list what each matches (exit 1 if any file is bad)
 var cmd = args.FirstOrDefault() ?? "help";
 var settings = Settings.FromEnvironment();
 await using var db = new Db(settings);
@@ -29,14 +30,23 @@ switch (cmd)
         {
             var audit = new Audit(db);
             var board = new BoardService(db, audit, settings);
-            var ingest = new Ingest(db, board, new MsClient(new HttpClient()), new SystemPrincipal(db), settings);
+            var system = new SystemPrincipal(db);
+            var runner = new PlaybookRunner(db, board, system, Playbooks.Load(Path.Combine(AppContext.BaseDirectory, "playbooks")));
+            var ingest = new Ingest(db, board, new MsClient(new HttpClient()), system, settings, runner);
             Console.WriteLine($"sample incident: {await ingest.UpsertAsync(Seed.SampleIncident())}");
+            Console.WriteLine($"sample phishing incident: {await ingest.UpsertAsync(Seed.PhishingIncident())}");
         }
         Console.WriteLine("seeded");
         break;
 
+    case "playbooks":
+        var set = Playbooks.Load(args.Length > 1 ? args[1] : Path.Combine(AppContext.BaseDirectory, "playbooks"));
+        foreach (var p in set.All) Console.WriteLine($"ok   {p.File}: {p.Id}, {p.Steps.Count} steps");
+        foreach (var p in set.Problems) Console.WriteLine($"FAIL {p.File}: {p.Error}");
+        return set.Problems.Count == 0 ? 0 : 1;
+
     default:
-        Console.WriteLine("usage: blueboard migrate | seed-dev [--sample]");
+        Console.WriteLine("usage: blueboard migrate | seed-dev [--sample] | playbooks [dir]");
         return cmd == "help" ? 0 : 1;
 }
 return 0;
@@ -96,6 +106,40 @@ internal static class Seed
                     ["id"] = "da637f-sample-2", ["title"] = "Possible credential theft via LSASS access", ["severity"] = "high",
                     ["serviceSource"] = "microsoftDefenderForEndpoint", ["mitreTechniques"] = new[] { "T1003.001" },
                     ["evidence"] = new object[] { new Dictionary<string, object> { ["@odata.type"] = "#microsoft.graph.security.deviceEvidence", ["mdeDeviceId"] = device, ["deviceDnsName"] = "fin-lt-0423.contoso.local" } },
+                },
+            },
+        });
+    }
+
+    public static JsonElement PhishingIncident()
+    {
+        var now = DateTimeOffset.UtcNow;
+        return JsonSerializer.SerializeToElement(new Dictionary<string, object>
+        {
+            ["id"] = "90211",
+            ["displayName"] = "Email messages containing malicious URL removed after delivery",
+            ["severity"] = "medium",
+            ["status"] = "active",
+            ["incidentWebUrl"] = "https://security.microsoft.com/incidents/90211",
+            ["createdDateTime"] = now.AddMinutes(-40).ToString("O"),
+            ["lastUpdateDateTime"] = now.AddMinutes(-5).ToString("O"),
+            ["alerts"] = new object[]
+            {
+                new Dictionary<string, object>
+                {
+                    ["id"] = "fa637f-sample-3", ["title"] = "Email messages containing malicious URL removed after delivery", ["severity"] = "medium",
+                    ["category"] = "InitialAccess", ["serviceSource"] = "microsoftDefenderForOffice365", ["mitreTechniques"] = new[] { "T1566.002" },
+                    ["evidence"] = new object[]
+                    {
+                        new Dictionary<string, object>
+                        {
+                            ["@odata.type"] = "#microsoft.graph.security.analyzedMessageEvidence", ["networkMessageId"] = "0b9a5e1c-7d2f-4e3a-9c8b-1f2e3d4c5b6a",
+                            ["recipientEmailAddress"] = "a.lee@contoso.com", ["subject"] = "Action required: payroll update",
+                            ["p1Sender"] = new { emailAddress = "payroll@contoso-hr.example" }, ["urls"] = new[] { "https://contoso-hr.example/login" },
+                        },
+                        new Dictionary<string, object> { ["@odata.type"] = "#microsoft.graph.security.mailboxEvidence", ["primaryAddress"] = "a.lee@contoso.com" },
+                        new Dictionary<string, object> { ["@odata.type"] = "#microsoft.graph.security.urlEvidence", ["url"] = "https://contoso-hr.example/login" },
+                    },
                 },
             },
         });

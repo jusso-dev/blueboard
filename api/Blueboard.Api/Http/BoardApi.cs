@@ -13,7 +13,8 @@ namespace Blueboard.Api.Http;
 /// REST API for the React app, called cross-origin from the web app with an Entra bearer token (CORS allows only the web origin).
 /// Every route needs Board.Post (Board.Admin for reports), except /me which tells a role-less user why.
 /// </summary>
-public sealed class BoardApi(Endpoint ep, BoardService board, Search search, Reporting reporting, Broker broker, Enrichment enrich, Db db)
+public sealed class BoardApi(Endpoint ep, BoardService board, Search search, Reporting reporting, Broker broker, Enrichment enrich, Db db,
+    IncidentQueries incidents, PlaybookRunner playbookRunner, PlaybookSet playbooks)
 {
     private static string? Q(HttpRequest r, string k) => r.Query[k].ToString() is { Length: > 0 } v ? v : null;
     private static long? Long(HttpRequest r, string k) => long.TryParse(Q(r, k), out var v) ? v : null;
@@ -58,9 +59,10 @@ public sealed class BoardApi(Endpoint ep, BoardService board, Search search, Rep
         ep.RunAsync(req, async me =>
         {
             var b = await Endpoint.BodyAsync<ClaimBody>(req);
-            return b.Op == "claim"
-                ? await board.ClaimAsync(me, Id(id), b.LeaseSeconds, req.HttpContext.RequestAborted)
-                : await board.SettleClaimAsync(me, Id(id), b.Op, req.HttpContext.RequestAborted);
+            if (b.Op == "claim") return await board.ClaimAsync(me, Id(id), b.LeaseSeconds, req.HttpContext.RequestAborted);
+            var settled = await board.SettleClaimAsync(me, Id(id), b.Op, req.HttpContext.RequestAborted);
+            await playbookRunner.AfterSettleAsync(settled, req.HttpContext.RequestAborted);
+            return settled;
         });
 
     [Function("search")]
@@ -70,29 +72,32 @@ public sealed class BoardApi(Endpoint ep, BoardService board, Search search, Rep
             Q(req, "author_kind"), Q(req, "incident"), Q(req, "claim_state"), Date(req, "from"), Date(req, "to"),
             Q(req, "sort") ?? "newest", Int(req, "limit", 50), Int(req, "offset", 0)), req.HttpContext.RequestAborted));
 
+    /// <summary>?view=queue: the Queue home page (open incidents with aggregates). Otherwise the most recent incidents.</summary>
     [Function("incidents-list")]
     public Task<IActionResult> Incidents([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "incidents")] HttpRequest req) =>
-        ep.RunAsync(req, async _ =>
-        {
-            await using var cmd = db.Command("""
-                select id, graph_id, display_name, severity, status, classification, alert_count, web_url,
-                       (select count(*)::int from messages m where m.incident_id = incidents.id) as message_count
-                from incidents order by coalesce(updated_at_src, first_seen_at) desc limit 100
-                """);
-            var list = new List<object>();
-            await using var r = await cmd.ExecuteReaderAsync(req.HttpContext.RequestAborted);
-            while (await r.ReadAsync())
-                list.Add(new
-                {
-                    id = r.GetGuid(0), graph_id = r.GetString(1), display_name = r.GetString(2), severity = r.GetString(3), status = r.GetString(4),
-                    classification = r.Get<string>("classification"), alert_count = r.GetInt32(6), web_url = r.Get<string>("web_url"), message_count = r.GetInt32(8),
-                });
-            return list;
-        });
+        ep.RunAsync(req, async me => Q(req, "view") == "queue"
+            ? await incidents.QueueAsync(me, Q(req, "include_resolved") == "true", req.HttpContext.RequestAborted)
+            : await incidents.ListAsync(Int(req, "limit", 100), req.HttpContext.RequestAborted));
 
+    /// <summary>Incident detail plus the summary panel, rolled up from stored messages and actions.</summary>
     [Function("incident-get")]
     public Task<IActionResult> Incident([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "incidents/{id}")] HttpRequest req, string id) =>
-        ep.RunAsync(req, async _ => await enrich.GetIncidentAsync(id, req.HttpContext.RequestAborted));
+        ep.RunAsync(req, async _ =>
+        {
+            var inc = await enrich.GetIncidentAsync(id, req.HttpContext.RequestAborted);
+            var summary = await incidents.SummaryAsync(Guid.Parse(inc["id"]!.GetValue<string>()), req.HttpContext.RequestAborted);
+            inc["summary"] = System.Text.Json.JsonSerializer.SerializeToNode(summary, Json.Options);
+            return inc;
+        });
+
+    /// <summary>Loaded playbooks and the files skipped at startup (for a setup page).</summary>
+    [Function("playbooks")]
+    public Task<IActionResult> PlaybookList([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "playbooks")] HttpRequest req) =>
+        ep.RunAsync(req, _ => Task.FromResult<object?>(new
+        {
+            playbooks = playbooks.All.Select(p => new { p.Id, p.Title, p.File, p.Match, steps = p.Steps.Count }),
+            problems = playbooks.Problems,
+        }));
 
     [Function("actions-list")]
     public Task<IActionResult> Actions([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "actions")] HttpRequest req) =>

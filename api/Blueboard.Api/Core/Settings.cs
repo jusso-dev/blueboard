@@ -23,6 +23,8 @@ public sealed record Settings
     public bool BrokerExecute { get; init; }
     public string? PolicyFile { get; init; }
     public int ClaimLeaseSeconds { get; init; } = 600;
+    /// <summary>Folder of playbook Markdown files. Defaults to the copy bundled with the Function App.</summary>
+    public string PlaybooksDir { get; init; } = Path.Combine(AppContext.BaseDirectory, "playbooks");
 
     public static Settings FromEnvironment()
     {
@@ -46,6 +48,7 @@ public sealed record Settings
             BrokerExecute = Flag("BROKER_EXECUTE"),
             PolicyFile = Env("BLUEBOARD_POLICY_FILE") ?? WritePolicyFromSetting(Env("BLUEBOARD_POLICY_JSON")),
             ClaimLeaseSeconds = Int("CLAIM_LEASE_SECONDS", 600),
+            PlaybooksDir = Env("BLUEBOARD_PLAYBOOKS_DIR") ?? Path.Combine(AppContext.BaseDirectory, "playbooks"),
         };
         // WEBSITE_INSTANCE_ID is set on every Azure Functions host: never allow dev auth there.
         if (s.DevAuth && Env("WEBSITE_INSTANCE_ID") is not null)

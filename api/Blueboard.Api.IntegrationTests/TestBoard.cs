@@ -29,6 +29,10 @@ public sealed class TestBoard : IAsyncLifetime
     public Broker Broker => new(Db, Audit, Board, Ms, Settings, Policy, System);
     public Search Search => new(Db, Board);
     public Reporting Reporting => new(Db);
+    public PlaybookSet Playbooks { get; } = global::Blueboard.Api.Board.Playbooks.Load(Path.Combine(AppContext.BaseDirectory, "playbooks"));
+    public PlaybookRunner Runner => new(Db, Board, System, Playbooks);
+    public IncidentQueries Incidents => new(Db, Board, Playbooks);
+    public Ingest Ingest => new(Db, Board, Ms, System, Settings, Runner);
     public Guid IncidentId { get; private set; }
     public const string IncidentGraphId = "90210";
     public const string Device = "4b1d7e2c9f0a3b6d8e5c1a7f2e9d0c3b6a8f1e4d";
@@ -57,8 +61,7 @@ public sealed class TestBoard : IAsyncLifetime
                 .With("h", h).With("n", n).With("k", k).With("r", roles);
             await cmd.ExecuteNonQueryAsync();
         }
-        var ingest = new Ingest(Db, Board, Ms, System, Settings);
-        await ingest.UpsertAsync(SampleIncident());
+        await Ingest.UpsertAsync(SampleIncident());
         IncidentId = (await Board.ResolveIncidentAsync(IncidentGraphId))!.Value;
     }
 
