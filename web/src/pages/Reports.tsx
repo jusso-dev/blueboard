@@ -1,7 +1,7 @@
 import { Link } from "react-router";
 import { useEffect, useMemo, useState } from "react";
 import { PageHeader, useMe } from "../components/shell";
-import { useLiveQuery } from "../lib/api";
+import { download, useLiveQuery } from "../lib/api";
 import { cx, Empty, fmtDuration, Segmented, Select, Severity } from "../components/ui";
 
 type Stat = { median: number | null; p90: number | null; n: number };
@@ -144,13 +144,14 @@ export default function ReportsPage() {
           <option value="informational">Informational</option>
         </Select>
         <Segmented label="Date range" value={days} onChange={setDays} options={RANGES.map((x) => ({ ...x }))} />
-        <a
-          href={query ? `/api/reports?${query}&format=csv` : undefined}
-          aria-disabled={!query || undefined}
-          className="inline-flex h-8 items-center rounded-[var(--radius-control)] border border-control bg-paper-2 px-3 text-[13px] text-ink transition-colors duration-150 hover:border-ink-2 hover:bg-paper-3 aria-disabled:pointer-events-none aria-disabled:opacity-50"
+        <button
+          type="button"
+          disabled={!query}
+          onClick={() => query && void download(`/reports?${query}&format=csv`, "blueboard-report.csv")}
+          className="inline-flex h-8 items-center rounded-[var(--radius-control)] border border-control bg-paper-2 px-3 text-[13px] text-ink transition-colors duration-150 hover:border-ink-2 hover:bg-paper-3 disabled:pointer-events-none disabled:opacity-50"
         >
           Export CSV
-        </a>
+        </button>
       </PageHeader>
 
       <div className="min-h-0 flex-1 overflow-y-auto">

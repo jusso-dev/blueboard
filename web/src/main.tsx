@@ -10,6 +10,7 @@ import ApprovalsPage from "./pages/Approvals";
 import ReportsPage from "./pages/Reports";
 import DevLogin from "./pages/DevLogin";
 import NotFound from "./pages/NotFound";
+import { initAuth } from "./lib/auth";
 
 const router = createBrowserRouter([
   {
@@ -27,8 +28,15 @@ const router = createBrowserRouter([
   ...(import.meta.env.DEV ? [{ path: "dev-login", element: <DevLogin /> }] : []),
 ]);
 
-createRoot(document.getElementById("root")!).render(
-  <StrictMode>
-    <RouterProvider router={router} />
-  </StrictMode>,
-);
+const root = createRoot(document.getElementById("root")!);
+initAuth()
+  .then(() =>
+    root.render(
+      <StrictMode>
+        <RouterProvider router={router} />
+      </StrictMode>,
+    ),
+  )
+  .catch((e: unknown) => {
+    root.render(<p style={{ padding: 24, fontFamily: "system-ui" }}>blueboard couldn't start: {String(e)}</p>);
+  });

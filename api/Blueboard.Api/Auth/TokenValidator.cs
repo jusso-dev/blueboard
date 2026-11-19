@@ -47,8 +47,18 @@ public sealed class TokenValidator
         if (!result.IsValid) throw BoardException.Unauthorized("invalid token");
         var claims = result.ClaimsIdentity;
         if (claims.FindFirst("tid")?.Value != tenant) throw BoardException.Unauthorized("wrong tenant");
-        return FromClaims(claims);
+        var id = FromClaims(claims);
+        // Delegated (browser) tokens must carry the board's own scope, not just any scope for this audience.
+        if (id.Kind == "human" && !HasScope(claims, BoardScope)) throw BoardException.Unauthorized($"token lacks the {BoardScope} scope");
+        return id;
     }
+
+    /// <summary>The delegated scope the web app requests (exposed by infra/entra-app.sh).</summary>
+    public const string BoardScope = "Board.Access";
+
+    internal static bool HasScope(ClaimsIdentity claims, string scope) =>
+        (claims.FindFirst("scp")?.Value ?? claims.FindFirst("http://schemas.microsoft.com/identity/claims/scope")?.Value ?? "")
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries).Contains(scope);
 
     internal static CallerIdentity FromClaims(ClaimsIdentity claims)
     {

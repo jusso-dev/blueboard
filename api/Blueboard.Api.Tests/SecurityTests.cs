@@ -50,50 +50,23 @@ public class SecurityTests
     }
 
     [Fact]
-    public void Swa_principal_is_parsed_and_roles_mapped()
-    {
-        var json = """
-            {"identityProvider":"aad","userId":"x","userDetails":"ana@contoso.com","userRoles":["anonymous","authenticated"],
-             "claims":[{"typ":"http://schemas.microsoft.com/identity/claims/objectidentifier","val":"oid-9"},{"typ":"name","val":"Ana"},{"typ":"roles","val":"Board.Post"},{"typ":"roles","val":"Board.Approve"}]}
-            """;
-        var id = Authenticator.FromSwaPrincipal(Convert.ToBase64String(Encoding.UTF8.GetBytes(json)));
-        Assert.Equal("oid-9", id.Oid);
-        Assert.Equal("human", id.Kind);
-        Assert.Equal(["approver", "poster"], id.Roles);
-    }
+    public void Board_scope_is_read_from_scp() =>
+        Assert.True(TokenValidator.HasScope(new ClaimsIdentity([new("scp", "openid Board.Access")]), TokenValidator.BoardScope));
 
     [Fact]
-    public void Swa_principal_from_other_providers_is_refused()
-    {
-        var json = """{"identityProvider":"github","userId":"x","userDetails":"x","claims":[]}""";
-        Assert.Throws<BoardException>(() => Authenticator.FromSwaPrincipal(Convert.ToBase64String(Encoding.UTF8.GetBytes(json))));
-    }
+    public void Other_scopes_are_not_the_board_scope() =>
+        Assert.False(TokenValidator.HasScope(new ClaimsIdentity([new("scp", "Board.AccessX user_impersonation")]), TokenValidator.BoardScope));
 
     [Fact]
-    public void App_service_principal_format_is_parsed()
+    public async Task Platform_principal_header_is_never_trusted()
     {
-        var json = """
-            {"auth_typ":"aad","name_typ":"name","role_typ":"roles",
-             "claims":[{"typ":"http://schemas.microsoft.com/identity/claims/objectidentifier","val":"oid-7"},{"typ":"name","val":"Bo"},{"typ":"roles","val":"Board.Post"}]}
-            """;
-        var id = Authenticator.FromSwaPrincipal(Convert.ToBase64String(Encoding.UTF8.GetBytes(json)));
-        Assert.Equal("oid-7", id.Oid);
-        Assert.Equal(["poster"], id.Roles);
+        // A client can send any header it likes. Without a bearer token (or dev auth locally) the request is refused,
+        // whatever x-ms-client-principal says.
+        var auth = new Authenticator(new Settings(), new TokenValidator(new Settings()), null!, null!);
+        var forged = Convert.ToBase64String(Encoding.UTF8.GetBytes("""{"auth_typ":"aad","claims":[{"typ":"roles","val":"Board.Admin"}]}"""));
+        var ex = await Assert.ThrowsAsync<BoardException>(() => auth.AuthenticateAsync(new Dictionary<string, string> { ["x-ms-client-principal"] = forged }, TestContext.Current.CancellationToken));
+        Assert.Equal(401, ex.Status);
     }
-
-    [Fact]
-    public void Swa_user_roles_from_roles_source_are_honoured()
-    {
-        var json = """
-            {"identityProvider":"aad","userDetails":"c@contoso.com","userRoles":["anonymous","authenticated","Board.Post","Board.Admin"],
-             "claims":[{"typ":"http://schemas.microsoft.com/identity/claims/objectidentifier","val":"oid-8"}]}
-            """;
-        Assert.Equal(["admin", "poster"], Authenticator.FromSwaPrincipal(Convert.ToBase64String(Encoding.UTF8.GetBytes(json))).Roles);
-    }
-
-    [Fact]
-    public void Principal_without_oid_is_refused() =>
-        Assert.Throws<BoardException>(() => Authenticator.FromSwaPrincipal(Convert.ToBase64String(Encoding.UTF8.GetBytes("""{"identityProvider":"aad","claims":[]}"""))));
 
     [Fact]
     public void Mentions_ignore_email_addresses() =>

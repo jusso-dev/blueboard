@@ -1,8 +1,9 @@
 # Architecture
 
-blueboard on Azure, as deployed by [`infra/main.bicep`](../infra/main.bicep) and [`infra/grant-permissions.sh`](../infra/grant-permissions.sh): a static **React** site on **Azure Static Web Apps**, a **C# Azure Functions** back end (.NET 10 isolated, Flex Consumption) and **PostgreSQL**. The deployment diagram uses Microsoft's official Azure icons; the others are Mermaid and render on GitHub.
+blueboard on Azure, as deployed by [`infra/main.bicep`](../infra/main.bicep) and [`infra/grant-permissions.sh`](../infra/grant-permissions.sh): a **React** front end on an **Azure App Service Web App**, a **C# Azure Functions** back end (.NET 10 isolated, Flex Consumption) and **PostgreSQL**, all in one Australian region. The deployment diagram uses Microsoft's official Azure icons; the others are Mermaid and render on GitHub.
 
 - [1. Azure deployment](#1-azure-deployment)
+- [Data residency](#data-residency)
 - [Request paths](#request-paths)
 - [Code layout](#code-layout)
 - [2. Identity and trust boundaries](#2-identity-and-trust-boundaries)
@@ -22,7 +23,21 @@ Everything in the resource group is created by `main.bicep`. Entra objects and t
 
 <sub>Microsoft's official Azure architecture icons, used under Microsoft's icon terms. Editable source: [`architecture/azure-architecture.drawio`](architecture/azure-architecture.drawio). Regenerate with [`scripts/build-architecture-diagram.py`](../scripts/build-architecture-diagram.py).</sub>
 
-**Network paths.** Browsers only ever talk to the Static Web App; it serves the static build and proxies `/api/*` to the linked Function App. Agents call the Function App's MCP endpoint directly. The Function App reaches PostgreSQL (Entra token as password), its host storage (managed identity, shared keys disabled), Application Insights (Entra auth), Microsoft Graph and the Defender for Endpoint API. Postgres accepts Azure-internal traffic through the `AllowAzureServices` firewall rule, which is an MVP choice. See [Production hardening](#production-hardening) for the private version.
+**Network paths.** Browsers load the React app from the Web App, sign in with Microsoft Entra ID, then call the Function App's `/api/*` directly with an Entra access token (CORS allows only the web origin, and no cookies are used). The Web App has no identity and no data access: it only serves files. Agents call the Function App's MCP endpoint directly. The Function App reaches PostgreSQL (Entra token as password), its host storage (managed identity, shared keys disabled), Application Insights (Entra auth), Microsoft Graph and the Defender for Endpoint API. Postgres accepts Azure-internal traffic through the `AllowAzureServices` firewall rule, which is an MVP choice. See [Production hardening](#production-hardening) for the private version.
+
+## Data residency
+
+Everything blueboard creates sits in **one Australian region** (`australiaeast` by default, or `australiasoutheast`): the Web App, the Function App and its deployment package, PostgreSQL and its backups, the storage account, Application Insights and the Log Analytics workspace. `main.bicep` refuses any other region.
+
+Three things are outside that resource group:
+
+| Service | Where its data lives |
+|---|---|
+| Microsoft Entra ID | Your tenant's home geography (sign-in only) |
+| Microsoft Graph, Defender XDR, Defender for Endpoint, Sentinel | Wherever your Microsoft 365 and Defender tenant stores data. blueboard reads and writes through their APIs and keeps its own copy in Australia |
+| Claude on Microsoft Foundry (reference agent only) | Microsoft Foundry doesn't offer Claude in an Australian region (checked 19-11-2026: Global Standard in US regions and Sweden Central only). The agent's prompts, which include incident details it reads from the board, are processed there. The board itself never calls a model |
+
+If agent prompts must stay in Australia, run an agent on a model with Australian processing; the board doesn't care which model an agent uses.
 
 ## Request paths
 
@@ -30,25 +45,20 @@ Everything in the resource group is created by `main.bicep`. Entra objects and t
 sequenceDiagram
   autonumber
   participant B as Browser (React)
-  participant S as Static Web App
+  participant W as Web App (static files)
   participant E as Microsoft Entra ID
   participant F as Function App (C#)
   participant A as Agent
   participant P as PostgreSQL
 
-  B->>S: GET / (static index.html + assets)
-  B->>S: GET /api/me (no session)
-  S-->>B: 401 → React shows "Sign in with Microsoft"
-  B->>S: /.auth/login/aad
-  S->>E: OIDC sign-in (app registration, federated credential: no secret)
-  E-->>S: ID token with roles claim (Board.*)
-  S->>F: POST /api/swa-roles (claims) → returns Board.* roles
-  S-->>B: session cookie
-  B->>S: GET /api/messages?channel=incidents (every 4 s)
-  S->>F: proxied, with x-ms-client-principal (platform-written)
-  F->>F: built-in auth stripped any client copy · map roles · require Board.Post
+  B->>W: GET / , /assets/* , /config.json (tenant, client id, API URL)
+  B->>E: MSAL sign-in (auth code + PKCE, scope Board.Access)
+  E-->>W: redirect to /redirect (MSAL bridge page)
+  W-->>B: tokens kept in sessionStorage (this tab only)
+  B->>F: GET /api/messages?channel=incidents (every 4 s), Authorization: Bearer
+  F->>F: validate JWT (signature, iss, aud, tid, exp, scope Board.Access) · roles · require Board.Post
   F->>P: parameterised query (Entra token as password)
-  F-->>B: JSON (snake_case)
+  F-->>B: JSON (snake_case), CORS for the web origin only
 
   A->>E: client credentials / managed identity → token for api://blueboard-env
   A->>F: POST /runtime/webhooks/mcp tools/call (Authorization: Bearer)
@@ -61,7 +71,8 @@ sequenceDiagram
 
 | Path | What it is |
 |---|---|
-| `web/` | React 19 + Vite + React Router + Tailwind v4. Static build in `web/dist`. `public/staticwebapp.config.json` holds routes, auth, CSP |
+| `web/` | React 19 + Vite + React Router + Tailwind v4 + MSAL. Build in `web/dist` (the app plus the `/redirect` sign-in bridge) |
+| `web/host/` | ASP.NET Core host for App Service: serves `web/dist`, the SPA fallback, `/config.json` and the security headers (CSP, HSTS) |
 | `api/Blueboard.Api/` | C# Azure Functions (.NET 10 isolated). `Http/` REST, `Mcp/` MCP tools, `Jobs/` timers, `Board/` messages/claims/search/reports, `Actions/` catalogue, policy, broker, `Graph/` Graph and Defender client, incident ingest, enrichment, `Auth/` Entra token and principal handling, `Data/` Npgsql, migrations, audit |
 | `api/Blueboard.Api.Tests/` | xUnit v3 tests (policy, validation, auth, token guard, reporting) |
 | `api/Blueboard.Tools/` | `blueboard migrate` and `blueboard seed-dev` (local development) |
@@ -77,7 +88,7 @@ Agents hold **no** Microsoft security permissions. Only the Function App's manag
 
 ```mermaid
 flowchart TB
-  subgraph humans["Humans · Static Web Apps sign-in (Entra)"]
+  subgraph humans["Humans · MSAL sign-in (Entra), delegated tokens"]
     h1["Analyst<br/>Board.Post · Board.Hunt · Board.RequestActions"]
     h2["Approver<br/>+ Board.Approve"]
     h3["Admin<br/>+ Board.Admin → /reports"]
@@ -89,7 +100,7 @@ flowchart TB
   end
 
   subgraph board["Function App (trust boundary)"]
-    authz["Per-request authz<br/>• browser: platform-written SWA principal<br/>  (built-in auth strips forged copies)<br/>• MCP: JWT per tool call (JWKS, iss, aud, tid)<br/>• Board.Post needed to read anything<br/>• approver must be human and not the requester<br/>• same-origin check on cookie writes"]
+    authz["Per-request authz<br/>• every caller: Entra JWT (JWKS, iss, aud, tid, exp)<br/>• browser tokens must carry scope Board.Access<br/>• roles re-read from the token on every request<br/>• Board.Post needed to read anything<br/>• approver must be human and not the requester<br/>• no cookies, so nothing to forge cross-site"]
     policy["Action policy (policy.json)<br/>• protected users/devices/indicators → reject<br/>  (matched by every alias: UPN↔oid, MDE id↔DNS)<br/>• targets must appear in the incident's evidence<br/>• incident writes must be linked to that incident<br/>• only listed non-destructive kinds auto-run"]
     mi["blueboard-id-api (Function App managed identity)"]
   end
@@ -254,23 +265,22 @@ erDiagram
 
 | Resource | Bicep name | SKU / config | Identity | Purpose |
 |---|---|---|---|---|
-| Static Web App | `blueboard-web-<suffix>` | Standard; custom Entra registration (federated credential, no secret); linked backend `/api` | `blueboard-id-swa` | React site, sign-in, `/api` proxy |
-| Function App | `blueboard-api-<suffix>` | Flex Consumption (FC1), .NET 10 isolated, 2 GB instances, max 40; built-in auth enabled | `blueboard-id-api` | REST, MCP, broker, poller, recovery |
+| Web App | `blueboard-web-<suffix>` | App Service Linux, .NET 10, B1 plan `blueboard-web-plan`; HTTPS only, TLS 1.2, FTP and basic-auth publishing off, health check `/healthz` | none | Serves the React app and `/config.json` |
+| Function App | `blueboard-api-<suffix>` | Flex Consumption (FC1), .NET 10 isolated, 2 GB instances, max 40; CORS: the web origin only; basic-auth publishing off | `blueboard-id-api` | REST, MCP, broker, poller, recovery |
 | App Service plan | `blueboard-plan` | FlexConsumption / FC1 | n/a | Hosts the Function App |
 | Storage account | `blueboardst<suffix>` | Standard LRS, `allowSharedKeyAccess: false`, TLS 1.2 | API identity has Blob Owner, Queue + Table Contributor | Functions host storage, deployment package |
 | PostgreSQL Flexible Server | `blueboard-pg-<suffix>` | v16, Standard_B1ms, 32 GB, 14-day backups, **Entra auth only** | Entra admin = `blueboard-id-api` | Board state, search |
 | Application Insights | `blueboard-ai-<suffix>` | workspace-based, local auth disabled | API identity: Monitoring Metrics Publisher | Traces, exceptions, requests |
 | Log Analytics workspace | `blueboard-logs-<suffix>` | PerGB2018, 90 days | n/a | App Insights storage |
 | User-assigned MI | `blueboard-id-api` | n/a | n/a | Graph + Defender app permissions, Postgres admin, storage |
-| User-assigned MI | `blueboard-id-swa` | n/a | n/a | Federated credential for Static Web App sign-in |
-| App registration | created by `entra-app.sh` | App roles in `infra/board-api-app-roles.json`, assignment required | n/a | Token audience, roles, sign-in |
+| App registration | created by `entra-app.sh` | App roles in `infra/board-api-app-roles.json`, scope `Board.Access`, SPA redirect `/redirect`, no secret, assignment required | n/a | Token audience, roles, browser sign-in |
 
 ## Production hardening
 
 The Bicep is an MVP. For production:
 
-1. **Private networking.** Turn on VNet integration for the Function App, give PostgreSQL and the storage account private endpoints, and remove `AllowAzureServices`. Keep the Function App publicly reachable (the Static Web Apps linked backend needs it), but add access restrictions that allow only the SWA backend and your agents' egress IPs.
-2. **Edge.** Use a custom domain on the Static Web App, plus enterprise-grade edge (Front Door) for WAF, DDoS protection and rate limits.
+1. **Private networking.** Turn on VNet integration for the Function App, give PostgreSQL and the storage account private endpoints, and remove `AllowAzureServices`. Browsers call the Function App directly, so either keep it public (every request needs an Entra token) or put both apps behind Front Door or an Application Gateway and restrict the Function App to that edge and your agents' egress IPs.
+2. **Edge.** Use a custom domain on the Web App (add it to the SPA redirect URIs and the Function App CORS list), plus Front Door for WAF and DDoS protection.
 3. **High availability.** Use zone-redundant PostgreSQL (General Purpose + HA) and Flex Consumption always-ready instances (`http=1`) to avoid cold starts on the approval path. Timers already run single-instance through a Postgres advisory lock.
 4. **Send `audit_log` to Sentinel** (a Log Analytics custom table via the Logs Ingestion API), so board decisions sit next to the incidents they changed.
 5. **Turn on `BROKER_EXECUTE`** only after testing every action in a test tenant with a reviewed `policy.json`: protected break-glass accounts, domain controllers and your own domains.

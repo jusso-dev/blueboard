@@ -17,7 +17,7 @@ namespace Blueboard.Api.Mcp;
 /// </summary>
 public sealed class BoardTools(Authenticator auth, BoardService board, Broker broker, Enrichment enrich, ILogger<BoardTools> log)
 {
-    /// <summary>Authenticate the MCP caller (bearer only), require a role, run, and return JSON text or an error string.</summary>
+    /// <summary>Authenticate the MCP caller (bearer token), require a role, run, and return JSON text or an error string.</summary>
     private async Task<string> Call(ToolInvocationContext ctx, string? role, Func<Principal, Task<object?>> fn)
     {
         try
@@ -25,7 +25,7 @@ public sealed class BoardTools(Authenticator auth, BoardService board, Broker br
             var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             if (ctx.TryGetHttpTransport(out var http) && http is not null)
                 foreach (var h in http.Headers) headers[h.Key.ToLowerInvariant()] = h.Value;
-            var me = await auth.AuthenticateAsync(headers, bearerOnly: true);
+            var me = await auth.AuthenticateAsync(headers);
             if (role is not null && !me.Has(role)) return $"error: missing role {role} (ask an admin to assign Board.{RoleName(role)})";
             return Json.Serialize(await fn(me));
         }

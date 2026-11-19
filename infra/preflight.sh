@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Read-only checks before a deployment. Changes nothing.
 #
-#   BB_ENV=prod RESOURCE_GROUP=rg-blueboard LOCATION=australiaeast ./infra/preflight.sh
+#   BB_ENV=prod RESOURCE_GROUP=rg-blueboard ./infra/preflight.sh     # LOCATION defaults to australiaeast
 #
 # Checks: tools, az sign-in, subscription/tenant, resource providers, your Azure RBAC on the
 # subscription or resource group, and whether you can create app registrations in Entra.
@@ -9,7 +9,7 @@ source "$(dirname "$0")/lib.sh"
 
 : "${BB_ENV:?set BB_ENV (e.g. prod)}"
 : "${RESOURCE_GROUP:?set RESOURCE_GROUP}"
-: "${LOCATION:?set LOCATION (e.g. australiaeast)}"
+LOCATION="${LOCATION:-australiaeast}"
 
 require az jq
 check_az_context
@@ -21,6 +21,12 @@ bad() {
   fail=1
 }
 note() { printf '  \033[33m!\033[0m %s\n' "$*"; }
+
+log "Region"
+case "$LOCATION" in
+  australiaeast | australiasoutheast) ok "$LOCATION (every resource is created here)" ;;
+  *) bad "LOCATION must be australiaeast or australiasoutheast: blueboard keeps its data in Australia" ;;
+esac
 
 log "Tools"
 if az bicep version >/dev/null 2>&1; then ok "bicep"; else bad "az bicep install"; fi

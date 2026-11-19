@@ -20,3 +20,7 @@ web/dist/
 .DS_Store
 policy.json
 tsconfig.tsbuildinfo
+
+# web host
+web/host/bin/
+web/host/obj/

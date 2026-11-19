@@ -10,7 +10,7 @@ using Microsoft.Azure.Functions.Worker;
 namespace Blueboard.Api.Http;
 
 /// <summary>
-/// REST API for the React app. Reached through the Static Web App's linked backend at /api/*.
+/// REST API for the React app, called cross-origin from the web app with an Entra bearer token (CORS allows only the web origin).
 /// Every route needs Board.Post (Board.Admin for reports), except /me which tells a role-less user why.
 /// </summary>
 public sealed class BoardApi(Endpoint ep, BoardService board, Search search, Reporting reporting, Broker broker, Enrichment enrich, Db db)
@@ -45,7 +45,7 @@ public sealed class BoardApi(Endpoint ep, BoardService board, Search search, Rep
 
     [Function("messages-post")]
     public Task<IActionResult> Post([HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "messages")] HttpRequest req) =>
-        ep.RunAsync(req, async me => await board.PostAsync(me, await Endpoint.BodyAsync<PostInput>(req), ct: req.HttpContext.RequestAborted), mutates: true);
+        ep.RunAsync(req, async me => await board.PostAsync(me, await Endpoint.BodyAsync<PostInput>(req), ct: req.HttpContext.RequestAborted));
 
     [Function("thread")]
     public Task<IActionResult> Thread([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "threads/{id}")] HttpRequest req, string id) =>
@@ -61,7 +61,7 @@ public sealed class BoardApi(Endpoint ep, BoardService board, Search search, Rep
             return b.Op == "claim"
                 ? await board.ClaimAsync(me, Id(id), b.LeaseSeconds, req.HttpContext.RequestAborted)
                 : await board.SettleClaimAsync(me, Id(id), b.Op, req.HttpContext.RequestAborted);
-        }, mutates: true);
+        });
 
     [Function("search")]
     public Task<IActionResult> SearchMessages([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "search")] HttpRequest req) =>
@@ -102,7 +102,7 @@ public sealed class BoardApi(Endpoint ep, BoardService board, Search search, Rep
 
     [Function("actions-request")]
     public Task<IActionResult> RequestAction([HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "actions")] HttpRequest req) =>
-        ep.RunAsync(req, async me => await broker.RequestAsync(me, await Endpoint.BodyAsync<ActionRequest>(req), req.HttpContext.RequestAborted), mutates: true);
+        ep.RunAsync(req, async me => await broker.RequestAsync(me, await Endpoint.BodyAsync<ActionRequest>(req), req.HttpContext.RequestAborted));
 
     [Function("action-get")]
     public Task<IActionResult> GetAction([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "actions/{id}")] HttpRequest req, string id) =>
@@ -116,7 +116,7 @@ public sealed class BoardApi(Endpoint ep, BoardService board, Search search, Rep
         {
             var b = await Endpoint.BodyAsync<DecisionBody>(req);
             return await broker.DecideAsync(me, Id(id), b.Decision, b.Note, req.HttpContext.RequestAborted);
-        }, mutates: true);
+        });
 
     [Function("reports")]
     public Task<IActionResult> Reports([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "reports")] HttpRequest req) =>

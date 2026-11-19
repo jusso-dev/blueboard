@@ -1,5 +1,4 @@
 using System.Text;
-using System.Text.Json;
 using Blueboard.Api.Core;
 using Blueboard.Api.Data;
 
@@ -7,15 +6,15 @@ namespace Blueboard.Api.Auth;
 
 /// <summary>
 /// Resolves the caller of a request to a board principal.
-///  1. Bearer token (agents, and any client calling the Function App directly): validated Entra JWT.
-///  2. x-ms-client-principal (browsers via the linked Static Web App): only when TRUST_SWA_PRINCIPAL,
-///     which is set only when the Function App accepts traffic solely from its linked SWA.
-///  3. Local development: Bearer dev:&lt;handle&gt; / x-dev-principal (DEV_AUTH, refused in Azure).
+///  1. Bearer token: a validated Microsoft Entra access token for the board API. Browsers get one with
+///     MSAL (delegated, scope Board.Access); agents use their workload identity (app-only).
+///  2. Local development only: Bearer dev:&lt;handle&gt; / x-dev-principal (DEV_AUTH, refused in Azure).
+/// There is no cookie or platform header path, so nothing a client sets can stand in for a token.
 /// Roles come from Entra on every request; a disabled principal is refused.
 /// </summary>
 public sealed class Authenticator(Settings settings, TokenValidator tokens, Db db, Audit audit)
 {
-    public async Task<Principal> AuthenticateAsync(IReadOnlyDictionary<string, string> headers, bool bearerOnly = false, CancellationToken ct = default)
+    public async Task<Principal> AuthenticateAsync(IReadOnlyDictionary<string, string> headers, CancellationToken ct = default)
     {
         var auth = headers.GetValueOrDefault("authorization");
         if (auth is not null && auth.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
@@ -24,48 +23,9 @@ public sealed class Authenticator(Settings settings, TokenValidator tokens, Db d
             if (settings.DevAuth && token.StartsWith("dev:", StringComparison.Ordinal)) return await DevPrincipalAsync(token[4..], ct);
             return await UpsertAsync(await tokens.ValidateAsync(token, ct), ct);
         }
-        if (!bearerOnly && settings.TrustSwaPrincipal && headers.GetValueOrDefault("x-ms-client-principal") is { } swa)
-            return await UpsertAsync(FromSwaPrincipal(swa), ct);
         if (settings.DevAuth && headers.GetValueOrDefault("x-dev-principal") is { } dev)
             return await DevPrincipalAsync(dev, ct);
         throw BoardException.Unauthorized();
-    }
-
-    /// <summary>
-    /// Parses x-ms-client-principal. Two shapes reach the Function App, depending on which layer wrote it:
-    ///  - Static Web Apps: { identityProvider, userId, userDetails, userRoles[], claims[{typ,val}] }
-    ///  - App Service built-in auth: { auth_typ, claims[{typ,val}], name_typ, role_typ }
-    /// The header is only trusted when TRUST_SWA_PRINCIPAL is set, which deploy.sh sets only together with
-    /// built-in auth on the Function App (App Service strips client-sent x-ms-* headers).
-    /// Roles come from Entra "roles" claims and from SWA userRoles (filled by /api/swa-roles at sign-in).
-    /// </summary>
-    internal static CallerIdentity FromSwaPrincipal(string header)
-    {
-        using var doc = JsonDocument.Parse(Encoding.UTF8.GetString(Convert.FromBase64String(header)));
-        var root = doc.RootElement;
-        var idp = root.TryGetProperty("identityProvider", out var i) ? i.GetString()
-                  : root.TryGetProperty("auth_typ", out var a) ? a.GetString() : null;
-        if (idp is not ("aad" or "azureactivedirectory"))
-            throw BoardException.Unauthorized("only Microsoft Entra sign-in is accepted");
-
-        var claims = new List<(string Typ, string Val)>();
-        if (root.TryGetProperty("claims", out var cl) && cl.ValueKind == JsonValueKind.Array)
-            foreach (var c in cl.EnumerateArray())
-                if (c.TryGetProperty("typ", out var t) && c.TryGetProperty("val", out var v) && t.GetString() is { } ts && v.GetString() is { } vs)
-                    claims.Add((ts, vs));
-        string? Claim(params string[] types) => claims.FirstOrDefault(c => types.Contains(c.Typ)).Val;
-
-        var roleTyp = root.TryGetProperty("role_typ", out var rt) ? rt.GetString() : null;
-        var roles = claims.Where(c => c.Typ is "roles" or "http://schemas.microsoft.com/ws/2008/06/identity/claims/role" || c.Typ == roleTyp)
-            .Select(c => c.Val).ToList();
-        if (root.TryGetProperty("userRoles", out var ur) && ur.ValueKind == JsonValueKind.Array)
-            roles.AddRange(ur.EnumerateArray().Select(r => r.GetString()).OfType<string>());
-
-        var oid = Claim("http://schemas.microsoft.com/identity/claims/objectidentifier", "oid")
-                  ?? throw BoardException.Unauthorized("principal has no oid");
-        var username = Claim("preferred_username", "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/upn")
-                       ?? (root.TryGetProperty("userDetails", out var ud) ? ud.GetString() : null);
-        return new CallerIdentity(oid, null, "human", Claim("name") ?? username ?? oid, username, TokenValidator.MapRoles(roles, "human"));
     }
 
     private async Task<Principal> DevPrincipalAsync(string handle, CancellationToken ct)

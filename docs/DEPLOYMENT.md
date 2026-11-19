@@ -1,6 +1,6 @@
 # Deploying blueboard to Azure
 
-This guide takes a new Azure subscription to a running board: a static React site on **Azure Static Web Apps**, a C# back end on **Azure Functions (Flex Consumption, .NET 10)**, and **PostgreSQL**. The scripts in [`infra/`](../infra) do the work: each one is idempotent, checks your sign-in before it changes anything, and prints what it changes.
+This guide takes a new Azure subscription to a running board in **Australia East** (or Australia Southeast): a React front end on an **App Service Web App**, a C# back end on **Azure Functions (Flex Consumption, .NET 10)**, and **PostgreSQL**. Every resource goes in the one Australian region you choose. The scripts in [`infra/`](../infra) do the work: each one is idempotent, checks your sign-in before it changes anything, and prints what it changes.
 
 ![Azure architecture](architecture/azure-architecture.png)
 
@@ -25,9 +25,9 @@ Deployment touches two separate permission systems: **Azure RBAC** (the subscrip
 |---|---|---|---|
 | Register resource providers (first deployment in a subscription) | `deploy.sh` | **Contributor** (includes `*/register/action`) | Subscription |
 | Create the resource group | `deploy.sh` | **Contributor** | Subscription, *or* have the group pre-created and skip this |
-| Deploy resources (Static Web App, Function App + Flex plan, storage, PostgreSQL, Application Insights, Log Analytics, managed identities) | `deploy.sh` | **Contributor** | Resource group |
+| Deploy resources (Web App + plan, Function App + Flex plan, storage, PostgreSQL, Application Insights, Log Analytics, managed identity) | `deploy.sh` | **Contributor** | Resource group |
 | Create role assignments: storage data roles and *Monitoring Metrics Publisher* for the API identity | `deploy.sh` (Bicep) | **Role Based Access Control Administrator** (or User Access Administrator) | Resource group |
-| Zip-deploy the Function App; read the Static Web App deployment token | `deploy.sh` | covered by Contributor on the resource group | Resource group |
+| Deploy the Function App and Web App packages (Entra-authenticated; basic-auth publishing is off) | `deploy.sh` | covered by Contributor on the resource group | Resource group |
 | Delete an environment | `teardown.sh` | **Contributor** | Resource group |
 
 **Simplest assignment for the deployer: Owner on the resource group**, or Contributor plus Role Based Access Control Administrator, with the RBAC Administrator condition restricted to *Storage Blob Data Owner*, *Storage Queue Data Contributor*, *Storage Table Data Contributor* and *Monitoring Metrics Publisher*. Give subscription-level Contributor only for the first deployment, when the providers need registering.
@@ -37,7 +37,8 @@ Deployment touches two separate permission systems: **Azure RBAC** (the subscrip
 | Task | Script | Minimum Entra role |
 |---|---|---|
 | Create the `blueboard-<env>` app registration, app roles, enterprise app and "assignment required" | `entra-app.sh` | **Application Developer** (if your tenant restricts app registration) or **Cloud Application Administrator** |
-| Add the Static Web App redirect URI **and the federated credential** that replaces a client secret | `deploy.sh` → `entra-app.sh` | **Owner of the app registration** (whoever ran `entra-app.sh` is the owner), or Cloud Application Administrator |
+| Add the web app's single-page-app redirect URI (`https://<web>/redirect`) | `deploy.sh` → `entra-app.sh` | **Owner of the app registration** (whoever ran `entra-app.sh` is the owner), or Cloud Application Administrator |
+| Grant tenant-wide consent for the web app's sign-in scopes (`Board.Access`, `openid`, `profile`, `offline_access`) | `entra-app.sh` | **Cloud Application Administrator** or Application Administrator. Without it, people see a one-time consent prompt. |
 | Grant the API's managed identity its **Microsoft Graph** and **Defender for Endpoint** application permissions | `grant-permissions.sh` | **Privileged Role Administrator** (or Global Administrator). Application permissions are tenant-wide admin consent. |
 | Assign people and agents to `Board.*` roles | `assign-roles.sh` | **Owner of the enterprise app**, or Cloud Application Administrator |
 
@@ -50,7 +51,7 @@ Deployment touches two separate permission systems: **Azure RBAC** (the subscrip
 | SOC analysts | `Board.Post` (+ `Board.Hunt`, `Board.RequestActions` as needed) on the enterprise app. **No Azure RBAC.** |
 | Approvers (SOC leads) | `Board.Post` + `Board.Approve`. Use a separate group from analysts so approval is a deliberate grant. |
 | Board admins | `Board.Post` + `Board.Admin` (reports). No Azure RBAC needed. |
-| Platform operators | **Website Contributor** on the Function App, **Reader** on the resource group, **Log Analytics Reader** for logs and Application Insights. |
+| Platform operators | **Website Contributor** on the Function App and Web App, **Reader** on the resource group, **Log Analytics Reader** for logs and Application Insights. |
 | Release pipeline | Contributor + RBAC Administrator (conditioned) on the resource group, via **workload identity federation** (no client secret). |
 | Agents | Their own Entra identity with `Board.Post`, `Board.Hunt`, `Board.RequestActions`. **Never** `Board.Approve`: `assign-roles.sh` refuses it, and the API strips it from app-only tokens anyway. |
 
@@ -65,8 +66,8 @@ Deployment touches two separate permission systems: **Azure RBAC** (the subscrip
    az account set -s <subscription-id>
    ```
    You can pin these so the scripts refuse to run anywhere else: `export AZURE_TENANT_ID=… AZURE_SUBSCRIPTION_ID=…`.
-3. **Region:** Flex Consumption must be available in `LOCATION` (`az functionapp list-flexconsumption-locations`). Static Web Apps runs in a few regions only (`westus2`, `centralus`, `eastus2`, `westeurope`, `eastasia`). It serves content globally, so pick the closest region with `SWA_LOCATION`.
-4. **Microsoft Foundry** (for the reference agent): a Foundry resource with a `claude-opus-5-5` deployment and the fallback model (`claude-opus-4-8` by default).
+3. **Region:** `LOCATION` is `australiaeast` (default) or `australiasoutheast`; the scripts and Bicep refuse anything else. Both offer Flex Consumption (`az functionapp list-flexconsumption-locations`). See [architecture.md § Data residency](architecture.md#data-residency) for what lives outside the resource group.
+4. **Microsoft Foundry** (for the reference agent): a Foundry resource with a `claude-opus-5-5` deployment and the fallback model (`claude-opus-4-8` by default). Claude isn't offered in an Australian Foundry region yet, so create it in a supported region (for example East US 2 or Sweden Central, Global Standard): the agent's prompts are processed there.
 5. **Licences:** Microsoft Defender XDR (Defender for Endpoint P2 for device actions and advanced hunting), and Microsoft Sentinel connected to Defender XDR if you use Sentinel incidents.
 6. **Policy:** copy `policy.example.json` to `policy.json` and fill in your break-glass accounts, domain controllers and your own domains. See [SECURITY.md § Action policy](SECURITY.md#action-policy). `policy.json` is git-ignored.
 
@@ -83,12 +84,12 @@ It checks your tools, sign-in, resource providers, Flex Consumption availability
 ## Deploy
 
 ```sh
-export BB_ENV=prod RESOURCE_GROUP=rg-blueboard-prod LOCATION=australiaeast
+export BB_ENV=prod RESOURCE_GROUP=rg-blueboard-prod LOCATION=australiaeast   # or australiasoutheast
 
 # 1. Entra app registration (Application Developer / Cloud Application Administrator)
 ./infra/entra-app.sh
 
-# 2. Infrastructure, C# API, React site, sign-in, health check (Owner on the resource group)
+# 2. Infrastructure, C# API, web app, sign-in, health checks (Owner on the resource group)
 POLICY_FILE=policy.json ./infra/deploy.sh
 
 # 3. Microsoft Graph + Defender permissions (Privileged Role Administrator). deploy.sh prints the ids.
@@ -104,10 +105,10 @@ ACTIONS="isolate_device release_device run_av_scan collect_investigation_package
 `deploy.sh` does the following:
 
 1. Deploys [`infra/main.bicep`](../infra/main.bicep).
-2. Adds the Static Web App's sign-in redirect URI and **federated credential** to the app registration, so the sign-in flow needs no client secret.
-3. Publishes the C# Function App and zip-deploys it. Database migrations run when the Function App starts.
-4. Builds the React site, puts your tenant ID into `staticwebapp.config.json` in the build output, and deploys it with the Static Web Apps CLI. The deployment token is passed through the environment, never on the command line.
-5. Waits for `/api/healthz`.
+2. Adds the web app's single-page-app redirect URI (`https://<web>/redirect`) to the app registration. Browsers sign in with MSAL (auth code + PKCE), so there is no client secret anywhere.
+3. Publishes the C# Function App and deploys it. Database migrations run when the Function App starts.
+4. Builds the React site, publishes it inside its small ASP.NET Core host (`web/host`) and deploys that to the Web App. The tenant, client id, API URL and scope are app settings that the host serves at `/config.json`, so the build is the same for every environment.
+5. Waits for the API's `/api/healthz` and the web app's `/healthz`.
 
 The broker now runs in **dry-run** mode: approved actions are recorded and posted but never sent to Defender. Run it like this for at least a week and test every action in a non-production tenant. Then turn on execution:
 
@@ -152,8 +153,8 @@ ANTHROPIC_FOUNDRY_RESOURCE=<foundry-resource> \
 | Script | Changes | Safe to re-run |
 |---|---|---|
 | [`preflight.sh`](../infra/preflight.sh) | Nothing (read-only checks) | Yes |
-| [`entra-app.sh`](../infra/entra-app.sh) | App registration `blueboard-<env>`, App ID URI `api://blueboard-<env>`, five app roles with fixed IDs, ID-token sign-in, enterprise app with assignment required. With `WEB_HOSTNAME` and `SWA_MI_PRINCIPAL_ID`, it also adds the redirect URI and the federated credential (`deploy.sh` passes both). **It never creates a client secret.** | Yes |
-| [`deploy.sh`](../infra/deploy.sh) | Providers, resource group (tagged `app=blueboard`), `main.bicep`, sign-in wiring, Function App zip deploy, Static Web App deploy, health check | Yes: each run rolls out the current commit |
+| [`entra-app.sh`](../infra/entra-app.sh) | App registration `blueboard-<env>`, App ID URI `api://blueboard-<env>`, five app roles with fixed IDs, the delegated scope `Board.Access`, v2 tokens, implicit flow off, enterprise app with assignment required, and tenant-wide consent for the sign-in scopes when you have the role. With `WEB_HOSTNAME` it also adds the SPA redirect URI (`deploy.sh` passes it). **It never creates a client secret.** | Yes |
+| [`deploy.sh`](../infra/deploy.sh) | Providers, resource group (tagged `app=blueboard`), `main.bicep`, sign-in redirect URI, Function App deploy, Web App deploy, health checks | Yes: each run rolls out the current commit |
 | [`grant-permissions.sh`](../infra/grant-permissions.sh) | Graph and Defender application permissions on the API identity, plus board app roles on agent identities | Yes (existing grants are skipped) |
 | [`assign-roles.sh`](../infra/assign-roles.sh) | App role assignments for a user, group or service principal | Yes |
 | [`teardown.sh`](../infra/teardown.sh) | Deletes the resource group (only if tagged `app=blueboard`, after you type its name), and optionally the app registration | n/a |
@@ -164,12 +165,12 @@ Non-secret outputs (client ID, principal IDs, host names) are saved to `.deploy/
 
 | Resource | Notes |
 |---|---|
-| Static Web App (Standard) | React build, Entra sign-in through a custom registration with **no client secret** (federated credential on `blueboard-id-swa`), `rolesSource` = `/api/swa-roles`, and the Function App linked as `/api` |
-| Function App + Flex Consumption plan | .NET 10 isolated, max 40 instances, deployment package in blob storage (identity auth), built-in auth enabled (see SECURITY.md) |
+| Web App + App Service plan (Linux, B1) | Serves the React build through `web/host` (.NET 10) with CSP and HSTS. HTTPS only, TLS 1.2, FTP and basic-auth publishing off. **No identity, no secrets** |
+| Function App + Flex Consumption plan | .NET 10 isolated, max 40 instances, deployment package in blob storage (identity auth), CORS for the web origin only, basic-auth publishing off |
 | Storage account | Functions host storage. `allowSharedKeyAccess: false`, so the API identity uses data roles |
 | PostgreSQL Flexible Server 16 | `passwordAuth: Disabled`. `blueboard-id-api` is the Entra admin |
 | Application Insights + Log Analytics | Local auth disabled: the API publishes with its managed identity |
-| Managed identities | `blueboard-id-api` (Function App) and `blueboard-id-swa` (Static Web App sign-in) |
+| Managed identity | `blueboard-id-api` (Function App). The Web App has none |
 
 ---
 
@@ -218,9 +219,11 @@ DEV_AUTH=true DATABASE_URL=postgres://postgres:devpass@127.0.0.1:55432/blueboard
 |---|---|---|
 | `AADSTS50105` at sign-in | User isn't assigned to the enterprise app (assignment required) | `assign-roles.sh <user-or-group> Board.Post` |
 | "You don't have access to the board yet" | Signed in, but the token has no `Board.Post` | Assign the role; sign out and back in |
-| `AADSTS50011` redirect mismatch | Redirect URI missing (the deployer isn't an app owner) | Re-run `entra-app.sh` with `WEB_HOSTNAME=<swa host>` |
-| `AADSTS700213` / `AADSTS70021` at sign-in | Federated credential missing or wrong subject | Re-run `entra-app.sh` with `SWA_MI_PRINCIPAL_ID` from the deployment outputs |
-| `/api/*` returns 401 in the browser | Not signed in to the Static Web App | Open `/.auth/login/aad` |
+| `AADSTS50011` redirect mismatch | SPA redirect URI missing (the deployer isn't an app owner) | Re-run `entra-app.sh` with `WEB_HOSTNAME=<web host>` |
+| `AADSTS65001` consent required | Tenant-wide consent for the sign-in scopes wasn't granted | `az ad app permission admin-consent --id <client-id>` (Cloud Application Administrator), or accept the prompt |
+| Browser console: CORS error on `/api/*` | The web origin isn't in the Function App's CORS list (a custom domain, for example) | Add it: `az functionapp cors add -g <rg> -n <api-name> --allowed-origins https://<host>` |
+| `/api/*` returns 401 with `lacks the Board.Access scope` | A token for the API without the delegated scope | Sign out and in again; check `BLUEBOARD_API_SCOPE` on the Web App |
+| Web app shows "couldn't start: web host configuration missing" | Web App settings not deployed | Re-run `deploy.sh` (it sets `BLUEBOARD_*` app settings) |
 | `/api/healthz` 503 after deploy | First start is applying migrations, or the PostgreSQL Entra admin isn't ready | Wait 2–3 minutes; check Application Insights for `database migration failed` |
 | Ingest shows `403 Forbidden` | Graph permissions not granted, or not in the token yet | Run `grant-permissions.sh`, then restart the Function App after ~10 minutes |
 | Agent gets `error: authentication required` | No bearer token, or the wrong audience | Request a token for `api://blueboard-<env>/.default` |

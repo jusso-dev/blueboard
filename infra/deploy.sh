@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # End-to-end deployment of blueboard to Azure. Idempotent: re-run it to roll out a new version.
 #
-#   BB_ENV=prod RESOURCE_GROUP=rg-blueboard-prod LOCATION=australiaeast POLICY_FILE=policy.json \
-#     ./infra/deploy.sh
+#   BB_ENV=prod RESOURCE_GROUP=rg-blueboard-prod POLICY_FILE=policy.json ./infra/deploy.sh
 #
 # Optional:
-#   SWA_LOCATION=eastasia   Static Web Apps region (westus2, centralus, eastus2, westeurope, eastasia)
+#   LOCATION=australiaeast  australiaeast (default) or australiasoutheast: every resource goes there
+#   WEB_SKU=B1              App Service plan for the web front end
 #   INGEST_ENABLED=true     poll Defender for incidents (default true)
 #   BROKER_EXECUTE=false    leave false until policy.json is reviewed (see docs/SECURITY.md)
 #   POLICY_FILE=…           your reviewed policy (default: policy.example.json)
@@ -13,10 +13,10 @@
 #   BB_YES=1                skip confirmation prompts (CI)
 #
 # Steps (each is safe to repeat):
-#   1. checks            5. sign-in: redirect URI + federated credential on the app registration
-#   2. providers + RG    6. build + zip-deploy the C# Function App (migrations run at start-up)
-#   3. main.bicep        7. build + deploy the React site to Static Web Apps
-#   4. outputs           8. health check, then print the admin-only steps
+#   1. checks            5. sign-in: the web app's redirect URI on the app registration
+#   2. providers + RG    6. build + deploy the C# Function App (migrations run at start-up)
+#   3. main.bicep        7. build the React site + its ASP.NET Core host, deploy to the Web App
+#   4. outputs           8. health checks, then print the admin-only steps
 #
 # Needs (docs/DEPLOYMENT.md § Roles): Owner on the resource group (or Contributor + RBAC Administrator),
 # owner of the app registration from infra/entra-app.sh, .NET 10 SDK, Node 22 + pnpm.
@@ -24,14 +24,15 @@ source "$(dirname "$0")/lib.sh"
 
 : "${BB_ENV:?set BB_ENV (e.g. prod)}"
 : "${RESOURCE_GROUP:?set RESOURCE_GROUP}"
-: "${LOCATION:?set LOCATION}"
-SWA_LOCATION="${SWA_LOCATION:-eastasia}"
+LOCATION="${LOCATION:-australiaeast}"
+case "$LOCATION" in australiaeast | australiasoutheast) ;; *) die "LOCATION must be australiaeast or australiasoutheast (blueboard stays in Australia)" ;; esac
+WEB_SKU="${WEB_SKU:-B1}"
 INGEST_ENABLED="${INGEST_ENABLED:-true}"
 BROKER_EXECUTE="${BROKER_EXECUTE:-false}"
 PREFIX="${PREFIX:-blueboard}"
 POLICY_FILE="${POLICY_FILE:-$BB_ROOT/policy.example.json}"
 
-require az jq git dotnet pnpm npx zip
+require az jq git dotnet pnpm zip curl
 check_az_context
 state_load
 : "${BOARD_API_CLIENT_ID:?run BB_ENV=$BB_ENV ./infra/entra-app.sh first}"
@@ -53,7 +54,7 @@ if [[ "$BROKER_EXECUTE" == "true" ]]; then
   warn "BROKER_EXECUTE=true: approved actions will isolate devices, disable users and block indicators in your tenant."
   confirm "Have you reviewed policy.json and tested every action in a non-production tenant?"
 fi
-log "deploying blueboard $VERSION → $RESOURCE_GROUP ($LOCATION, web in $SWA_LOCATION) · env $BB_ENV · broker execute: $BROKER_EXECUTE"
+log "deploying blueboard $VERSION → $RESOURCE_GROUP ($LOCATION) · env $BB_ENV · broker execute: $BROKER_EXECUTE"
 confirm "Continue?"
 
 # 2. providers + resource group ----------------------------------------------------------------
@@ -66,9 +67,9 @@ done
 az group create -n "$RESOURCE_GROUP" -l "$LOCATION" --tags app=blueboard env="$BB_ENV" -o none
 
 # 3. infrastructure -----------------------------------------------------------------------------
-log "infrastructure (Static Web App, Function App, PostgreSQL, storage, monitoring)"
+log "infrastructure (Web App, Function App, PostgreSQL, storage, monitoring) in $LOCATION"
 out="$(az deployment group create -g "$RESOURCE_GROUP" -n "blueboard-main" -f infra/main.bicep \
-  -p location="$LOCATION" swaLocation="$SWA_LOCATION" namePrefix="$PREFIX" \
+  -p location="$LOCATION" webSkuName="$WEB_SKU" namePrefix="$PREFIX" \
   boardApiClientId="$BOARD_API_CLIENT_ID" boardApiAudience="$BOARD_API_AUDIENCE" \
   ingestEnabled="$INGEST_ENABLED" brokerExecute="$BROKER_EXECUTE" policyJson=@"$POLICY_FILE" \
   --query properties.outputs -o json)"
@@ -79,15 +80,14 @@ WEB_HOST="$(jq -r .webHostname.value <<<"$out")"
 API_NAME="$(jq -r .apiName.value <<<"$out")"
 API_HOST="$(jq -r .apiHostname.value <<<"$out")"
 API_MI="$(jq -r .apiIdentityPrincipalId.value <<<"$out")"
-SWA_MI="$(jq -r .swaIdentityPrincipalId.value <<<"$out")"
 state_set WEB_HOST "$WEB_HOST"
 state_set API_HOST "$API_HOST"
 state_set API_MI_PRINCIPAL_ID "$API_MI"
 
 # 5. sign-in --------------------------------------------------------------------------------------
-log "sign-in: redirect URI and federated credential for the Static Web App"
-WEB_HOSTNAME="$WEB_HOST" SWA_MI_PRINCIPAL_ID="$SWA_MI" "$BB_ROOT/infra/entra-app.sh" >/dev/null ||
-  warn "could not update the app registration (needs app owner or Cloud Application Administrator): run entra-app.sh with WEB_HOSTNAME and SWA_MI_PRINCIPAL_ID"
+log "sign-in: single-page app redirect URI for https://$WEB_HOST"
+WEB_HOSTNAME="$WEB_HOST" "$BB_ROOT/infra/entra-app.sh" >/dev/null ||
+  warn "could not update the app registration (needs app owner or Cloud Application Administrator): run BB_ENV=$BB_ENV WEB_HOSTNAME=$WEB_HOST ./infra/entra-app.sh"
 
 # 6. Function App ---------------------------------------------------------------------------------
 log "building the C# Function App"
@@ -98,15 +98,13 @@ dotnet publish api/Blueboard.Api -c Release -o "$build/api" --nologo -v q
 log "deploying $API_NAME"
 az functionapp deploy -g "$RESOURCE_GROUP" -n "$API_NAME" --src-path "$build/api.zip" --type zip -o none
 
-# 7. Static Web App -------------------------------------------------------------------------------
-log "building the React site"
+# 7. Web App -------------------------------------------------------------------------------------
+log "building the React site and its host"
 (cd web && pnpm install --frozen-lockfile --silent && pnpm build)
-# The SWA auth config needs the tenant id in the issuer URL. Substituted in the build output only.
-sed -i.bak "s/__TENANT_ID__/$AZURE_TENANT_ID/" web/dist/staticwebapp.config.json && rm web/dist/staticwebapp.config.json.bak
+dotnet publish web/host -c Release -o "$build/web" --nologo -v q
+(cd "$build/web" && zip -qr "$build/web.zip" .)
 log "deploying $WEB_NAME"
-# The deployment token goes through the environment: never on the command line or in logs.
-SWA_CLI_DEPLOYMENT_TOKEN="$(az staticwebapp secrets list -n "$WEB_NAME" -g "$RESOURCE_GROUP" --query properties.apiKey -o tsv)" \
-  npx --yes @azure/static-web-apps-cli@2 deploy web/dist --env production --no-use-keychain >/dev/null
+az webapp deploy -g "$RESOURCE_GROUP" -n "$WEB_NAME" --src-path "$build/web.zip" --type zip -o none
 
 # 8. health ---------------------------------------------------------------------------------------
 log "health check"
@@ -116,6 +114,7 @@ for _ in $(seq 1 30); do
   sleep 10
 done
 [[ "$ok" == "1" ]] || die "https://$API_HOST/api/healthz did not respond (see Application Insights)"
+curl -fsS "https://$WEB_HOST/healthz" >/dev/null || die "https://$WEB_HOST/healthz did not respond"
 
 cat <<EOF
 

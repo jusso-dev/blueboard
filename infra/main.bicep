@@ -1,26 +1,30 @@
-// blueboard on Azure: static React front end + C# Azure Functions back end.
+// blueboard on Azure, in Australia: React front end on App Service + C# Azure Functions back end.
 //
-//   web    Azure Static Web Apps (Standard). Serves the React build, signs people in with Microsoft Entra
-//          ID (custom registration, no client secret: federated credential on a managed identity), and
-//          proxies /api/* to the linked Function App.
-//   api    Azure Functions, Flex Consumption, .NET 10 isolated. REST for the web app, the MCP endpoint for
-//          agents (/runtime/webhooks/mcp, Entra bearer tokens), timer triggers for the Defender incident
-//          poller and stuck-action recovery.
+//   web    App Service Web App (Linux, .NET 10). A small ASP.NET Core host serves the React build with strict
+//          security headers. It has no identity, no secrets and no data access: the browser signs in with
+//          Microsoft Entra ID (MSAL, auth code + PKCE) and calls the Function App directly with an access token.
+//   api    Azure Functions, Flex Consumption, .NET 10 isolated. REST for the web app (CORS: the web origin only),
+//          the MCP endpoint for agents (/runtime/webhooks/mcp), timer triggers for the Defender incident poller
+//          and stuck-action recovery. Every request carries an Entra bearer token, validated in code.
 //   data   Azure Database for PostgreSQL Flexible Server 16, Entra authentication only.
+//
+// Every resource is created in one Australian region (location), so board data, logs and the deployment
+// package stay in Australia. Microsoft Graph and Defender are tenant services (their data location is set
+// by your Microsoft 365 / Defender tenant), and Claude on Microsoft Foundry is not offered in an Australian
+// region yet: see docs/architecture.md § Data residency.
 //
 // Identities (no stored secrets anywhere):
 //   id-api   Function App: Graph + Defender application permissions (infra/grant-permissions.sh),
 //            PostgreSQL Entra admin, host storage data roles, Application Insights publisher.
-//   id-swa   Static Web App: federated credential on the board app registration (replaces a client secret).
 
 targetScope = 'resourceGroup'
 
-param location string = resourceGroup().location
-@description('Static Web Apps is offered in a few regions only (westus2, centralus, eastus2, westeurope, eastasia). Content is served globally either way.')
-param swaLocation string = 'eastasia'
+@description('Australian region for every resource. Flex Consumption is offered in Australia East and Australia Southeast.')
+@allowed(['australiaeast', 'australiasoutheast'])
+param location string = 'australiaeast'
 param namePrefix string = 'blueboard'
 param tenantId string = tenant().tenantId
-@description('Client id of the board API app registration (infra/entra-app.sh).')
+@description('Client id of the board app registration (infra/entra-app.sh). Also the web app\'s MSAL client id.')
 param boardApiClientId string
 @description('App ID URI of the board API, e.g. api://blueboard-prod.')
 param boardApiAudience string
@@ -32,6 +36,8 @@ param ingestEnabled bool = true
 param policyJson string
 @description('Maximum Function App instances (Flex Consumption).')
 param maximumInstanceCount int = 40
+@description('App Service plan for the web front end. B1 is enough for a SOC; P0v3 adds zone support and more headroom.')
+param webSkuName string = 'B1'
 
 var suffix = uniqueString(resourceGroup().id)
 var storageName = take('${replace(namePrefix, '-', '')}st${suffix}', 24)
@@ -60,11 +66,6 @@ resource appInsights 'Microsoft.Insights/components@2020-02-02' = {
 // ── identities ───────────────────────────────────────────────────────────────────────────────
 resource idApi 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
   name: '${namePrefix}-id-api'
-  location: location
-}
-
-resource idSwa 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
-  name: '${namePrefix}-id-swa'
   location: location
 }
 
@@ -174,6 +175,8 @@ resource api 'Microsoft.Web/sites@2024-04-01' = {
       minTlsVersion: '1.2'
       ftpsState: 'Disabled'
       http20Enabled: true
+      // The browser calls the API cross-origin with a bearer token (no cookies), so only the web origin is allowed.
+      cors: { allowedOrigins: ['https://${web.properties.defaultHostName}'], supportCredentials: false }
     }
     functionAppConfig: {
       deployment: {
@@ -207,71 +210,82 @@ resource apiSettings 'Microsoft.Web/sites/config@2024-04-01' = {
     AZURE_TENANT_ID: tenantId
     BOARD_API_AUDIENCE: boardApiAudience
     BOARD_API_CLIENT_ID: boardApiClientId
-    TRUST_SWA_PRINCIPAL: 'true'
     INGEST_ENABLED: string(ingestEnabled)
     BROKER_EXECUTE: string(brokerExecute)
     BLUEBOARD_POLICY_JSON: policyJson
   }
 }
 
-// Built-in auth on the Function App. Nothing is *required* (agents call /runtime/webhooks/mcp with bearer
-// tokens the app validates itself), but it must be on: App Service then strips client-supplied
-// x-ms-client-principal headers, so the only principal header the app sees is one the platform wrote for
-// the linked Static Web App or for a validated token. That is what makes TRUST_SWA_PRINCIPAL safe.
-resource apiAuth 'Microsoft.Web/sites/config@2024-04-01' = {
+// Publishing with FTP or basic auth is off: deployments use Entra (az functionapp deploy / az webapp deploy).
+resource apiFtp 'Microsoft.Web/sites/basicPublishingCredentialsPolicies@2024-04-01' = {
   parent: api
-  name: 'authsettingsV2'
-  properties: {
-    platform: { enabled: true }
-    globalValidation: { requireAuthentication: false, unauthenticatedClientAction: 'AllowAnonymous' }
-    identityProviders: {
-      azureActiveDirectory: {
-        enabled: true
-        registration: {
-          clientId: boardApiClientId
-          openIdIssuer: '${environment().authentication.loginEndpoint}${tenantId}/v2.0'
-        }
-        validation: { allowedAudiences: [boardApiAudience, boardApiClientId] }
-      }
-    }
-    login: { tokenStore: { enabled: false } }
-  }
+  name: 'ftp'
+  properties: { allow: false }
 }
 
-// ── Static Web App (React) ───────────────────────────────────────────────────────────────────
-resource web 'Microsoft.Web/staticSites@2024-04-01' = {
+resource apiScm 'Microsoft.Web/sites/basicPublishingCredentialsPolicies@2024-04-01' = {
+  parent: api
+  name: 'scm'
+  properties: { allow: false }
+}
+
+// ── Web App (React, served by web/host) ──────────────────────────────────────────────────────
+resource webPlan 'Microsoft.Web/serverfarms@2024-04-01' = {
+  name: '${namePrefix}-web-plan'
+  location: location
+  kind: 'linux'
+  sku: { name: webSkuName }
+  properties: { reserved: true }
+}
+
+resource web 'Microsoft.Web/sites@2024-04-01' = {
   name: '${namePrefix}-web-${suffix}'
-  location: swaLocation
-  sku: { name: 'Standard', tier: 'Standard' }
-  identity: { type: 'UserAssigned', userAssignedIdentities: { '${idSwa.id}': {} } }
+  location: location
+  kind: 'app,linux'
   properties: {
-    stagingEnvironmentPolicy: 'Disabled'
-    allowConfigFileUpdates: true
+    serverFarmId: webPlan.id
+    httpsOnly: true
     publicNetworkAccess: 'Enabled'
+    clientAffinityEnabled: false
+    siteConfig: {
+      linuxFxVersion: 'DOTNETCORE|10.0'
+      minTlsVersion: '1.2'
+      ftpsState: 'Disabled'
+      http20Enabled: true
+      alwaysOn: true
+      healthCheckPath: '/healthz'
+    }
   }
 }
 
-resource webSettings 'Microsoft.Web/staticSites/config@2024-04-01' = {
+resource webSettings 'Microsoft.Web/sites/config@2024-04-01' = {
   parent: web
   name: 'appsettings'
   properties: {
-    AZURE_CLIENT_ID: boardApiClientId
-    // No client secret: SWA signs in with a federated credential on idSwa (entra-app.sh adds the trust).
-    OVERRIDE_USE_MI_FIC_ASSERTION_CLIENTID: idSwa.properties.clientId
+    // Public values only: the SPA reads them from /config.json to sign in and find the API.
+    BLUEBOARD_TENANT_ID: tenantId
+    BLUEBOARD_CLIENT_ID: boardApiClientId
+    BLUEBOARD_API_URL: 'https://${api.properties.defaultHostName}'
+    BLUEBOARD_API_SCOPE: '${boardApiAudience}/Board.Access'
+    BLUEBOARD_AUTHORITY_HOST: environment().authentication.loginEndpoint
   }
 }
 
-resource webBackend 'Microsoft.Web/staticSites/linkedBackends@2024-04-01' = {
+resource webFtp 'Microsoft.Web/sites/basicPublishingCredentialsPolicies@2024-04-01' = {
   parent: web
-  name: 'api'
-  properties: { backendResourceId: api.id, region: location }
-  dependsOn: [apiAuth, apiSettings]
+  name: 'ftp'
+  properties: { allow: false }
 }
 
-output webHostname string = web.properties.defaultHostname
+resource webScm 'Microsoft.Web/sites/basicPublishingCredentialsPolicies@2024-04-01' = {
+  parent: web
+  name: 'scm'
+  properties: { allow: false }
+}
+
+output webHostname string = web.properties.defaultHostName
 output webName string = web.name
 output apiName string = api.name
 output apiHostname string = api.properties.defaultHostName
 output apiIdentityPrincipalId string = idApi.properties.principalId
-output swaIdentityPrincipalId string = idSwa.properties.principalId
 output pgServerName string = pg.name

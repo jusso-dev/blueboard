@@ -17,8 +17,6 @@ public sealed record Settings
 
     /// <summary>Local only: accept "Bearer dev:&lt;handle&gt;" and the x-dev-principal header. Refused in Azure.</summary>
     public bool DevAuth { get; init; }
-    /// <summary>Trust the x-ms-client-principal header. Only true when the Function App is reachable solely from its linked Static Web App.</summary>
-    public bool TrustSwaPrincipal { get; init; }
 
     public bool IngestEnabled { get; init; }
     public int IngestLookbackHours { get; init; } = 24;
@@ -43,7 +41,6 @@ public sealed record Settings
             ApiAudience = Env("BOARD_API_AUDIENCE"),
             ApiClientId = Env("BOARD_API_CLIENT_ID"),
             DevAuth = Flag("DEV_AUTH"),
-            TrustSwaPrincipal = Flag("TRUST_SWA_PRINCIPAL"),
             IngestEnabled = Flag("INGEST_ENABLED"),
             IngestLookbackHours = Int("INGEST_LOOKBACK_HOURS", 24),
             BrokerExecute = Flag("BROKER_EXECUTE"),

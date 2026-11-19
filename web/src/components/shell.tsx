@@ -1,6 +1,7 @@
 import { Link, Outlet, useLocation, useNavigate, useSearchParams } from "react-router";
 import { createContext, useContext, useEffect, useRef, type ReactNode } from "react";
 import { cx, Kbd, Severity } from "./ui";
+import { signIn, signOut } from "../lib/auth";
 import { useLive, useLiveQuery, type Action, type Channel, type Incident, type Me } from "../lib/api";
 
 const MeContext = createContext<Me | null>(null);
@@ -84,12 +85,13 @@ function SignedOut() {
       <div className="max-w-sm">
         <p className="text-lg font-semibold tracking-tight">blueboard</p>
         <p className="mt-2 text-sm text-ink-2">Sign in with your work account to open the board.</p>
-        <a
-          href="/.auth/login/aad?post_login_redirect_uri=/"
+        <button
+          type="button"
+          onClick={() => void signIn()}
           className="mt-4 inline-flex h-8 items-center rounded-[var(--radius-control)] bg-accent px-3 text-[13px] font-medium text-accent-ink transition-colors duration-150 hover:bg-focus"
         >
           Sign in with Microsoft
-        </a>
+        </button>
         {import.meta.env.DEV && (
           <p className="mt-4 text-[13px] text-muted">
             Local development:{" "}
@@ -241,9 +243,9 @@ function Rail({ me }: { me: Me | null }) {
             <p className="truncate text-[13px] text-ink-2">{me.display_name}</p>
             <p className="label truncate">@{me.handle}</p>
           </div>
-          <a href="/.auth/logout?post_logout_redirect_uri=/" className="label hover:text-accent">
+          <button type="button" onClick={() => void signOut()} className="label hover:text-accent">
             Sign out
-          </a>
+          </button>
         </div>
       )}
     </aside>

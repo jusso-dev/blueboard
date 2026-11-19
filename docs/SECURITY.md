@@ -38,7 +38,7 @@ flowchart LR
     AP["Approvers (Board.Approve)"]
   end
   subgraph board["blueboard (trusted computing base)"]
-    AUTHZ["AuthN/Z on every request<br/>browser: SWA principal (platform-forwarded)<br/>agent: Entra JWT per MCP tool call"]
+    AUTHZ["AuthN/Z on every request<br/>browser: delegated Entra JWT (scope Board.Access)<br/>agent: app-only Entra JWT per MCP tool call"]
     POL["Schema + action policy"]
     APPR["Human approval gate"]
     EXEC["Executor (managed identity)"]
@@ -54,16 +54,16 @@ flowchart LR
   AUTHZ --> POL --> APPR --> EXEC --> MS
 ```
 
-The trusted computing base is the Function App's code, its managed identity (`blueboard-id-api`), its database and `policy.json`. The Static Web App only serves static files and handles sign-in. Compromising any one of those is equivalent to compromising the containment capability, so protect them accordingly.
+The trusted computing base is the Function App's code, its managed identity (`blueboard-id-api`), its database and `policy.json`. The Web App only serves static files and public sign-in settings; it holds no identity, secret or data. Compromising any one of those is equivalent to compromising the containment capability, so protect them accordingly.
 
 ## How each request is authenticated
 
 | Caller | Path | What the API trusts | Why it can't be forged |
 |---|---|---|---|
-| Analyst (browser) | `https://<swa>/api/*` → linked Function App | The `x-ms-client-principal` header that Static Web Apps adds after Entra sign-in. Roles come from the Entra `roles` claim, echoed into `userRoles` by `/api/swa-roles` at sign-in. | The Function App has **App Service built-in auth enabled**, which strips any client-supplied `x-ms-client-principal`. The app only reads the header when `TRUST_SWA_PRINCIPAL=true`, which Bicep sets together with built-in auth. Only `aad` principals are accepted. |
-| Agent | `https://<func>/runtime/webhooks/mcp` | An Entra **access token** for `api://blueboard-<env>`, read from the MCP transport headers on **every tool call**: signature (tenant JWKS), issuer, audience, `tid` and lifetime are all checked | MCP tools accept bearer tokens only (`bearerOnly`); a principal header is ignored on this path. The MCP extension's system key is disabled (`webhookAuthorizationLevel: Anonymous`) because identity is checked in code, per tool. |
+| Analyst (browser) | `https://<func>/api/*`, called from the web origin | A **delegated** Entra access token for `api://blueboard-<env>` with the `Board.Access` scope, from MSAL (auth code + PKCE, no client secret). Roles come from the token's `roles` claim. | Signature (tenant JWKS), issuer, audience, `tid`, lifetime and the `Board.Access` scope are all checked on every request. There are no cookies and no trusted headers: a forged `x-ms-client-principal` is ignored (tested). CORS allows only the web origin, without credentials. |
+| Agent | `https://<func>/runtime/webhooks/mcp` | An **app-only** Entra access token for `api://blueboard-<env>`, read from the MCP transport headers on **every tool call** | Same checks as above. The MCP extension's system key is disabled (`webhookAuthorizationLevel: Anonymous`) because identity is checked in code, per tool. |
 | Timers | in-process | n/a | Not reachable over HTTP |
-| `/api/swa-roles` | Static Web Apps only | Claims from a completed Entra sign-in | Static Web Apps makes `rolesSource` unreachable from outside. The function only echoes `Board.*` roles that are already in the signed token, so it grants nothing. |
+| Web App | `https://<web>/` | Nothing: it serves files and `/config.json` (tenant id, client id, API URL, scope: all public) | It has no identity, secret or data access to steal. |
 
 ## Threat model
 
@@ -74,37 +74,38 @@ The trusted computing base is the Function App's code, its managed identity (`bl
 | T3 | **Self-approval / collusion** | A person both requests and approves | `decided_by ≠ requested_by` enforced in SQL · approvals restricted to humans | Two colluding approvers. Use separate groups and review `audit_log`. |
 | T4 | **Over-broad action** | Isolating a domain controller; blocking `microsoft.com` | Protected lists matched by every alias (UPN↔object ID, MDE ID↔DNS name↔host name) · unresolvable targets are flagged and never auto-approved · indicator blocks expire (max 365 days) | Anything not on your protected lists. Maintain `policy.json`. |
 | T5 | **Token theft from the board** | SSRF to steal the managed identity's Graph token | `MsClient` sends tokens only to an exact origin (`graph.microsoft.com`, `api.security.microsoft.com`) · dot-segment paths refused · IDs validated by strict regex · lookups reject `/ \ ? #` | A code bug in the TCB. Keep dependencies patched; review changes to `api/Blueboard.Api/Graph` and `api/Blueboard.Api/Actions`. |
-| T6 | **Unauthorised reader** in the tenant | Any employee calls `/api/incidents` | Every route and MCP tool requires `Board.Post` · enterprise app has *assignment required* · Static Web Apps route rule requires `authenticated` on `/api/*` | n/a |
-| T6b | **Forged identity header** | A caller sends its own `x-ms-client-principal` to the Function App | App Service built-in auth is enabled on the Function App and strips client-supplied principal headers · MCP tools ignore the header and require a bearer token · tests cover both principal formats | A misconfiguration that turns built-in auth off while `TRUST_SWA_PRINCIPAL=true`. Bicep sets both together; don't change one without the other. |
-| T7 | **CSRF / clickjacking** against an approver | Malicious page posts an approval | Same-origin (`Origin`) check on every cookie-authenticated write · `frame-ancestors 'none'` + `X-Frame-Options: DENY` · strict CSP with no third-party origins (fonts are self-hosted) · HSTS | n/a |
+| T6 | **Unauthorised reader** in the tenant | Any employee calls `/api/incidents` | Every route and MCP tool requires `Board.Post` · enterprise app has *assignment required*, so unassigned people can't even get a token | n/a |
+| T6b | **Forged identity header** | A caller sends its own `x-ms-client-principal` to the Function App | The API reads identity only from a validated bearer token; principal headers are never parsed (regression test) | n/a |
+| T7 | **CSRF / clickjacking** against an approver | Malicious page posts an approval | No ambient credentials: the token is attached by the app's own code, so a cross-site form or fetch carries nothing · CORS allows only the web origin, without credentials · `frame-ancestors 'self'` + `X-Frame-Options: SAMEORIGIN` · strict CSP (scripts from the web origin only, network calls only to the API and Entra) · HSTS | n/a |
+| T7b | **Token theft from the browser** | XSS reads the access token | Tokens are in `sessionStorage` for the tab only and last about an hour · strict CSP and no HTML rendering of message content (T8) · the token is scoped to the board API alone (`Board.Access`), not Graph | Script running in the page could use the token while the tab is open. Keep the CSP strict; Conditional Access token protection where available. |
 | T8 | **Stored XSS** via message content | Agent posts `<script>` | Custom markdown renderer: no HTML passthrough, React escaping, only `http(s)` links | n/a |
 | T9 | **CSV/formula injection** in reports | Incident title `=HYPERLINK(...)` | Cells starting `= + - @` are prefixed with `'` | n/a |
 | T10 | **Stuck or duplicated execution** | Crash mid-action; double approval | Single `approved → running` transition in SQL (exactly-once claim) · recovery sweep never re-runs a `running` action, marks it "outcome unknown" | A crash after Defender accepted the call but before it was recorded: the analyst must check Defender. |
 | T11 | **Database compromise** | Attacker edits `actions` to inject parameters | Postgres accepts Entra tokens only (no passwords) · stored params are re-validated against the schema before execution · every query is parameterised (Npgsql) | An attacker with DB write could still forge approvals. Restrict the Entra admin; use a private endpoint. |
 | T12 | **Supply chain** | Malicious npm or NuGet package | Pinned `pnpm-lock.yaml` + `--frozen-lockfile`, pinned NuGet versions, warnings as errors, CI on GitHub-hosted runners | Review `pnpm audit` / `dotnet list package --vulnerable`; enable Dependabot. |
-| T13 | **Leaked deployment credentials** | Static Web Apps deployment token, storage keys | No storage keys exist (`allowSharedKeyAccess: false`) · App Insights local auth disabled · the SWA token is read just-in-time and passed through the environment, never stored · no client secret on the app registration (federated credential) | Rotate the SWA deployment token in the portal if a CI log ever captured it. |
+| T13 | **Leaked deployment credentials** | Publishing profile, storage keys | FTP and basic-auth publishing are off on both apps, so deployments need Entra (`az functionapp deploy`, `az webapp deploy`) · no storage keys exist (`allowSharedKeyAccess: false`) · App Insights local auth disabled · no client secret on the app registration (public client with PKCE) | n/a |
 
 ## Controls in the code
 
 | Control | Where |
 |---|---|
 | JWT validation against the tenant OIDC keys (issuer, audience, `tid`, lifetime), roles read from the token on every request | `api/Blueboard.Api/Auth/TokenValidator.cs` |
-| Static Web Apps / App Service principal parsing (Entra only; roles mapped from claims) | `Authenticator.FromSwaPrincipal` in `Auth/Authenticator.cs` |
+| Bearer token is the only identity source (no headers, no cookies); `Board.Access` scope required on delegated tokens | `Auth/Authenticator.cs`, `TokenValidator.HasScope` |
 | Agents can never hold `Board.Approve` or `Board.Admin` | `TokenValidator.MapRoles` |
-| `Board.Post` required on every REST route; bearer-only, per-call auth on every MCP tool | `Http/Endpoint.cs`, `Mcp/BoardTools.cs` |
+| `Board.Post` required on every REST route; per-call auth on every MCP tool | `Http/Endpoint.cs`, `Mcp/BoardTools.cs` |
 | Human-only, not-the-requester approval (enforced in SQL) | `Broker.DecideAsync` in `Actions/Broker.cs` |
 | Action parameter validation (strict ID formats) at request time *and* execution time | `Actions/Catalog.cs`, `Broker.ExecuteAsync` |
 | Policy: protected lists with alias matching, evidence scope check, incident-scoped writes, auto-approve allow-list | `Actions/Policy.cs` |
 | Token egress guard (exact origin, no dot-segments) | `MsClient.BuildUri` in `Graph/MsClient.cs` |
-| Same-origin check for cookie-authenticated writes | `Endpoint.AssertSameOrigin` |
-| Security headers and CSP | `web/public/staticwebapp.config.json` |
+| CORS: web origin only, no credentials | `infra/main.bicep` (Function App `siteConfig.cors`) |
+| Security headers and CSP (scripts self only; connect to the API and Entra only) | `web/host/SecurityHeaders.cs` |
 | Safe markdown rendering (no HTML, http(s) links only) | `web/src/components/markdown.tsx` |
 | Audit trail (who requested, who decided, outcome) | `audit_log` table; written by broker, claims, enrichment, auth |
 | Dry-run by default | `BROKER_EXECUTE` (default `false`) |
 | `DEV_AUTH` refused in Azure (`WEBSITE_INSTANCE_ID` present) | `Settings.FromEnvironment` in `Core/Settings.cs` |
 | Untrusted-content handling in the agent prompt | `agents/Blueboard.EnrichmentAgent/Program.cs` |
 
-Regression tests: `api/Blueboard.Api.Tests` (policy, aliases, parameter validation, token guard, role mapping, principal parsing, CSV, percentile) and `web/src/__tests__` (markdown). CI runs them on every push.
+Regression tests: `api/Blueboard.Api.Tests` (policy, aliases, parameter validation, token guard, role mapping, scope check, forged-header refusal, CSV, percentile) and `web/src/__tests__` (markdown). CI runs them on every push.
 
 ## Permissions the board holds
 
@@ -129,7 +130,7 @@ Regression tests: `api/Blueboard.Api.Tests` (policy, aliases, parameter validati
 | Microsoft Graph | `SecurityAnalyzedMessage.ReadWrite.All` | `purge_email` | **write, high impact** |
 | Microsoft Graph | `SecurityIncident.ReadWrite.All` | `update_incident`, `add_incident_comment` | **write** |
 
-Agent identities get **no** Microsoft security permissions: three board app roles, plus `Cognitive Services User` on the Foundry resource for the reference agent. `blueboard-id-swa` only holds a federated credential on the board app registration, so Static Web Apps can sign people in.
+Agent identities get **no** Microsoft security permissions: three board app roles, plus `Cognitive Services User` on the Foundry resource for the reference agent. The Web App has no identity at all.
 
 Recommended rollout: start with `READ_ONLY=1`, then add `run_av_scan collect_investigation_package add_incident_comment`, then device isolation and IOC blocks, and add identity and mail actions last, once approvers are comfortable.
 
@@ -160,8 +161,8 @@ Policy decisions are recorded on each action (`policy_notes`) and shown to the a
 
 **Network**
 - [ ] Function App **VNet integration** (Flex Consumption supports it); PostgreSQL behind a **private endpoint**; `AllowAzureServices` firewall rule removed.
-- [ ] Function App **access restrictions**: allow the Static Web App backend and known agent egress IPs, deny the rest. (Linked backends need the Function App to stay publicly reachable, so use IP rules, not a private endpoint, on the Function App itself.)
-- [ ] Static Web App: a custom domain, and optionally **enterprise-grade edge** (Front Door) for WAF and DDoS.
+- [ ] Function App reachability: browsers call it directly, so keep it public with token auth, or put both apps behind Front Door and restrict the Function App to Front Door and known agent egress IPs.
+- [ ] Web App: a custom domain (add it to the SPA redirect URIs and the Function App CORS list) and optionally Front Door for WAF and DDoS.
 - [ ] Storage account: shared keys stay disabled (default); add a private endpoint once the Function App is VNet-integrated.
 
 **Data**
@@ -175,7 +176,7 @@ Policy decisions are recorded on each action (`policy_notes`) and shown to the a
 - [ ] Every action tested in a **non-production tenant** before `BROKER_EXECUTE=true`.
 - [ ] Dependabot or Renovate enabled; `pnpm audit` reviewed per release.
 - [ ] `DEV_AUTH` unset in every deployed environment (the API refuses to start with it in Azure).
-- [ ] App Service built-in auth stays **enabled** on the Function App while `TRUST_SWA_PRINCIPAL=true`. They're set together in Bicep: never change one alone.
+- [ ] The Function App CORS list contains only the web origin(s). Never `*`.
 
 ## Monitoring and detection
 
@@ -203,7 +204,7 @@ If you suspect the board, an agent, or an approver account is compromised:
 3. **Remove write permissions** from `blueboard-id-api` (Entra → Enterprise applications → Managed identities → blueboard-id-api → Permissions → revoke the write permissions). Existing tokens expire within about an hour; restart the Function App to drop cached tokens immediately.
 4. **Review:** `select * from actions where created_at > now() - interval '24 hours' order by created_at;` and `audit_log` for the same window. Check Defender's Action center for anything the board ran.
 5. **Reverse** any harmful actions in Defender or Entra: release isolation, re-enable accounts, delete the custom indicators.
-6. **Rotate:** no application secrets exist. Rotate the Static Web App deployment token (portal → Manage deployment token) if CI logs may have captured it. If an agent used a federated credential, delete and recreate that federation.
+6. **Rotate:** no application secrets or deployment tokens exist. If an agent used a federated credential, delete and recreate that federation. To end every browser session, revoke the users' sessions in Entra (refresh tokens stop working at once; access tokens expire within about an hour).
 
 ## Known limitations
 
@@ -211,7 +212,7 @@ These are tracked in [`plans/README.md`](../plans/README.md):
 
 - **Feed cursor** (`seq > after`) can skip a message that commits out of order under concurrent writes, so an agent might miss a question. This doesn't affect approvals or execution.
 - **Request steps aren't one transaction.** A crash between them can leave an action without its board message. The recovery sweep handles stuck `approved` and `running` states.
-- **No rate limiting** on MCP or REST per principal yet. Use Function App access restrictions and Static Web Apps enterprise edge (Front Door) rate limits for production; Flex Consumption's `maximumInstanceCount` (40) caps cost.
+- **No rate limiting** on MCP or REST per principal yet. Use Front Door rate limits for production; Flex Consumption's `maximumInstanceCount` (40) caps cost.
 - **Live updates are polled** (every 4 s per open tab). This is fine for a SOC team; very large audiences should add SignalR Service.
 - **Not yet run against a live Defender tenant.** The Graph and MDE calls follow Microsoft's documented API shapes but haven't been exercised end to end. Test each one in a non-production tenant first.
 

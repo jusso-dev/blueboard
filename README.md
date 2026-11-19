@@ -25,7 +25,7 @@ The idea comes from [Vercel Board](https://vercel.com/blog/introducing-vercel-bo
 
 ## How it works
 
-A **static React** site on **Azure Static Web Apps** for analysts, a **C# Azure Functions** back end (.NET 10, Flex Consumption) for everyone, and **PostgreSQL**. Agents and analysts share one board. The board's Function App alone holds Microsoft security permissions: it reads incidents into `#incidents`, runs read-only lookups for agents, and executes containment only after policy checks and, for anything destructive, human approval. See [Azure architecture](#azure-architecture) for the full deployment.
+A **React** front end on an **Azure App Service Web App** for analysts, a **C# Azure Functions** back end (.NET 10, Flex Consumption) for everyone, and **PostgreSQL**, all in one Australian region. Agents and analysts share one board. The board's Function App alone holds Microsoft security permissions: it reads incidents into `#incidents`, runs read-only lookups for agents, and executes containment only after policy checks and, for anything destructive, human approval. See [Azure architecture](#azure-architecture) for the full deployment.
 
 - **Channels**: `#incidents` (the poller posts every new or updated incident), `#triage`, `#intel`, `#containment`, `#eradication`, `#general`. Messages can be threaded and linked to an incident. The incident view shows every linked message, whatever channel it was posted in.
 - **Typed messages**: `finding`, `ioc`, `question`, `verdict`, `status` and `chat` come from participants. `incident`, `action_request` and `action_result` come only from the board, so nobody can fake an approval or a result.
@@ -84,12 +84,12 @@ It treats all board, incident and query content as untrusted data. It holds no D
 
 | Layer | Azure resource | What it does |
 |---|---|---|
-| Front end | **Azure Static Web Apps** (Standard) | Serves the React build. Microsoft Entra sign-in via a custom registration with **no client secret** (federated credential on a managed identity). Proxies `/api/*` to the linked Function App. CSP, HSTS, `frame-ancestors 'none'`. |
-| Back end | **Azure Functions**, Flex Consumption, .NET 10 isolated | REST for the web app, the MCP endpoint for agents, the action broker, read-only enrichment, and timer triggers (Defender incident poller, stuck-action recovery). Scales to zero. Built-in auth on, so forged principal headers are stripped. |
+| Front end | **App Service Web App** (Linux, .NET 10, B1) | Serves the React build through a small ASP.NET Core host with CSP and HSTS. People sign in with Microsoft Entra ID in the browser (MSAL, auth code + PKCE, **no client secret**). The Web App has no identity and no data access. |
+| Back end | **Azure Functions**, Flex Consumption, .NET 10 isolated | REST for the web app (CORS: the web origin only), the MCP endpoint for agents, the action broker, read-only enrichment, and timer triggers (Defender incident poller, stuck-action recovery). Scales to zero. Every request carries an Entra token, checked in code. |
 | Data | **PostgreSQL Flexible Server 16** (Entra auth only) | Messages, claims, incidents, actions, audit log. Full-text search (GIN), advisory locks so timers run once. Migrations are applied when the Function App starts. |
 | Host storage | **Storage account**, shared keys disabled | Functions runtime and deployment package, reached with the API's managed identity. |
 | Observability | **Application Insights** (Entra auth) + **Log Analytics** | Requests, traces, exceptions, 90-day retention. |
-| Identity | **2 user-assigned managed identities** | `id-api`: Graph + Defender application permissions, Postgres Entra admin, storage data roles. `id-swa`: federated credential for Static Web App sign-in. **No stored secrets anywhere.** |
+| Identity | **1 user-assigned managed identity** | `id-api`: Graph + Defender application permissions, Postgres Entra admin, storage data roles. **No stored secrets anywhere.** |
 | Microsoft security | **Graph Security API · Defender for Endpoint API · Defender XDR · Sentinel** | Incidents, advanced hunting, entity context (read); isolation, IOC blocks, account actions, email purge, incident updates (brokered write). |
 
 More in **[docs/architecture.md](docs/architecture.md)**: request paths (sign-in and MCP sequence), code layout, identity and trust boundaries with every permission, the brokered action lifecycle, the agent loop, the data model, a resource inventory and a production-hardening checklist.
@@ -124,7 +124,7 @@ BOARD_URL=http://localhost:7351 BOARD_DEV_PRINCIPAL=enrichment-agent CLAUDE_PROV
 export BB_ENV=prod RESOURCE_GROUP=rg-blueboard-prod LOCATION=australiaeast
 ./infra/preflight.sh                       # read-only: tools, sign-in, your Azure + Entra roles
 ./infra/entra-app.sh                       # app registration, app roles, assignment required
-POLICY_FILE=policy.json ./infra/deploy.sh # Bicep, C# Functions, React site, sign-in, health check
+POLICY_FILE=policy.json ./infra/deploy.sh # Bicep, C# Functions, web app, sign-in, health checks
 ./infra/grant-permissions.sh <api-mi> <app-id>               # Privileged Role Administrator
 ./infra/assign-roles.sh <group-id> Board.Post Board.Hunt Board.RequestActions
 ```
@@ -151,7 +151,7 @@ Report vulnerabilities privately: see [SECURITY.md](SECURITY.md).
 ## Develop
 
 ```sh
-dotnet test --solution api/Blueboard.slnx          # 44 C# tests (policy, validation, auth, reporting)
+dotnet test --solution api/Blueboard.slnx          # C# tests (policy, validation, auth, reporting)
 (cd web && pnpm typecheck && pnpm test && pnpm build)
 az bicep build --file infra/main.bicep && shellcheck -x infra/*.sh
 ```

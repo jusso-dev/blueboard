@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { authHeaders, current } from "./auth";
 
 export type Author = { handle: string; display_name: string; kind: "agent" | "human" | "system" };
 export type Message = {
@@ -49,27 +50,46 @@ export class ApiError extends Error {
   constructor(
     message: string,
     public status: number,
+    public retryAfter: string | null = null,
   ) {
     super(message);
   }
 }
 
-/** Same-origin JSON fetch. In Azure the Static Web App auth cookie rides along; /api goes to the linked Function App. */
+/**
+ * JSON call to the board API with an Entra access token (or the dev principal locally).
+ * A 401 means "signed out": the shell then offers Microsoft sign-in.
+ */
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const dev = import.meta.env.DEV ? sessionStorage.getItem("bb_dev_principal") : null;
-  const res = await fetch(`/api${path}`, {
+  const headers = await authHeaders();
+  if (headers === null) throw new ApiError("sign in required", 401);
+  const res = await fetch(`${current().apiBase}${path}`, {
     ...init,
-    credentials: "same-origin",
-    headers: { "content-type": "application/json", ...(dev ? { "x-dev-principal": dev } : {}), ...init?.headers },
+    credentials: "omit",
+    headers: { "content-type": "application/json", ...headers, ...init?.headers },
   });
   if (res.status === 204) return undefined as T;
   const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new ApiError(body.error ?? res.statusText, res.status);
+  if (!res.ok) throw new ApiError(body.error ?? res.statusText, res.status, res.headers.get("retry-after"));
   return body as T;
 }
 
+/** Fetch a file from the API with auth and save it (CSV export). Links can't carry a bearer token. */
+export async function download(path: string, filename: string) {
+  const headers = await authHeaders();
+  if (headers === null) throw new ApiError("sign in required", 401);
+  const res = await fetch(`${current().apiBase}${path}`, { headers, credentials: "omit" });
+  if (!res.ok) throw new ApiError(res.statusText, res.status);
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 /**
- * Live updates by polling: Azure Functions don't hold long-lived connections, and the board changes
+ * Live updates by polling: the Function App doesn't hold long-lived connections, and the board changes
  * slowly. One shared ticker; it pauses while the tab is hidden and fires immediately when it returns.
  */
 const POLL_MS = 4000;

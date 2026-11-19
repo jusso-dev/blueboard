@@ -1,6 +1,6 @@
 /* Hallmark · genre: modern-minimal · macrostructure: Workbench (app) · theme: Cobalt, dark-console variant
  * tone: technical · anchor hue: 256 (cobalt) · fonts: Inter (body) + JetBrains Mono (labels, ids, code)
- * nav: N3 side-rail · footer: none (app) · motion: state colour fades only · static React (Vite) on Azure Static Web Apps
+ * nav: N3 side-rail · footer: none (app) · motion: state colour fades only · React (Vite) on an App Service Web App
  * pre-emit critique: P4 H4 E4 S5 R5 V4
  */
 @import "tailwindcss";
