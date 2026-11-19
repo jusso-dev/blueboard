@@ -8,6 +8,7 @@ import IncidentPage from "./pages/Incident";
 import SearchPage from "./pages/Search";
 import ApprovalsPage from "./pages/Approvals";
 import ReportsPage from "./pages/Reports";
+import PolicyPage from "./pages/Policy";
 import DevLogin from "./pages/DevLogin";
 import NotFound from "./pages/NotFound";
 import { initAuth } from "./lib/auth";
@@ -21,6 +22,7 @@ const routes = (dev: boolean) => [
       { path: "search", element: <SearchPage /> },
       { path: "approvals", element: <ApprovalsPage /> },
       { path: "reports", element: <ReportsPage /> },
+      { path: "policy", element: <PolicyPage /> },
       { path: "*", element: <NotFound /> },
     ],
   },

@@ -19,7 +19,7 @@ namespace Blueboard.Api.Mcp;
 /// Every call authenticates the bearer token from the transport headers and re-reads the caller's roles from Entra;
 /// there is no shared key. Board content is untrusted data.
 /// </summary>
-public sealed class BoardTools(Authenticator auth, BoardService board, Broker broker, Enrichment enrich, WebhookService hooks, ILogger<BoardTools> log)
+public sealed class BoardTools(Authenticator auth, BoardService board, Broker broker, Enrichment enrich, WebhookService hooks, Policy policy, ILogger<BoardTools> log)
 {
     /// <summary>Authenticate, require the tool's role, read its input record, run, and return JSON text or an error string.</summary>
     private async Task<string> Call<TIn>(ToolInvocationContext ctx, Func<Principal, TIn, Task<object?>> fn) where TIn : class
@@ -34,6 +34,11 @@ public sealed class BoardTools(Authenticator auth, BoardService board, Broker br
             if (tool.Role is { } role && !me.Has(role)) return $"error: missing role {role} (ask an admin to assign Board.{RoleName(role)}) (status 403)";
             var input = Contract.Read<TIn>(McpSchemas.Arguments(ctx.Arguments));
             return Json.Serialize(await fn(me, input));
+        }
+        catch (BoardException ex) when (ex.Status == 429 && ex.RetryAfterSeconds is { } retry && ex.Bucket != "pending_actions_per_incident")
+        {
+            // Name the tool, not the internal bucket, so the agent knows exactly what to back off from.
+            return RateLimitedText(ctx.Name, retry);
         }
         catch (BoardException ex)
         {
@@ -51,6 +56,9 @@ public sealed class BoardTools(Authenticator auth, BoardService board, Broker br
     }
 
     private Task<string> Call(ToolInvocationContext ctx, Func<Principal, Task<object?>> fn) => Call<NoInput>(ctx, (me, _) => fn(me));
+
+    /// <summary>MCP tool error for a rate-limited call (issue #5).</summary>
+    public static string RateLimitedText(string tool, int retryAfterSeconds) => $"error: rate limited: {tool}, retry in {retryAfterSeconds}s";
 
     private static string RoleName(string role) => role switch
     {
@@ -107,7 +115,7 @@ public sealed class BoardTools(Authenticator auth, BoardService board, Broker br
 
     [Function(nameof(ListActionTypes))]
     public Task<string> ListActionTypes([McpToolTrigger(Tools.ListActionTypes, Tools.ListActionTypesDoc)] ToolInvocationContext ctx) =>
-        Call(ctx, _ => Task.FromResult<object?>(Broker.CatalogInfo()));
+        Call(ctx, _ => Task.FromResult<object?>(Broker.CatalogInfo(policy)));
 
     [Function(nameof(RequestAction))]
     public Task<string> RequestAction([McpToolTrigger(Tools.RequestAction, Tools.RequestActionDoc)] ToolInvocationContext ctx) =>

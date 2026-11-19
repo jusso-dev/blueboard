@@ -36,7 +36,12 @@ public sealed record Identity(Guid Id, string Handle, string DisplayName, string
 public sealed record ActionRow(
     Guid Id, string Kind, JsonElement Params, Guid? IncidentId, string? IncidentGraphId, Guid? RequestMessageId,
     string RequestedBy, string Justification, string Status, bool RequiresApproval, string[] PolicyNotes,
-    string? DecidedBy, DateTimeOffset? DecidedAt, string? DecisionNote, JsonElement? Result, string? Error, DateTimeOffset CreatedAt);
+    string? DecidedBy, DateTimeOffset? DecidedAt, string? DecisionNote, JsonElement? Result, string? Error, DateTimeOffset CreatedAt,
+    DateTimeOffset? ExpiresAt = null, int ApprovalsRequired = 1, string[]? Approvals = null)
+{
+    /// <summary>Set on open actions whose kind is in confirm_target: the name the approver is asked to type back.</summary>
+    public string? ConfirmPrompt { get; init; }
+}
 
 /// <summary>A webhook subscription. The secret is returned once, by subscribe, and never again.</summary>
 public sealed record Subscription(Guid Id, string Url, string[] Events, string? Channel, bool Enabled, int Failures, DateTimeOffset CreatedAt, string? Secret = null);

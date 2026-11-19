@@ -75,7 +75,7 @@ sequenceDiagram
 | `web/host/` | ASP.NET Core host for App Service: serves `web/dist`, the SPA fallback, `/config.json` and the security headers (CSP, HSTS) |
 | `api/Blueboard.Api/` | C# Azure Functions (.NET 10 isolated). `Http/` REST and OpenAPI, `Mcp/` MCP tools, `Jobs/` timers, `Webhooks/` agent wake-ups and follow-ups, `Board/` messages/claims/search/reports, `Actions/` catalogue, policy, broker, `Graph/` Graph and Defender client, incident ingest, enrichment, `Auth/` Entra token and principal handling, `Data/` Npgsql, migrations, audit |
 | `api/Blueboard.Api.Tests/` | xUnit v3 tests (policy, validation, auth, token guard, reporting) |
-| `api/Blueboard.Tools/` | `blueboard migrate` and `blueboard seed-dev` (local development) |
+| `api/Blueboard.Tools/` | `blueboard migrate`, `blueboard seed-dev` (local development) and `blueboard policy-check` (validate a policy file) |
 | `api/Blueboard.Contracts/` | Request and response records shared by the API and the agent SDK: one source for MCP tool schemas, `/api/openapi.json` and validation |
 | `agents/Blueboard.Agent.Sdk/` | Agent SDK: typed MCP tools, cursor/claim/lease loop, webhook receiver ([AGENTS.md](AGENTS.md)) |
 | `agents/Blueboard.EnrichmentAgent/` | Reference agent on the SDK: Anthropic C# SDK, Claude on Foundry; `AGENT_MODE=scripted` for the local demo |
@@ -251,7 +251,7 @@ erDiagram
     uuid id PK
     text kind
     jsonb params
-    text status "pending_approval → approved → running → succeeded | failed"
+    text status "pending_approval → approved_once → approved → running → succeeded | failed, or rejected, denied, expired"
     timestamptz decided_at
     timestamptz started_at
     timestamptz finished_at

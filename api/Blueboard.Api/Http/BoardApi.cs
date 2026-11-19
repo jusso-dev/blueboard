@@ -17,7 +17,7 @@ namespace Blueboard.Api.Http;
 /// Inputs are the contract records in Blueboard.Contracts (the same ones the MCP tools use), and each route's
 /// [RouteDoc] feeds /api/openapi.json.
 /// </summary>
-public sealed class BoardApi(Endpoint ep, BoardService board, Search search, Reporting reporting, Broker broker, Enrichment enrich, WebhookService hooks, Db db)
+public sealed class BoardApi(Endpoint ep, BoardService board, Search search, Reporting reporting, Broker broker, Enrichment enrich, WebhookService hooks, Db db, Policy policy)
 {
     /// <summary>The web app sends ?type=a&amp;type=b; the contract field is types.</summary>
     private static readonly Dictionary<string, string> TypeAlias = new() { ["type"] = "types" };
@@ -102,7 +102,7 @@ public sealed class BoardApi(Endpoint ep, BoardService board, Search search, Rep
         ep.RunAsync(req, async _ =>
         {
             var q = Endpoint.Query<ActionsQuery>(req);
-            return q.Catalog ? Broker.CatalogInfo() : await broker.ListAsync(q.Status, Ct(req));
+            return q.Catalog ? Broker.CatalogInfo(policy) : await broker.ListAsync(q.Status, Ct(req));
         });
 
     [Function("actions-request")]
@@ -110,18 +110,40 @@ public sealed class BoardApi(Endpoint ep, BoardService board, Search search, Rep
     public Task<IActionResult> RequestAction([HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "actions")] HttpRequest req) =>
         ep.RunAsync(req, async me => await broker.RequestAsync(me, await Endpoint.BodyAsync<ActionRequest>(req), Ct(req)));
 
+    /// <summary>What policy would decide for this request, without filing it (the "Request action" form's live preview).</summary>
+    [Function("actions-preview")]
+    [RouteDoc("What policy would decide for a request, without filing it", Body = typeof(PreviewRequest), Role = Roles.Requester)]
+    public Task<IActionResult> PreviewAction([HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "actions/preview")] HttpRequest req) =>
+        ep.RunAsync(req, async me =>
+        {
+            me.Require(Roles.Requester);
+            return await broker.AssessAsync(await Endpoint.BodyAsync<PreviewRequest>(req), req.HttpContext.RequestAborted);
+        });
+
+    /// <summary>The effective policy in words. Everyone on the board sees modes and counts; only admins see protected values.</summary>
+    [Function("policy-get")]
+    [RouteDoc("The effective policy in words (protected values for admins only)")]
+    public Task<IActionResult> GetPolicy([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "policy")] HttpRequest req) =>
+        ep.RunAsync(req, me => Task.FromResult<object?>(PolicyReport.Build(policy, includeLists: me.Has(Roles.Admin))));
+
+    /// <summary>"What would happen if…": the same evaluation as a real request, for any principal on the board. Nothing is written.</summary>
+    [Function("policy-simulate")]
+    [RouteDoc("Policy simulator: the same evaluation as a real request; nothing is written", Body = typeof(PreviewRequest))]
+    public Task<IActionResult> SimulatePolicy([HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "policy/simulate")] HttpRequest req) =>
+        ep.RunAsync(req, async _ => await broker.AssessAsync(await Endpoint.BodyAsync<PreviewRequest>(req), req.HttpContext.RequestAborted));
+
     [Function("action-get")]
     [RouteDoc("One action", Response = typeof(ActionRow))]
-    public Task<IActionResult> GetAction([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "actions/{id}")] HttpRequest req, string id) =>
+    public Task<IActionResult> GetAction([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "actions/{id:guid}")] HttpRequest req, string id) =>
         ep.RunAsync(req, async _ => await broker.GetAsync(Id(id), Ct(req)) ?? throw BoardException.NotFound("action"));
 
     [Function("action-decide")]
     [RouteDoc("Approve or deny (human approvers only, never your own request)", Body = typeof(DecisionInput), Response = typeof(ActionRow), Role = Roles.Approver)]
-    public Task<IActionResult> Decide([HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "actions/{id}")] HttpRequest req, string id) =>
+    public Task<IActionResult> Decide([HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "actions/{id:guid}")] HttpRequest req, string id) =>
         ep.RunAsync(req, async me =>
         {
             var b = await Endpoint.BodyAsync<DecisionInput>(req);
-            return await broker.DecideAsync(me, Id(id), b.Decision, b.Note, Ct(req));
+            return await broker.DecideAsync(me, Id(id), b.Decision, b.Note, Ct(req), b.Confirm);
         });
 
     [Function("subscriptions")]

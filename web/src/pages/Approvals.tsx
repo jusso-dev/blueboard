@@ -1,45 +1,58 @@
 import { useState } from "react";
 import { PageHeader, useMe } from "../components/shell";
 import { api, refreshAll, useLiveQuery, type Action } from "../lib/api";
-import { Button, cx, Empty, ErrorLine, Input, Segmented, Tag, Time } from "../components/ui";
+import { actionTitle } from "../lib/actions";
+import { ActionStatusTag } from "../components/request-action";
+import { Button, cx, Empty, ErrorLine, Input, Segmented, Time, fmtDuration } from "../components/ui";
 
-const STATUS_TONE: Record<string, "good" | "critical" | "warning" | "neutral" | "accent"> = {
-  succeeded: "good",
-  failed: "critical",
-  rejected: "critical",
-  denied: "neutral",
-  pending_approval: "warning",
-  approved: "accent",
-  running: "accent",
-};
-
-function title(kind: string) {
-  return kind.replaceAll("_", " ").replace(/^./, (c) => c.toUpperCase());
+/** "expires in 3.2h" / "expired": time left is a word, not a colour. */
+function Expiry({ iso }: { iso: string }) {
+  const left = (new Date(iso).getTime() - Date.now()) / 1000;
+  return (
+    <span className={cx("label tnum", left < 1800 && "text-warning")} title={new Date(iso).toLocaleString()}>
+      {left <= 0 ? "expired" : `expires in ${fmtDuration(left)}`}
+    </span>
+  );
 }
 
-function Pending({ a, canDecide, mine }: { a: Action; canDecide: boolean; mine: boolean }) {
+function Pending({ a, canDecide, me }: { a: Action; canDecide: boolean; me: string | undefined }) {
   const [note, setNote] = useState("");
+  const [confirm, setConfirm] = useState("");
   const [busy, setBusy] = useState<"approve" | "deny" | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const required = a.approvals_required ?? 1;
+  const approvals = a.approvals ?? [];
+  const mine = a.requested_by === me;
+  const approvedByMe = !!me && approvals.includes(me);
+  const needsConfirm = !!a.confirm_prompt;
   const decide = async (decision: "approve" | "deny") => {
     setBusy(decision);
     setErr(null);
     try {
-      await api(`/actions/${a.id}`, { method: "POST", body: JSON.stringify({ decision, note: note || undefined }) });
+      await api(`/actions/${a.id}`, { method: "POST", body: JSON.stringify({ decision, note: note || undefined, confirm: confirm || undefined }) });
       refreshAll();
     } catch (e) {
       setErr((e as Error).message);
       setBusy(null);
     }
   };
+  const confirmed = !needsConfirm || confirm.trim().length > 0;
   return (
     <article className="border-b border-rule px-5 py-4">
       <header className="flex flex-wrap items-center gap-2">
-        <h2 className="text-sm font-semibold">{title(a.kind)}</h2>
+        <h2 className="text-sm font-semibold">{actionTitle(a.kind)}</h2>
         {a.incident_graph_id && <span className="label tnum text-ink-2">INC {a.incident_graph_id}</span>}
         <span className="label">requested by @{a.requested_by}</span>
-        <span className="ml-auto">
-          <Time iso={a.created_at} />
+        {required > 1 && (
+          <span className="label tnum text-ink-2" aria-label={`${approvals.length} of ${required} approvals`}>
+            {approvals.length} of {required} approvals{approvals.length > 0 ? ` (@${approvals.join(", @")})` : ""}
+          </span>
+        )}
+        <span className="ml-auto flex items-center gap-3">
+          {a.expires_at && <Expiry iso={a.expires_at} />}
+          <span className="label">
+            age <Time iso={a.created_at} />
+          </span>
         </span>
       </header>
 
@@ -65,27 +78,49 @@ function Pending({ a, canDecide, mine }: { a: Action; canDecide: boolean; mine: 
         </ul>
       )}
 
-      {canDecide && !mine ? (
+      {canDecide && !mine && !approvedByMe ? (
         <form
           className="mt-3 flex max-w-3xl flex-wrap gap-2"
           onSubmit={(e) => {
             e.preventDefault();
-            void decide("approve");
+            if (confirmed) void decide("approve");
           }}
         >
+          {needsConfirm && (
+            <>
+              <label className="sr-only" htmlFor={`confirm-${a.id}`}>
+                Type {a.confirm_prompt} to confirm
+              </label>
+              <Input
+                id={`confirm-${a.id}`}
+                value={confirm}
+                onChange={(e) => setConfirm(e.target.value)}
+                placeholder={`Type ${a.confirm_prompt} to confirm`}
+                autoComplete="off"
+                spellCheck={false}
+                className="min-w-64 flex-1 font-mono"
+              />
+            </>
+          )}
           <label className="sr-only" htmlFor={`note-${a.id}`}>
             Decision note
           </label>
           <Input id={`note-${a.id}`} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Note for the record (optional)" className="min-w-48 flex-1" />
-          <Button type="submit" variant="primary" loading={busy === "approve"} disabled={!!busy}>
-            Approve and run
+          <Button type="submit" variant="primary" loading={busy === "approve"} disabled={!!busy || !confirmed}>
+            {required > 1 && approvals.length + 1 < required ? `Approve (1 of ${required})` : "Approve and run"}
           </Button>
           <Button type="button" loading={busy === "deny"} disabled={!!busy} onClick={() => decide("deny")}>
             Deny
           </Button>
         </form>
       ) : (
-        <p className="label mt-3">{mine ? "You requested this, so someone else has to approve it." : "Only human approvers can decide."}</p>
+        <p className="label mt-3">
+          {mine
+            ? "You requested this, so a different approver has to approve it."
+            : approvedByMe
+              ? "You approved this. A second, different approver must complete it."
+              : "Only human approvers can decide."}
+        </p>
       )}
       {err && (
         <div className="mt-1.5">
@@ -99,14 +134,14 @@ function Pending({ a, canDecide, mine }: { a: Action; canDecide: boolean; mine: 
 export default function ApprovalsPage() {
   const me = useMe();
   const [view, setView] = useState<"pending" | "history">("pending");
-  const { data: pending, error } = useLiveQuery<Action[]>("/actions?status=pending_approval");
+  const { data: pending, error } = useLiveQuery<Action[]>("/actions?status=open");
   const { data: all } = useLiveQuery<Action[]>(view === "history" ? "/actions" : null);
   const canDecide = me?.kind === "human" && me.roles.includes("approver");
-  const history = all?.filter((a) => a.status !== "pending_approval");
+  const history = all?.filter((a) => a.status !== "pending_approval" && a.status !== "approved_once");
 
   return (
     <>
-      <PageHeader title="Approvals" sub="Containment and eradication actions wait here for a person before the board runs them.">
+      <PageHeader title="Approvals" sub="Containment and eradication actions wait here for a person before the board runs them. Requests expire if nobody decides.">
         <Segmented
           label="View"
           value={view}
@@ -120,7 +155,7 @@ export default function ApprovalsPage() {
       <div className="min-h-0 flex-1 overflow-y-auto" aria-live="polite">
         {error && <Empty title="Couldn't load actions">{error.message}</Empty>}
         {view === "pending" && pending?.length === 0 && <Empty title="Nothing waiting for approval" />}
-        {view === "pending" && pending?.map((a) => <Pending key={a.id} a={a} canDecide={!!canDecide} mine={a.requested_by === me?.handle} />)}
+        {view === "pending" && pending?.map((a) => <Pending key={a.id} a={a} canDecide={!!canDecide} me={me?.handle} />)}
 
         {view === "history" && (
           <div className="overflow-x-auto"><table className="w-full min-w-[40rem] text-left text-[13px]">
@@ -137,13 +172,15 @@ export default function ApprovalsPage() {
             <tbody>
               {history?.map((a) => (
                 <tr key={a.id} className="border-b border-rule hover:bg-paper-2/60">
-                  <td className="px-5 py-2 text-ink">{title(a.kind)}</td>
+                  <td className="px-5 py-2 text-ink">{actionTitle(a.kind)}</td>
                   <td className="py-2 pr-4">
-                    <Tag tone={STATUS_TONE[a.status] ?? "neutral"}>{a.status.replace("_", " ")}</Tag>
+                    <ActionStatusTag status={a.status} />
                   </td>
                   <td className="label tnum py-2 pr-4 text-ink-2">{a.incident_graph_id ?? "—"}</td>
                   <td className="py-2 pr-4 text-ink-2">@{a.requested_by}</td>
-                  <td className={cx("py-2 pr-4", a.decided_by ? "text-ink-2" : "text-faint")}>{a.decided_by ? `@${a.decided_by}` : "policy"}</td>
+                  <td className={cx("py-2 pr-4", a.decided_by ? "text-ink-2" : "text-faint")}>
+                    {a.approvals && a.approvals.length > 1 ? a.approvals.map((h) => `@${h}`).join(", ") : a.decided_by ? `@${a.decided_by}` : a.status === "expired" ? "nobody (expired)" : "policy"}
+                  </td>
                   <td className="py-2 pr-5 text-right">
                     <Time iso={a.created_at} />
                   </td>

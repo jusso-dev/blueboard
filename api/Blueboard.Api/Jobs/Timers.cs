@@ -37,6 +37,8 @@ public sealed class Timers(Db db, Ingest ingest, Broker broker, WebhookService h
         {
             var (resumed, interrupted) = await broker.RecoverAsync(ct);
             if (resumed + interrupted > 0) log.LogWarning("action recovery: resumed {Resumed}, interrupted {Interrupted}", resumed, interrupted);
+            var expired = await broker.ExpireDueAsync(ct);
+            if (expired > 0) log.LogInformation("expired {Expired} actions that were not decided in time", expired);
         }, ct);
     }
 

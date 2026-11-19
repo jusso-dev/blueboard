@@ -13,7 +13,7 @@ namespace Blueboard.Api.Http;
 /// </summary>
 public static partial class OpenApi
 {
-    [GeneratedRegex(@"\{(\w+)\}")] private static partial Regex PathParam();
+    [GeneratedRegex(@"\{(\w+)(?::[^}]+)?\}")] private static partial Regex PathParam();
 
     private static JsonObject? _cached;
 
@@ -36,7 +36,8 @@ public static partial class OpenApi
         foreach (var (method, doc) in RouteInfo.All(typeof(BoardApi)).OrderBy(x => Trigger(x.Method).Route, StringComparer.Ordinal))
         {
             var trigger = Trigger(method);
-            var path = "/api/" + trigger.Route;
+            // OpenAPI paths have no route constraints: actions/{id:guid} → actions/{id}.
+            var path = "/api/" + System.Text.RegularExpressions.Regex.Replace(trigger.Route!, @"\{(\w+):[^}]+\}", "{$1}");
             if (paths[path] is not JsonObject item) paths[path] = item = new JsonObject();
             var op = new JsonObject
             {

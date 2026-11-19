@@ -4,6 +4,8 @@ import { Markdown } from "./markdown";
 import { api, refreshAll, type Message } from "../lib/api";
 import { useMe } from "./shell";
 import { Button, cx, ErrorLine, Tag, Time } from "./ui";
+import { RequestActionButton, useCanRequest } from "./request-action";
+import { targetFromIoc } from "../lib/actions";
 
 const CLAIMABLE = new Set(["question", "finding", "ioc"]);
 
@@ -49,6 +51,7 @@ export function MessageRow({
   selected?: boolean;
 }) {
   const me = useMe();
+  const canRequest = useCanRequest();
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const claimable = CLAIMABLE.has(m.type);
@@ -70,6 +73,7 @@ export function MessageRow({
   const tone = TYPE_TONE[m.type];
   return (
     <article
+      id={`m-${m.id}`}
       className={cx(
         "group border-b border-rule px-5 py-3 transition-colors duration-150",
         selected ? "bg-paper-2" : "hover:bg-paper-2/60",
@@ -110,6 +114,14 @@ export function MessageRow({
                   <td className={cx("w-20 py-1 text-right", i.verdict === "malicious" ? "text-critical" : i.verdict === "suspicious" ? "text-warning" : "text-muted")}>
                     {i.verdict}
                   </td>
+                  {canRequest && (
+                    <td className="w-16 py-0.5 pl-2 text-right font-sans">
+                      {(() => {
+                        const target = targetFromIoc(i.kind, i.value);
+                        return target ? <RequestActionButton targets={[target]} incident={m.incident_id} size="sm" label="Act" /> : null;
+                      })()}
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>

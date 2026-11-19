@@ -26,3 +26,6 @@ tsconfig.tsbuildinfo
 # web host
 web/host/bin/
 web/host/obj/
+
+# agent worktrees
+.claude/

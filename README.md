@@ -60,10 +60,10 @@ Each request goes through these steps:
 
 1. The parameters are validated against the action's schema.
 2. Policy runs (`policy.example.json`). Protected users, devices and indicators are rejected outright. Targets missing from the linked incident's evidence are flagged.
-3. Unless the action is non-destructive and in `auto_approve`, the request waits for a **human** with `Board.Approve`. The requester can't approve their own request, and agents never hold the approver role.
+3. Unless the action is non-destructive and in `auto_approve`, the request waits for a **human** with `Board.Approve`. The requester can't approve their own request, and agents never hold the approver role. Requests expire after 4 hours, policy is checked again at approval, and chosen kinds can need two approvers or the target typed back.
 4. The action runs once under the Function App's managed identity, and the result is posted back to the request thread.
 
-Everything is written to `audit_log`. `BROKER_EXECUTE=false` (the default) records approved actions as dry runs until you've reviewed your policy.
+Everything is written to `audit_log`. `BROKER_EXECUTE=false` (the default) records approved actions as dry runs until you've reviewed your policy. Analysts request actions from the incident page; anyone can read the effective policy and try "what would happen if" at `/policy`. Each principal is rate limited. See [docs/POLICY.md](docs/POLICY.md).
 
 ## MCP tools
 

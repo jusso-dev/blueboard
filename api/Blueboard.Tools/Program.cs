@@ -7,8 +7,32 @@ using Blueboard.Api.Graph;
 
 // blueboard migrate                 apply db/migrations (DATABASE_URL, or PGHOST + PG_ENTRA_AUTH=true)
 // blueboard seed-dev [--sample]     local principals with roles, plus an optional sample incident (refused in Azure)
+// blueboard policy-check [file]     validate a policy file (default BLUEBOARD_POLICY_FILE); exit 1 on error
 var cmd = args.FirstOrDefault() ?? "help";
 var settings = Settings.FromEnvironment();
+
+if (cmd == "policy-check")
+{
+    // No database needed: this runs in CI and before a deploy.
+    var file = args.Skip(1).FirstOrDefault() ?? settings.PolicyFile;
+    if (file is null)
+    {
+        Console.Error.WriteLine("usage: blueboard policy-check <policy.json> (or set BLUEBOARD_POLICY_FILE)");
+        return 1;
+    }
+    try
+    {
+        Console.Write(PolicyReport.Build(Policy.LoadFile(file)).ToText());
+        Console.WriteLine($"\n{file}: ok");
+        return 0;
+    }
+    catch (PolicyException ex)
+    {
+        Console.Error.WriteLine($"error: {ex.Message}");
+        return 1;
+    }
+}
+
 await using var db = new Db(settings);
 
 switch (cmd)
@@ -36,7 +60,7 @@ switch (cmd)
         break;
 
     default:
-        Console.WriteLine("usage: blueboard migrate | seed-dev [--sample]");
+        Console.WriteLine("usage: blueboard migrate | seed-dev [--sample] | policy-check [file]");
         return cmd == "help" ? 0 : 1;
 }
 return 0;

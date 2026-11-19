@@ -9,8 +9,11 @@ public sealed record IncidentTiming(Guid Id, string GraphId, string DisplayName,
     double? EnrichmentS, double? VerdictS, double? ContainmentS, int Messages, int Actions);
 public sealed record Coverage(int Total, int Enriched, int WithVerdict, int Contained);
 public sealed record OutcomeCount(string Status, int N);
+/// <summary>One action kind in the dry-run report: what would have run (and who let it), and what was stopped.</summary>
+public sealed record DryRunRow(string Kind, int RanAuto, int RanApproved, int Rejected, int Denied, int Expired, int Failed);
+public sealed record DryRunReport(int WouldHaveRun, IReadOnlyList<DryRunRow> Kinds);
 public sealed record Report(object Range, Coverage Incidents, Stat Enrichment, Stat Verdict, Stat Containment, Stat Approval,
-    IReadOnlyList<OutcomeCount> Actions, IReadOnlyList<IncidentTiming> Rows);
+    IReadOnlyList<OutcomeCount> Actions, IReadOnlyList<IncidentTiming> Rows, DryRunReport? DryRun = null);
 
 /// <summary>Response metrics from when the board first saw each incident. Durations in seconds.</summary>
 public sealed class Reporting(Db db)
@@ -63,6 +66,23 @@ public sealed class Reporting(Db db)
         await using (var r = await cmd.ExecuteReaderAsync(ct))
             while (await r.ReadAsync(ct)) outcomes.Add(new OutcomeCount(r.GetString(0), r.GetInt32(1)));
 
+        // Dry-run evidence for the "week of dry run" before BROKER_EXECUTE (issue #11): per kind, what would have run and what was stopped.
+        // Statuses: approved_once and pending_approval are still open, so they're not counted here.
+        var dry = new List<DryRunRow>();
+        await using (var cmd = db.Command("""
+            select kind,
+              count(*) filter (where status = 'succeeded' and result->>'dry_run' = 'true' and decided_by is null)::int,
+              count(*) filter (where status = 'succeeded' and result->>'dry_run' = 'true' and decided_by is not null)::int,
+              count(*) filter (where status = 'rejected')::int,
+              count(*) filter (where status = 'denied')::int,
+              count(*) filter (where status = 'expired')::int,
+              count(*) filter (where status = 'failed')::int
+            from actions where created_at >= @from and created_at < @to group by kind order by kind
+            """).With("from", from).With("to", to))
+        await using (var r = await cmd.ExecuteReaderAsync(ct))
+            while (await r.ReadAsync(ct))
+                dry.Add(new DryRunRow(r.GetString(0), r.GetInt32(1), r.GetInt32(2), r.GetInt32(3), r.GetInt32(4), r.GetInt32(5), r.GetInt32(6)));
+
         Stat StatOf(Func<IncidentTiming, double?> sel)
         {
             var xs = rows.Select(sel).OfType<double>().Where(v => v >= 0).ToList();
@@ -72,7 +92,8 @@ public sealed class Reporting(Db db)
         return new Report(
             new { from, to },
             new Coverage(rows.Count, rows.Count(r => r.EnrichmentS is not null), rows.Count(r => r.VerdictS is not null), rows.Count(r => r.ContainmentS is not null)),
-            StatOf(r => r.EnrichmentS), StatOf(r => r.VerdictS), StatOf(r => r.ContainmentS), approval, outcomes, rows);
+            StatOf(r => r.EnrichmentS), StatOf(r => r.VerdictS), StatOf(r => r.ContainmentS), approval, outcomes, rows,
+            new DryRunReport(dry.Sum(d => d.RanAuto + d.RanApproved), dry));
     }
 
     /// <summary>Linear interpolation, same method as Postgres percentile_cont.</summary>

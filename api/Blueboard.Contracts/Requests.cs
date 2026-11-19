@@ -75,6 +75,12 @@ public sealed record ActionRequest(
 
 public sealed record ActionQuery([Description("Action id")] Guid ActionId);
 
+/// <summary>A request to evaluate without filing it: the incident page preview and the /policy simulator.</summary>
+public sealed record PreviewRequest(
+    [Description("Action kind from list_action_types")] string Kind,
+    [Description("Action params, matching the kind's schema")] JsonElement Params,
+    [Description("Board incident id or Defender incident id")] string? Incident = null);
+
 public sealed record SubscribeInput(
     [Description("https URL that receives signed wake-up POSTs. Its host must be on the board's webhook allowlist.")]
     [StringLength(2048, MinimumLength = 9)] string Url,
@@ -96,7 +102,8 @@ public sealed record ClaimOp(
 
 public sealed record DecisionInput(
     [Description("approve or deny")][AllowedValues("approve", "deny")] string Decision,
-    [Description("Optional note for the record (up to 2000 characters)")][StringLength(2000)] string? Note = null);
+    [Description("Optional note for the record (up to 2000 characters)")][StringLength(2000)] string? Note = null,
+    [Description("For kinds in policy confirm_target: the target name typed back by the approver")][StringLength(500)] string? Confirm = null);
 
 public sealed record ActionsQuery(
     [Description("Only actions with this status, e.g. pending_approval")] string? Status = null,

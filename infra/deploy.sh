@@ -40,6 +40,9 @@ state_load
 
 [[ -f "$POLICY_FILE" ]] || die "POLICY_FILE $POLICY_FILE not found"
 jq -e '.protected_users and .protected_devices' "$POLICY_FILE" >/dev/null || die "$POLICY_FILE is not a valid blueboard policy"
+# Same strict parser as the Function App: an unknown key would stop it at start-up, so catch it before deploying.
+dotnet run --project "$BB_ROOT/api/Blueboard.Tools" -c Release -- policy-check "$POLICY_FILE" >/dev/null \
+  || die "$POLICY_FILE failed the policy check (run: dotnet run --project api/Blueboard.Tools -- policy-check $POLICY_FILE)"
 if [[ "$BROKER_EXECUTE" == "true" && "$POLICY_FILE" == *policy.example.json ]]; then
   die "BROKER_EXECUTE=true needs your own POLICY_FILE (the example lists contoso.com placeholders)"
 fi
