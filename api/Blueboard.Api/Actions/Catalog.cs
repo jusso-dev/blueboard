@@ -255,6 +255,16 @@ public static partial class Catalog
     /// <summary>Incident-scoped kinds must be linked to, and aimed at, that same incident.</summary>
     public static readonly HashSet<string> IncidentScoped = ["update_incident", "add_incident_comment"];
 
+    /// <summary>What a kind acts on: device, user, indicator, email or incident. The UI filters its action picker by this.</summary>
+    public static string TargetType(string kind) => kind switch
+    {
+        "isolate_device" or "release_device" or "run_av_scan" or "collect_investigation_package" => "device",
+        "disable_user" or "revoke_sessions" or "reset_password" => "user",
+        "block_indicator" => "indicator",
+        "purge_email" => "email",
+        _ => "incident",
+    };
+
     private static async Task<object?> Send(MsClient ms, MsApi api, string path, HttpMethod method, object? body, CancellationToken ct) =>
         await ms.SendAsync(api, path, method, body, ct);
 

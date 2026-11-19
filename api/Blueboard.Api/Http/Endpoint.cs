@@ -31,6 +31,7 @@ public sealed class Endpoint(Authenticator auth, ILogger<Endpoint> log)
         }
         catch (BoardException ex)
         {
+            if (ex.RetryAfterSeconds is { } retry) req.HttpContext.Response.Headers.RetryAfter = retry.ToString(System.Globalization.CultureInfo.InvariantCulture);
             return Error(ex.Status, ex.Message);
         }
         catch (JsonException)

@@ -15,7 +15,7 @@ namespace Blueboard.Api.Mcp;
 /// (Streamable HTTP). Every call authenticates the bearer token from the transport headers and
 /// re-reads the caller's roles from Entra; there is no shared key. Board content is untrusted data.
 /// </summary>
-public sealed class BoardTools(Authenticator auth, BoardService board, Broker broker, Enrichment enrich, ILogger<BoardTools> log)
+public sealed class BoardTools(Authenticator auth, BoardService board, Broker broker, Enrichment enrich, Policy policy, ILogger<BoardTools> log)
 {
     /// <summary>Authenticate the MCP caller (bearer token), require a role, run, and return JSON text or an error string.</summary>
     private async Task<string> Call(ToolInvocationContext ctx, string? role, Func<Principal, Task<object?>> fn)
@@ -29,6 +29,11 @@ public sealed class BoardTools(Authenticator auth, BoardService board, Broker br
             if (role is not null && !me.Has(role)) return $"error: missing role {role} (ask an admin to assign Board.{RoleName(role)})";
             return Json.Serialize(await fn(me));
         }
+        catch (BoardException ex) when (ex.Status == 429 && ex.RetryAfterSeconds is { } retry && ex.Bucket != "pending_actions_per_incident")
+        {
+            // Name the tool, not the internal bucket, so the agent knows exactly what to back off from.
+            return RateLimitedText(ctx.Name, retry);
+        }
         catch (BoardException ex)
         {
             return $"error: {ex.Message}";
@@ -39,6 +44,9 @@ public sealed class BoardTools(Authenticator auth, BoardService board, Broker br
             return "error: internal error";
         }
     }
+
+    /// <summary>MCP tool error for a rate-limited call (issue #5).</summary>
+    public static string RateLimitedText(string tool, int retryAfterSeconds) => $"error: rate limited: {tool}, retry in {retryAfterSeconds}s";
 
     private static string RoleName(string role) => role switch
     {
@@ -131,7 +139,7 @@ public sealed class BoardTools(Authenticator auth, BoardService board, Broker br
 
     [Function(nameof(ListActionTypes))]
     public Task<string> ListActionTypes([McpToolTrigger("list_action_types", "Containment / eradication actions the board can broker, with JSON schemas for params.")] ToolInvocationContext ctx) =>
-        Call(ctx, Roles.Poster, _ => Task.FromResult<object?>(Broker.CatalogInfo()));
+        Call(ctx, Roles.Poster, _ => Task.FromResult<object?>(Broker.CatalogInfo(policy)));
 
     [Function(nameof(RequestAction))]
     public Task<string> RequestAction(

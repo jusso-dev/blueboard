@@ -17,8 +17,10 @@ builder.Services.AddSingleton<Db>();
 builder.Services.AddSingleton<Audit>();
 builder.Services.AddSingleton<TokenValidator>();
 builder.Services.AddSingleton<Authenticator>();
-builder.Services.AddSingleton<BoardService>();
+// Strict: an unknown key or kind in policy.json stops the worker here with the reason, rather than running on defaults.
 builder.Services.AddSingleton(Policy.Load(settings));
+builder.Services.AddSingleton<RateLimiter>();
+builder.Services.AddSingleton<BoardService>();
 builder.Services.AddSingleton<SystemPrincipal>();
 builder.Services.AddHttpClient<MsClient>();
 builder.Services.AddSingleton<Broker>();

@@ -13,7 +13,7 @@ namespace Blueboard.Api.Http;
 /// REST API for the React app, called cross-origin from the web app with an Entra bearer token (CORS allows only the web origin).
 /// Every route needs Board.Post (Board.Admin for reports), except /me which tells a role-less user why.
 /// </summary>
-public sealed class BoardApi(Endpoint ep, BoardService board, Search search, Reporting reporting, Broker broker, Enrichment enrich, Db db)
+public sealed class BoardApi(Endpoint ep, BoardService board, Search search, Reporting reporting, Broker broker, Enrichment enrich, Db db, Policy policy)
 {
     private static string? Q(HttpRequest r, string k) => r.Query[k].ToString() is { Length: > 0 } v ? v : null;
     private static long? Long(HttpRequest r, string k) => long.TryParse(Q(r, k), out var v) ? v : null;
@@ -97,25 +97,44 @@ public sealed class BoardApi(Endpoint ep, BoardService board, Search search, Rep
     [Function("actions-list")]
     public Task<IActionResult> Actions([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "actions")] HttpRequest req) =>
         ep.RunAsync(req, async _ => Q(req, "catalog") == "true"
-            ? Broker.CatalogInfo()
+            ? Broker.CatalogInfo(policy)
             : await broker.ListAsync(Q(req, "status"), req.HttpContext.RequestAborted));
 
     [Function("actions-request")]
     public Task<IActionResult> RequestAction([HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "actions")] HttpRequest req) =>
         ep.RunAsync(req, async me => await broker.RequestAsync(me, await Endpoint.BodyAsync<ActionRequest>(req), req.HttpContext.RequestAborted));
 
+    /// <summary>What policy would decide for this request, without filing it (the "Request action" form's live preview).</summary>
+    [Function("actions-preview")]
+    public Task<IActionResult> PreviewAction([HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "actions/preview")] HttpRequest req) =>
+        ep.RunAsync(req, async me =>
+        {
+            me.Require(Roles.Requester);
+            return await broker.AssessAsync(await Endpoint.BodyAsync<PreviewRequest>(req), req.HttpContext.RequestAborted);
+        });
+
+    /// <summary>The effective policy in words. Everyone on the board sees modes and counts; only admins see protected values.</summary>
+    [Function("policy-get")]
+    public Task<IActionResult> GetPolicy([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "policy")] HttpRequest req) =>
+        ep.RunAsync(req, me => Task.FromResult<object?>(PolicyReport.Build(policy, includeLists: me.Has(Roles.Admin))));
+
+    /// <summary>"What would happen if…": the same evaluation as a real request, for any principal on the board. Nothing is written.</summary>
+    [Function("policy-simulate")]
+    public Task<IActionResult> SimulatePolicy([HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "policy/simulate")] HttpRequest req) =>
+        ep.RunAsync(req, async _ => await broker.AssessAsync(await Endpoint.BodyAsync<PreviewRequest>(req), req.HttpContext.RequestAborted));
+
     [Function("action-get")]
     public Task<IActionResult> GetAction([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "actions/{id}")] HttpRequest req, string id) =>
         ep.RunAsync(req, async _ => await broker.GetAsync(Id(id), req.HttpContext.RequestAborted) ?? throw BoardException.NotFound("action"));
 
-    public sealed record DecisionBody(string Decision, string? Note);
+    public sealed record DecisionBody(string Decision, string? Note, string? Confirm = null);
 
     [Function("action-decide")]
     public Task<IActionResult> Decide([HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "actions/{id}")] HttpRequest req, string id) =>
         ep.RunAsync(req, async me =>
         {
             var b = await Endpoint.BodyAsync<DecisionBody>(req);
-            return await broker.DecideAsync(me, Id(id), b.Decision, b.Note, req.HttpContext.RequestAborted);
+            return await broker.DecideAsync(me, Id(id), b.Decision, b.Note, req.HttpContext.RequestAborted, b.Confirm);
         });
 
     [Function("reports")]

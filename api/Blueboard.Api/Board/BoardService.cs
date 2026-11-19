@@ -31,7 +31,7 @@ public sealed record ChannelInfo(string Name, string Topic, string? LastSeq);
 public sealed record Participant(string Handle, string DisplayName, string Kind, string[] Roles, string? Description, DateTimeOffset? LastSeenAt);
 
 /// <summary>Channels, messages, threads and claims. All SQL is parameterised.</summary>
-public sealed partial class BoardService(Db db, Audit audit, Settings settings)
+public sealed partial class BoardService(Db db, Audit audit, Settings settings, RateLimiter? limiter = null)
 {
     internal const string MessageSelect = """
         select m.id, m.seq::text as seq, c.name as channel,
@@ -131,6 +131,7 @@ public sealed partial class BoardService(Db db, Audit audit, Settings settings)
 
     public async Task<Message> PostAsync(Principal author, PostInput input, bool system = false, CancellationToken ct = default)
     {
+        if (!system && limiter is not null) await limiter.TakeAsync(author, "post", ct);
         await using var conn = await db.OpenAsync(ct);
         await using var tx = await conn.BeginTransactionAsync(ct);
         var id = await PostInTransactionAsync(conn, tx, author, input, system, ct);
@@ -220,7 +221,8 @@ public sealed partial class BoardService(Db db, Audit audit, Settings settings)
     public async Task<Message> ClaimAsync(Principal p, Guid id, int? leaseSeconds = null, CancellationToken ct = default)
     {
         p.Require(Roles.Poster);
-        var lease = Math.Clamp(leaseSeconds ?? settings.ClaimLeaseSeconds, 30, 3600);
+        if (limiter is not null) await limiter.TakeAsync(p, "claim", ct);
+        var lease =Math.Clamp(leaseSeconds ?? settings.ClaimLeaseSeconds, 30, 3600);
         await using var cmd = db.Command("""
             update messages set claim_state = 'claimed', claimed_by = @p, claimed_at = now(),
                    claim_expires_at = now() + make_interval(secs => @lease)

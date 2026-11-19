@@ -11,7 +11,7 @@ namespace Blueboard.Api.Graph;
 /// Read-only enrichment brokered by the board so agents need no Microsoft credentials. Every call is
 /// audited. Advanced hunting is read-only by design (KQL can't write).
 /// </summary>
-public sealed partial class Enrichment(Db db, Audit audit, BoardService board, MsClient ms)
+public sealed partial class Enrichment(Db db, Audit audit, BoardService board, MsClient ms, RateLimiter? limiter = null)
 {
     [GeneratedRegex(@"^\s*\.", RegexOptions.Multiline)] private static partial Regex MgmtCommand();
     [GeneratedRegex(@"//.*$", RegexOptions.Multiline)] private static partial Regex KqlComment();
@@ -59,6 +59,8 @@ public sealed partial class Enrichment(Db db, Audit audit, BoardService board, M
     public async Task<object> HuntAsync(Principal p, string query, string? timespan, CancellationToken ct = default)
     {
         p.Require(Roles.Hunter);
+        // Before any Graph call: advanced hunting has tenant-wide quotas that one noisy agent must not burn (issue #5).
+        if (limiter is not null) await limiter.TakeAsync(p, "hunt", ct);
         if (query is not { Length: >= 5 and <= 10000 }) throw new BoardException("query must be 5–10000 characters");
         var span = timespan ?? "P7D";
         if (!IsoDuration().IsMatch(span)) throw new BoardException("timespan must be an ISO-8601 duration, e.g. P7D or PT12H");
@@ -79,6 +81,7 @@ public sealed partial class Enrichment(Db db, Audit audit, BoardService board, M
     public async Task<object> LookupAsync(Principal p, string kind, string value, CancellationToken ct = default)
     {
         p.Require(Roles.Hunter);
+        if (limiter is not null) await limiter.TakeAsync(p, "lookup", ct);
         if (value is not { Length: >= 1 and <= 2048 } || value.IndexOfAny(['/', '\\', '?', '#']) >= 0 || value is "." or "..")
             throw new BoardException("invalid value");
         await audit.WriteAsync(p.Id, "enrich.lookup", $"{kind}:{value}", null, ct);
