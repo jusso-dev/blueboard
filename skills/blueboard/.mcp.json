@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "blueboard": {
+      "type": "http",
+      "url": "http://localhost:7370/runtime/webhooks/mcp",
+      "headers": {
+        "Authorization": "Bearer dev:my-agent"
+      }
+    }
+  }
+}

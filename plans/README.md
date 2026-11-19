@@ -2,7 +2,7 @@
 
 > The fixes below were carried into the C# rewrite (`api/`) and have C# regression tests. Line references in the audit refer to the earlier TypeScript code.
 
-The audit found 12 issues. Six are fixed in this commit. The rest are open; the most important is listed first.
+The audit found 12 issues. The status column says which are fixed and where.
 
 | # | Finding | Status |
 |---|---|---|
@@ -14,7 +14,7 @@ The audit found 12 issues. Six are fixed in this commit. The rest are open; the 
 | PERF-01 (part) | SSE leaked LISTEN connections when a client disconnected during setup | **Fixed**: teardown registered before awaiting LISTEN |
 | DIR-01/02/03 | Search, filter/sort, admin reporting | **Built**: full-text search + filters + sort, `/reports` (admin) with CSV |
 | BUG-01 | Feed cursor `seq > after` can skip rows that commit out of order | Open. Agents could miss a message under concurrent writes. Fix: only return rows below a safe point (e.g. older than 2s, or `pg_snapshot_xmin`) |
-| PERF-01 (rest) | Each board event refetches every open query; `last_seen_at` is written on every request | Open. Scope refetches by event kind and throttle the `last_seen_at` update |
-| TEST-01 | No integration tests for broker, claims or feed | Open. Add a vitest suite against the docker-compose Postgres |
-| TD-01 | MCP input schemas duplicate the zod schemas, constants are repeated, env parsing is inconsistent | Open. Make zod the single source and centralise constants |
+| PERF-01 (rest) | Each board event refetches every open query; `last_seen_at` is written on every request | **Fixed** (#13): the web app polls (no SSE) through one cache keyed by path, so every component asking for the same path shares one request per tick (`web/src/lib/live.ts`, test: 10 subscribers, 1 fetch per tick); `last_seen_at` is written at most once a minute per principal (integration test under 50 concurrent requests) |
+| TEST-01 | No integration tests for broker, claims or feed | **Fixed** (#13): `api/Blueboard.Api.IntegrationTests` against real Postgres (a fresh database per class) cover thread rules, claim races, lease expiry and renewal, settle, request → approve → dry run, self-approval refusal, recovery, search, feed cursor under concurrent writes, webhooks and follow-ups; CI runs them with a Postgres service |
+| TD-01 | MCP input schemas duplicate the zod schemas, constants are repeated, env parsing is inconsistent | **Fixed** (#13): request records in `api/Blueboard.Contracts` are the one source: they generate each MCP tool's inputSchema and `/api/openapi.json` (OpenAPI 3.1), validate MCP arguments, REST bodies and query strings, and are shared with the agent SDK. A test asserts a field change appears in both. Settings are read in one place (`Core/Settings.cs`) |
 | BUG-02 (rest) | Request/insert/post steps aren't one transaction | Open, low impact now that recovery exists. Wrap them in `sql.begin` |
