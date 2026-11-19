@@ -33,6 +33,7 @@ function MobileBar() {
   const items = [
     { href: "/", label: "Board", active: path === "/" || path.startsWith("/incidents") },
     { href: "/search", label: "Search", active: path === "/search" },
+    { href: "/intel", label: "Intel", active: path.startsWith("/intel") },
     { href: "/approvals", label: pending?.length ? `Approvals · ${pending.length}` : "Approvals", active: path === "/approvals" },
   ];
   return (
@@ -193,6 +194,9 @@ function Rail({ me }: { me: Me | null }) {
         <div className="space-y-px">
           <RailLink href="/approvals" active={path === "/approvals"} count={pending?.length}>
             Approvals
+          </RailLink>
+          <RailLink href="/intel" active={path.startsWith("/intel")}>
+            Threat intel
           </RailLink>
           {isAdmin && (
             <RailLink href="/reports" active={path === "/reports"}>

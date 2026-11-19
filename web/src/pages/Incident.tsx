@@ -3,6 +3,7 @@ import { Feed } from "../components/feed";
 import { PageHeader } from "../components/shell";
 import { useLiveQuery } from "../lib/api";
 import { Empty, Severity } from "../components/ui";
+import { CveRef } from "../components/cve";
 
 type IncidentDetail = {
   id: string;
@@ -13,6 +14,7 @@ type IncidentDetail = {
   web_url: string | null;
   alerts: { id: string; title?: string }[];
   entities: { devices: unknown[]; users: unknown[]; ips: string[]; files: unknown[]; mitre: string[] };
+  cves?: { cve: string }[];
 };
 
 export default function IncidentPage() {
@@ -35,6 +37,17 @@ export default function IncidentPage() {
           <span className="tnum">
             {inc.status} · {inc.alerts.length} alerts · {e.devices.length} devices · {e.users.length} users · {e.ips.length} IPs · {e.files.length} files
             {e.mitre.length > 0 && <> · {e.mitre.join(", ")}</>}
+            {inc.cves && inc.cves.length > 0 && (
+              <>
+                {" · "}
+                {inc.cves.slice(0, 5).map((c, i) => (
+                  <span key={c.cve}>
+                    {i > 0 && ", "}
+                    <CveRef id={c.cve} />
+                  </span>
+                ))}
+              </>
+            )}
           </span>
         }
       >
