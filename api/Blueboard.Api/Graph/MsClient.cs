@@ -12,34 +12,62 @@ namespace Blueboard.Api.Graph;
 public enum MsApi { Graph, Defender }
 
 /// <summary>
+/// Where Microsoft API calls go. Real mode: the exact Microsoft origins, with the managed identity's token.
+/// Demo mode (local only: DEMO_MODE and DEV_AUTH, both refused in Azure): a mock API, and no token is ever fetched or sent.
+/// </summary>
+public sealed record MsOrigins(string Graph, string Defender, bool Mocked)
+{
+    public static readonly MsOrigins Real = new(MsClient.GraphOrigin, MsClient.DefenderOrigin, false);
+
+    /// <summary>The base-URL override is honoured only in demo mode; otherwise the real origins, always.</summary>
+    public static MsOrigins For(Settings s)
+    {
+        if (!(s.DemoMode && s.DevAuth)) return Real;
+        return new MsOrigins(Origin(s.GraphBaseUrl, "GRAPH_BASE_URL"), Origin(s.DefenderBaseUrl, "DEFENDER_BASE_URL"), true);
+    }
+
+    private static string Origin(string? url, string name)
+    {
+        if (url is null || !Uri.TryCreate(url, UriKind.Absolute, out var u) || u.Scheme is not ("http" or "https")
+            || u.AbsolutePath != "/" || u.Query.Length > 0 || u.UserInfo.Length > 0)
+            throw new InvalidOperationException($"{name} must be an http(s) origin with no path in demo mode");
+        return u.GetLeftPart(UriPartial.Authority);
+    }
+}
+
+/// <summary>
 /// Authenticated calls to Microsoft Graph and the Defender for Endpoint API with the Function App's
 /// managed identity. Agents never receive these tokens. The token is only ever sent to the exact API
 /// origin, and paths with dot-segments are refused so a crafted id can't re-target another endpoint.
 /// </summary>
-public sealed partial class MsClient(HttpClient http, TokenCredential? credential = null)
+public sealed partial class MsClient(HttpClient http, TokenCredential? credential = null, MsOrigins? origins = null)
 {
     public const string GraphOrigin = "https://graph.microsoft.com";
     public const string DefenderOrigin = "https://api.security.microsoft.com";
-    private readonly TokenCredential _cred = credential ?? new DefaultAzureCredential();
+    private readonly MsOrigins _origins = origins ?? MsOrigins.Real;
+    private readonly Lazy<TokenCredential> _cred = new(() => credential ?? new DefaultAzureCredential());
 
-    private static (string Origin, string Scope) Target(MsApi api) => api switch
-    {
-        MsApi.Graph => (GraphOrigin, "https://graph.microsoft.com/.default"),
-        _ => (DefenderOrigin, "https://api.securitycenter.microsoft.com/.default"),
-    };
+    public bool Mocked => _origins.Mocked;
+
+    private static string Scope(MsApi api) => api == MsApi.Graph
+        ? "https://graph.microsoft.com/.default"
+        : "https://api.securitycenter.microsoft.com/.default";
 
     [GeneratedRegex(@"(^|/)\.\.?(/|$)")]
     private static partial Regex DotSegment();
 
-    /// <summary>Builds and checks the absolute URL. Public for tests.</summary>
-    public static Uri BuildUri(MsApi api, string pathOrUrl)
+    /// <summary>Builds and checks the absolute URL against the real Microsoft origins. Public for tests.</summary>
+    public static Uri BuildUri(MsApi api, string pathOrUrl) => BuildUri(MsOrigins.Real, api, pathOrUrl);
+
+    /// <summary>Builds and checks the absolute URL: exact origin match, no dot-segments.</summary>
+    public static Uri BuildUri(MsOrigins origins, MsApi api, string pathOrUrl)
     {
-        var (origin, _) = Target(api);
-        var url = pathOrUrl.StartsWith("https://", StringComparison.Ordinal) ? pathOrUrl : origin + pathOrUrl;
-        var uri = new Uri(url);
+        var origin = api == MsApi.Graph ? origins.Graph : origins.Defender;
+        var absolute = pathOrUrl.StartsWith("https://", StringComparison.Ordinal) || pathOrUrl.StartsWith("http://", StringComparison.Ordinal);
+        var uri = new Uri(absolute ? pathOrUrl : origin + pathOrUrl);
         if (!string.Equals(uri.GetLeftPart(UriPartial.Authority), origin, StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException($"refusing to send token to {uri.GetLeftPart(UriPartial.Authority)}");
-        var rawPath = pathOrUrl.StartsWith("https://", StringComparison.Ordinal) ? uri.AbsolutePath : pathOrUrl.Split('?')[0];
+        var rawPath = absolute ? uri.AbsolutePath : pathOrUrl.Split('?')[0];
         if (DotSegment().IsMatch(rawPath) || rawPath.Contains("%2e%2e", StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("refusing path with dot-segments");
         return uri;
@@ -47,12 +75,13 @@ public sealed partial class MsClient(HttpClient http, TokenCredential? credentia
 
     public async Task<JsonElement?> SendAsync(MsApi api, string pathOrUrl, HttpMethod? method = null, object? body = null, CancellationToken ct = default)
     {
-        var uri = BuildUri(api, pathOrUrl);
-        var token = await _cred.GetTokenAsync(new TokenRequestContext([Target(api).Scope]), ct);
+        var uri = BuildUri(_origins, api, pathOrUrl);
+        // Demo mode never asks Entra for a token: no Microsoft host is contacted and no token can reach the mock.
+        var token = _origins.Mocked ? null : (await _cred.Value.GetTokenAsync(new TokenRequestContext([Scope(api)]), ct)).Token;
         for (var attempt = 0; ; attempt++)
         {
             using var req = new HttpRequestMessage(method ?? HttpMethod.Get, uri);
-            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token.Token);
+            if (token is not null) req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
             if (body is not null) req.Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
             using var res = await http.SendAsync(req, ct);
             if ((res.StatusCode == HttpStatusCode.TooManyRequests || (int)res.StatusCode >= 500) && attempt < 3)

@@ -1,3 +1,4 @@
+using Blueboard.Contracts;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Blueboard.Api.Board;
@@ -7,13 +8,6 @@ using Blueboard.Api.Graph;
 using Npgsql;
 
 namespace Blueboard.Api.Actions;
-
-public sealed record ActionRequest(string Kind, JsonElement Params, string Justification, string? Incident = null, Guid? ParentId = null);
-
-public sealed record ActionRow(
-    Guid Id, string Kind, JsonElement Params, Guid? IncidentId, string? IncidentGraphId, Guid? RequestMessageId,
-    string RequestedBy, string Justification, string Status, bool RequiresApproval, string[] PolicyNotes,
-    string? DecidedBy, DateTimeOffset? DecidedAt, string? DecisionNote, JsonElement? Result, string? Error, DateTimeOffset CreatedAt);
 
 /// <summary>
 /// Request → policy → (human approval) → execute exactly once → post the result. Every step is audited.

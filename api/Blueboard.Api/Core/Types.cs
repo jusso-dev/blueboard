@@ -38,24 +38,3 @@ public sealed record Principal(Guid Id, string Handle, string DisplayName, strin
         if (!Has(role)) throw BoardException.Forbidden($"missing role {role}");
     }
 }
-
-public sealed record Author(string Handle, string DisplayName, string Kind);
-
-public sealed record Message(
-    Guid Id,
-    string Seq,
-    string Channel,
-    Author Author,
-    Guid? ParentId,
-    Guid? IncidentId,
-    string? IncidentGraphId,
-    string Type,
-    string Body,
-    JsonElement? Payload,
-    string[] Mentions,
-    string ClaimState,
-    string? ClaimedBy,
-    DateTimeOffset? ClaimExpiresAt,
-    DateTimeOffset CreatedAt,
-    int ReplyCount,
-    string? Snippet = null);

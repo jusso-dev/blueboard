@@ -3,6 +3,8 @@ using Blueboard.Api.Board;
 using Blueboard.Api.Core;
 using Blueboard.Api.Data;
 using Blueboard.Api.Graph;
+using Blueboard.Api.Webhooks;
+using Blueboard.Contracts;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Azure.Functions.Worker;
@@ -12,65 +14,64 @@ namespace Blueboard.Api.Http;
 /// <summary>
 /// REST API for the React app, called cross-origin from the web app with an Entra bearer token (CORS allows only the web origin).
 /// Every route needs Board.Post (Board.Admin for reports), except /me which tells a role-less user why.
+/// Inputs are the contract records in Blueboard.Contracts (the same ones the MCP tools use), and each route's
+/// [RouteDoc] feeds /api/openapi.json.
 /// </summary>
-public sealed class BoardApi(Endpoint ep, BoardService board, Search search, Reporting reporting, Broker broker, Enrichment enrich, Db db)
+public sealed class BoardApi(Endpoint ep, BoardService board, Search search, Reporting reporting, Broker broker, Enrichment enrich, WebhookService hooks, Db db)
 {
-    private static string? Q(HttpRequest r, string k) => r.Query[k].ToString() is { Length: > 0 } v ? v : null;
-    private static long? Long(HttpRequest r, string k) => long.TryParse(Q(r, k), out var v) ? v : null;
-    private static int Int(HttpRequest r, string k, int d) => int.TryParse(Q(r, k), out var v) ? v : d;
-    private static DateTimeOffset? Date(HttpRequest r, string k) =>
-        Q(r, k) is { } s ? (DateTimeOffset.TryParse(s, out var d) ? d : throw new BoardException($"invalid {k}")) : null;
-    private static string[]? Many(HttpRequest r, string k) =>
-        r.Query[k].Count > 0 ? r.Query[k].OfType<string>().Where(v => v.Length > 0).ToArray() : null;
+    /// <summary>The web app sends ?type=a&amp;type=b; the contract field is types.</summary>
+    private static readonly Dictionary<string, string> TypeAlias = new() { ["type"] = "types" };
     private static Guid Id(string s) => Guid.TryParse(s, out var g) ? g : throw new BoardException("invalid id");
+    private static CancellationToken Ct(HttpRequest r) => r.HttpContext.RequestAborted;
 
     [Function("me")]
+    [RouteDoc("The caller's board identity and roles", Response = typeof(Identity), Role = null)]
     public Task<IActionResult> Me([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "me")] HttpRequest req) =>
         ep.RunAsync(req, me => Task.FromResult<object?>(me), role: null);
 
     [Function("channels")]
+    [RouteDoc("Channels with topics and latest seq", Response = typeof(ChannelInfo[]))]
     public Task<IActionResult> Channels([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "channels")] HttpRequest req) =>
-        ep.RunAsync(req, async _ => await board.ListChannelsAsync(req.HttpContext.RequestAborted));
+        ep.RunAsync(req, async _ => await board.ListChannelsAsync(Ct(req)));
 
     [Function("participants")]
+    [RouteDoc("Agents and people on the board", Response = typeof(Participant[]))]
     public Task<IActionResult> Participants([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "participants")] HttpRequest req) =>
-        ep.RunAsync(req, async _ => await board.ListParticipantsAsync(req.HttpContext.RequestAborted));
+        ep.RunAsync(req, async _ => await board.ListParticipantsAsync(Ct(req)));
 
     [Function("messages-list")]
+    [RouteDoc("Read the feed (cursor after_seq, filters)", Query = typeof(FeedQuery), Response = typeof(FeedResult))]
     public Task<IActionResult> Messages([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "messages")] HttpRequest req) =>
-        ep.RunAsync(req, async _ => await board.ReadFeedAsync(new FeedQuery(
-            Q(req, "channel"), Q(req, "incident"), Long(req, "after_seq"), Long(req, "before_seq"),
-            Many(req, "type"), Q(req, "mentioning"),
-            Q(req, "open_requests") == "true", Q(req, "roots_only") == "true", Int(req, "limit", 50)), req.HttpContext.RequestAborted));
+        ep.RunAsync(req, async _ => await board.ReadFeedAsync(Endpoint.Query<FeedQuery>(req, TypeAlias), Ct(req)));
 
     [Function("messages-post")]
+    [RouteDoc("Post a message", Body = typeof(PostInput), Response = typeof(Message))]
     public Task<IActionResult> Post([HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "messages")] HttpRequest req) =>
-        ep.RunAsync(req, async me => await board.PostAsync(me, await Endpoint.BodyAsync<PostInput>(req), ct: req.HttpContext.RequestAborted));
+        ep.RunAsync(req, async me => await board.PostAsync(me, await Endpoint.BodyAsync<PostInput>(req), ct: Ct(req)));
 
     [Function("thread")]
+    [RouteDoc("A thread root and its replies", Response = typeof(ThreadResult))]
     public Task<IActionResult> Thread([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "threads/{id}")] HttpRequest req, string id) =>
-        ep.RunAsync(req, async _ => await board.GetThreadAsync(Id(id), req.HttpContext.RequestAborted));
-
-    public sealed record ClaimBody(string Op, int? LeaseSeconds);
+        ep.RunAsync(req, async _ => await board.GetThreadAsync(Id(id), Ct(req)));
 
     [Function("claim")]
+    [RouteDoc("Claim, finish or release a question/finding/ioc", Body = typeof(ClaimOp), Response = typeof(Message))]
     public Task<IActionResult> Claim([HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "claims/{id}")] HttpRequest req, string id) =>
         ep.RunAsync(req, async me =>
         {
-            var b = await Endpoint.BodyAsync<ClaimBody>(req);
+            var b = await Endpoint.BodyAsync<ClaimOp>(req);
             return b.Op == "claim"
-                ? await board.ClaimAsync(me, Id(id), b.LeaseSeconds, req.HttpContext.RequestAborted)
-                : await board.SettleClaimAsync(me, Id(id), b.Op, req.HttpContext.RequestAborted);
+                ? await board.ClaimAsync(me, Id(id), b.LeaseSeconds, Ct(req))
+                : await board.SettleClaimAsync(me, Id(id), b.Op, Ct(req));
         });
 
     [Function("search")]
+    [RouteDoc("Full-text search with filters", Query = typeof(SearchQuery), Response = typeof(SearchResult))]
     public Task<IActionResult> SearchMessages([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "search")] HttpRequest req) =>
-        ep.RunAsync(req, async _ => await search.RunAsync(new SearchQuery(
-            Q(req, "q"), Q(req, "channel"), Many(req, "type"), Q(req, "author"),
-            Q(req, "author_kind"), Q(req, "incident"), Q(req, "claim_state"), Date(req, "from"), Date(req, "to"),
-            Q(req, "sort") ?? "newest", Int(req, "limit", 50), Int(req, "offset", 0)), req.HttpContext.RequestAborted));
+        ep.RunAsync(req, async _ => await search.RunAsync(Endpoint.Query<SearchQuery>(req, TypeAlias), Ct(req)));
 
     [Function("incidents-list")]
+    [RouteDoc("Latest 100 incidents")]
     public Task<IActionResult> Incidents([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "incidents")] HttpRequest req) =>
         ep.RunAsync(req, async _ =>
         {
@@ -80,7 +81,7 @@ public sealed class BoardApi(Endpoint ep, BoardService board, Search search, Rep
                 from incidents order by coalesce(updated_at_src, first_seen_at) desc limit 100
                 """);
             var list = new List<object>();
-            await using var r = await cmd.ExecuteReaderAsync(req.HttpContext.RequestAborted);
+            await using var r = await cmd.ExecuteReaderAsync(Ct(req));
             while (await r.ReadAsync())
                 list.Add(new
                 {
@@ -91,49 +92,67 @@ public sealed class BoardApi(Endpoint ep, BoardService board, Search search, Rep
         });
 
     [Function("incident-get")]
+    [RouteDoc("Incident detail: alerts, MITRE techniques, entities")]
     public Task<IActionResult> Incident([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "incidents/{id}")] HttpRequest req, string id) =>
-        ep.RunAsync(req, async _ => await enrich.GetIncidentAsync(id, req.HttpContext.RequestAborted));
+        ep.RunAsync(req, async _ => await enrich.GetIncidentAsync(id, Ct(req)));
 
     [Function("actions-list")]
+    [RouteDoc("Brokered actions (or the catalogue with catalog=true)", Query = typeof(ActionsQuery), Response = typeof(ActionRow[]))]
     public Task<IActionResult> Actions([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "actions")] HttpRequest req) =>
-        ep.RunAsync(req, async _ => Q(req, "catalog") == "true"
-            ? Broker.CatalogInfo()
-            : await broker.ListAsync(Q(req, "status"), req.HttpContext.RequestAborted));
+        ep.RunAsync(req, async _ =>
+        {
+            var q = Endpoint.Query<ActionsQuery>(req);
+            return q.Catalog ? Broker.CatalogInfo() : await broker.ListAsync(q.Status, Ct(req));
+        });
 
     [Function("actions-request")]
+    [RouteDoc("Request a containment/eradication action", Body = typeof(ActionRequest), Response = typeof(ActionRow), Role = Roles.Requester)]
     public Task<IActionResult> RequestAction([HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "actions")] HttpRequest req) =>
-        ep.RunAsync(req, async me => await broker.RequestAsync(me, await Endpoint.BodyAsync<ActionRequest>(req), req.HttpContext.RequestAborted));
+        ep.RunAsync(req, async me => await broker.RequestAsync(me, await Endpoint.BodyAsync<ActionRequest>(req), Ct(req)));
 
     [Function("action-get")]
+    [RouteDoc("One action", Response = typeof(ActionRow))]
     public Task<IActionResult> GetAction([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "actions/{id}")] HttpRequest req, string id) =>
-        ep.RunAsync(req, async _ => await broker.GetAsync(Id(id), req.HttpContext.RequestAborted) ?? throw BoardException.NotFound("action"));
-
-    public sealed record DecisionBody(string Decision, string? Note);
+        ep.RunAsync(req, async _ => await broker.GetAsync(Id(id), Ct(req)) ?? throw BoardException.NotFound("action"));
 
     [Function("action-decide")]
+    [RouteDoc("Approve or deny (human approvers only, never your own request)", Body = typeof(DecisionInput), Response = typeof(ActionRow), Role = Roles.Approver)]
     public Task<IActionResult> Decide([HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "actions/{id}")] HttpRequest req, string id) =>
         ep.RunAsync(req, async me =>
         {
-            var b = await Endpoint.BodyAsync<DecisionBody>(req);
-            return await broker.DecideAsync(me, Id(id), b.Decision, b.Note, req.HttpContext.RequestAborted);
+            var b = await Endpoint.BodyAsync<DecisionInput>(req);
+            return await broker.DecideAsync(me, Id(id), b.Decision, b.Note, Ct(req));
         });
 
+    [Function("subscriptions")]
+    [RouteDoc("Webhook subscriptions (admin): all agents' subscriptions and their delivery health", Response = typeof(Subscription[]), Role = Roles.Admin)]
+    public Task<IActionResult> Subscriptions([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "subscriptions")] HttpRequest req) =>
+        ep.RunAsync(req, async _ => await hooks.ListAllAsync(Ct(req)), role: Roles.Admin);
+
     [Function("reports")]
+    [RouteDoc("Response metrics (admin); format=csv to download", Query = typeof(ReportQuery), Response = typeof(Report), Role = Roles.Admin)]
     public Task<IActionResult> Reports([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "reports")] HttpRequest req) =>
         ep.RunAsync(req, async me =>
         {
             me.Require(Roles.Admin);
-            var report = await reporting.BuildAsync(Date(req, "from"), Date(req, "to"), Q(req, "severity"), req.HttpContext.RequestAborted);
-            if (Q(req, "format") != "csv") return report;
+            var q = Endpoint.Query<ReportQuery>(req);
+            var report = await reporting.BuildAsync(q.From, q.To, q.Severity, Ct(req));
+            if (q.Format != "csv") return report;
             req.HttpContext.Response.Headers.ContentDisposition = $"attachment; filename=\"blueboard-response-{DateTime.UtcNow:yyyy-MM-dd}.csv\"";
             return new ContentResult { Content = Reporting.Csv(report), ContentType = "text/csv; charset=utf-8", StatusCode = 200 };
         });
 
+    [Function("openapi")]
+    [RouteDoc("This document (OpenAPI 3.1)", Role = "public")]
+    public IActionResult OpenApiDocument([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "openapi.json")] HttpRequest req) =>
+        new ContentResult { Content = OpenApi.Document().ToJsonString(), ContentType = "application/json", StatusCode = 200 };
+
     [Function("healthz")]
+    [RouteDoc("Liveness and database check", Role = "public")]
     public async Task<IActionResult> Health([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "healthz")] HttpRequest req)
     {
         await using var cmd = db.Command("select 1");
-        await cmd.ExecuteScalarAsync(req.HttpContext.RequestAborted);
+        await cmd.ExecuteScalarAsync(Ct(req));
         return new OkObjectResult(new { ok = true });
     }
 }

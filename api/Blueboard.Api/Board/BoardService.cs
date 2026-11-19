@@ -1,3 +1,4 @@
+using Blueboard.Contracts;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Blueboard.Api.Core;
@@ -5,30 +6,6 @@ using Blueboard.Api.Data;
 using Npgsql;
 
 namespace Blueboard.Api.Board;
-
-public sealed record PostInput(
-    string Channel,
-    string Body,
-    string? Type = null,
-    JsonElement? Payload = null,
-    Guid? ParentId = null,
-    string? Incident = null);
-
-public sealed record FeedQuery(
-    string? Channel = null,
-    string? Incident = null,
-    long? AfterSeq = null,
-    long? BeforeSeq = null,
-    string[]? Types = null,
-    string? Mentioning = null,
-    bool OpenRequests = false,
-    bool RootsOnly = false,
-    int Limit = 50);
-
-public sealed record FeedResult(IReadOnlyList<Message> Messages, string? Cursor);
-public sealed record ThreadResult(Message Root, IReadOnlyList<Message> Replies);
-public sealed record ChannelInfo(string Name, string Topic, string? LastSeq);
-public sealed record Participant(string Handle, string DisplayName, string Kind, string[] Roles, string? Description, DateTimeOffset? LastSeenAt);
 
 /// <summary>Channels, messages, threads and claims. All SQL is parameterised.</summary>
 public sealed partial class BoardService(Db db, Audit audit, Settings settings)
@@ -110,6 +87,9 @@ public sealed partial class BoardService(Db db, Audit audit, Settings settings)
         await using var cmd = db.Command("select id from channels where name = @n").With("n", name);
         return await cmd.ExecuteScalarAsync(ct) is Guid id ? id : throw BoardException.NotFound($"channel #{name}");
     }
+
+    /// <summary>Checks a channel exists (404 otherwise).</summary>
+    public Task<Guid> ResolveChannelAsync(string name, CancellationToken ct = default) => ChannelIdAsync(name, ct);
 
     /// <summary>Board incident UUID or Defender incident id → board incident id.</summary>
     public async Task<Guid?> ResolveIncidentAsync(string? reference, CancellationToken ct = default)
@@ -235,6 +215,25 @@ public sealed partial class BoardService(Db db, Audit audit, Settings settings)
             throw BoardException.Conflict($"already {existing.ClaimState} by @{existing.ClaimedBy}");
         }
         await audit.WriteAsync(p.Id, "message.claimed", id.ToString(), new { lease }, ct);
+        return (await GetAsync(id, ct))!;
+    }
+
+    /// <summary>Extend a lease you hold (and haven't let expire). Someone else's claim, or none, is a conflict.</summary>
+    public async Task<Message> RenewClaimAsync(Principal p, Guid id, int? leaseSeconds = null, CancellationToken ct = default)
+    {
+        p.Require(Roles.Poster);
+        var lease = Math.Clamp(leaseSeconds ?? settings.ClaimLeaseSeconds, 30, 3600);
+        await using var cmd = db.Command("""
+            update messages set claim_expires_at = now() + make_interval(secs => @lease)
+            where id = @id and claim_state = 'claimed' and claimed_by = @p and claim_expires_at >= now()
+            returning id
+            """).With("lease", (double)lease).With("id", id).With("p", p.Id);
+        if (await cmd.ExecuteScalarAsync(ct) is null)
+        {
+            var existing = await GetAsync(id, ct) ?? throw BoardException.NotFound("message");
+            throw BoardException.Conflict(existing.ClaimState == "claimed" ? $"claimed by @{existing.ClaimedBy}, not you" : "you do not hold a claim on this message (it may have expired: claim it again)");
+        }
+        await audit.WriteAsync(p.Id, "message.claim_renewed", id.ToString(), new { lease }, ct);
         return (await GetAsync(id, ct))!;
     }
 

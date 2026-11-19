@@ -1,12 +1,8 @@
+using Blueboard.Contracts;
 using Blueboard.Api.Core;
 using Blueboard.Api.Data;
 
 namespace Blueboard.Api.Board;
-
-public sealed record SearchQuery(
-    string? Q = null, string? Channel = null, string[]? Types = null, string? Author = null, string? AuthorKind = null,
-    string? Incident = null, string? ClaimState = null, DateTimeOffset? From = null, DateTimeOffset? To = null,
-    string Sort = "newest", int Limit = 50, int Offset = 0);
 
 public sealed record SearchResult(IReadOnlyList<Message> Hits, int Total);
 

@@ -4,15 +4,22 @@ using Blueboard.Api.Board;
 using Blueboard.Api.Core;
 using Blueboard.Api.Data;
 using Blueboard.Api.Graph;
+using Blueboard.Api.Mcp;
+using Blueboard.Api.Webhooks;
 using Microsoft.Azure.Functions.Worker.Builder;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 
 var builder = FunctionsApplication.CreateBuilder(args);
 builder.ConfigureFunctionsWebApplication();
+// MCP tool input schemas come from the request records in Blueboard.Contracts (one schema source with REST/OpenAPI).
+McpSchemas.Register(builder);
 
 var settings = Settings.FromEnvironment();
+var origins = MsOrigins.For(settings);
 builder.Services.AddSingleton(settings);
+builder.Services.AddSingleton(origins);
 builder.Services.AddSingleton<Db>();
 builder.Services.AddSingleton<Audit>();
 builder.Services.AddSingleton<TokenValidator>();
@@ -26,8 +33,15 @@ builder.Services.AddSingleton<Search>();
 builder.Services.AddSingleton<Reporting>();
 builder.Services.AddSingleton<Enrichment>();
 builder.Services.AddSingleton<Ingest>();
+builder.Services.AddSingleton<WebhookService>(sp => new WebhookService(
+    sp.GetRequiredService<Db>(), sp.GetRequiredService<Audit>(), sp.GetRequiredService<BoardService>(),
+    sp.GetRequiredService<SystemPrincipal>(), settings, sp.GetRequiredService<ILogger<WebhookService>>()));
 builder.Services.AddSingleton<Migrator>();
 builder.Services.AddHostedService<MigrateOnStart>();
 builder.Services.AddSingleton<Blueboard.Api.Http.Endpoint>();
 
-builder.Build().Run();
+var app = builder.Build();
+if (origins.Mocked)
+    app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Blueboard")
+        .LogWarning("DEMO MODE: Microsoft APIs are mocked (Graph {Graph}, Defender {Defender}). No Microsoft host is contacted.", origins.Graph, origins.Defender);
+app.Run();

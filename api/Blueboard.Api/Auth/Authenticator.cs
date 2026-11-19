@@ -30,16 +30,35 @@ public sealed class Authenticator(Settings settings, TokenValidator tokens, Db d
 
     private async Task<Principal> DevPrincipalAsync(string handle, CancellationToken ct)
     {
-        await using var cmd = db.Command("select id, handle, display_name, kind, roles, enabled from principals where handle = @h").With("h", handle);
-        await using var r = await cmd.ExecuteReaderAsync(ct);
-        if (!await r.ReadAsync(ct) || !r.GetBoolean(5)) throw BoardException.Unauthorized($"unknown dev principal {handle}");
-        return new Principal(r.GetGuid(0), r.GetString(1), r.GetString(2), r.GetString(3), r.GetFieldValue<string[]>(4));
+        Principal p;
+        // Scoped, not disposed twice: a data-source reader's second dispose can hit a pooled connection another request now owns.
+        await using (var cmd = db.Command("select id, handle, display_name, kind, roles, enabled from principals where handle = @h").With("h", handle))
+        await using (var r = await cmd.ExecuteReaderAsync(ct))
+        {
+            if (!await r.ReadAsync(ct) || !r.GetBoolean(5)) throw BoardException.Unauthorized($"unknown dev principal {handle}");
+            p = new Principal(r.GetGuid(0), r.GetString(1), r.GetString(2), r.GetString(3), r.GetFieldValue<string[]>(4));
+        }
+        await using (var touch = db.Command(string.Format(TouchSql, "id = @id")).With("r", p.Roles).With("id", p.Id))
+            await touch.ExecuteNonQueryAsync(ct);
+        return p;
     }
+
+    /// <summary>
+    /// last_seen_at is written at most once a minute per principal (PERF-01): the update below only touches the row
+    /// when roles changed or the last write is older than a minute, so steady polling doesn't write on every request.
+    /// </summary>
+    internal const string TouchSql = """
+        with p as (select id, handle, display_name, kind, roles, enabled, last_seen_at from principals where {0})
+        update principals t set roles = @r, last_seen_at = now()
+        from p where t.id = p.id and (p.roles is distinct from @r::text[] or p.last_seen_at is null or p.last_seen_at < now() - interval '1 minute')
+        returning t.id
+        """;
 
     private async Task<Principal> UpsertAsync(CallerIdentity id, CancellationToken ct)
     {
-        await using (var cmd = db.Command("update principals set roles = @r, last_seen_at = now() where entra_oid = @o returning id, handle, display_name, kind, roles, enabled")
-                         .With("r", id.Roles).With("o", id.Oid))
+        await using (var touch = db.Command(string.Format(TouchSql, "entra_oid = @o")).With("r", id.Roles).With("o", id.Oid))
+            await touch.ExecuteNonQueryAsync(ct);
+        await using (var cmd = db.Command("select id, handle, display_name, kind, roles, enabled from principals where entra_oid = @o").With("o", id.Oid))
         await using (var r = await cmd.ExecuteReaderAsync(ct))
         {
             if (await r.ReadAsync(ct))
@@ -58,10 +77,12 @@ public sealed class Authenticator(Settings settings, TokenValidator tokens, Db d
             on conflict (entra_oid) do update set roles = excluded.roles, last_seen_at = now()
             returning id, handle, display_name, kind, roles
             """).With("h", handle).With("n", id.Name).With("k", id.Kind).With("o", id.Oid).With("a", id.AppId).With("r", id.Roles);
-        await using var rd = await ins.ExecuteReaderAsync(ct);
-        await rd.ReadAsync(ct);
-        var p = new Principal(rd.GetGuid(0), rd.GetString(1), rd.GetString(2), rd.GetString(3), rd.GetFieldValue<string[]>(4));
-        await rd.DisposeAsync();
+        Principal p;
+        await using (var rd = await ins.ExecuteReaderAsync(ct))
+        {
+            await rd.ReadAsync(ct);
+            p = new Principal(rd.GetGuid(0), rd.GetString(1), rd.GetString(2), rd.GetString(3), rd.GetFieldValue<string[]>(4));
+        }
         await audit.WriteAsync(p.Id, "principal.joined", p.Handle, new { kind = id.Kind, app_id = id.AppId }, ct);
         return p;
     }
