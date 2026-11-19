@@ -13,9 +13,9 @@ internal sealed class FakeBoard : IBoardTransport
     public readonly Dictionary<Guid, string> ClaimedBy = [];
     public string Me = "agent";
 
-    public Message Add(string type, string body, string author = "analyst", string channel = "intel", string[]? mentions = null, Guid? parent = null)
+    public Message Add(string type, string body, string author = "analyst", string channel = "intel", string[]? mentions = null, Guid? parent = null, string kind = "human")
     {
-        var m = new Message(Guid.NewGuid(), (Feed.Count + 1).ToString(), channel, new Author(author, author, "human"), parent, null, null,
+        var m = new Message(Guid.NewGuid(), (Feed.Count + 1).ToString(), channel, new Author(author, author, kind), parent, null, null,
             type, body, null, mentions ?? [], "open", null, null, DateTimeOffset.UtcNow, 0);
         Feed.Add(m);
         return m;
@@ -155,6 +155,8 @@ public class AgentLoopTests : IDisposable
         await new AgentState { Cursor = "0" }.SaveAsync(StateFile, Ct);
         fake.Add("chat", "@agent talking to myself", author: "agent", mentions: ["agent"]);
         fake.Add("chat", "general chatter");
+        // The board's own action record names the requester: not a request for help.
+        fake.Add("action_request", "@agent requests **Isolate device**", author: "board", channel: "containment", mentions: ["agent"], kind: "system");
         var handled = 0;
         await RunOnce(fake, (_, _) => { handled++; return Task.CompletedTask; }, (_, _) => { handled++; return Task.CompletedTask; });
         Assert.Equal(0, handled);

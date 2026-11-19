@@ -29,8 +29,32 @@ jobs:
       - name: Unit and integration tests (integration tests use the Postgres service)
         working-directory: api
         run: dotnet test --solution Blueboard.slnx -c Release --no-build
-      - name: Build reference agent
-        run: dotnet build agents/Blueboard.EnrichmentAgent -c Release
+      - name: Build agents (reference agent, template, SDK) and the demo mock API
+        run: |
+          dotnet build agents/Blueboard.EnrichmentAgent -c Release
+          dotnet build agents/Blueboard.AgentTemplate -c Release
+          dotnet build dev/mock-msapi -c Release
+      - name: Agent SDK tests
+        run: dotnet test --project agents/Blueboard.Agent.Sdk.Tests -c Release
+
+  demo-smoke:
+    # The one-command local demo (issue #1): build the compose stack, wait for health, then check over MCP
+    # (Bearer dev:enrichment-agent) that the three mock incidents were enriched and their actions are pending.
+    name: Local demo smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Start the demo
+        run: ./scripts/demo.sh up
+      - name: Check incidents, agent output and pending actions over MCP
+        run: ./scripts/demo-smoke.sh http://localhost:7370
+      - name: Logs on failure
+        if: failure()
+        run: docker compose -f docker-compose.demo.yml logs --no-color --tail 200
+      - name: Tear down
+        if: always()
+        run: ./scripts/demo.sh down
 
   web:
     name: React web
@@ -62,4 +86,4 @@ jobs:
           az bicep build --file infra/main.bicep --stdout > /dev/null
           az bicep lint --file infra/main.bicep
       - name: shellcheck
-        run: shellcheck -x -e SC1091 -s bash infra/*.sh
+        run: shellcheck -x -e SC1091 -s bash infra/*.sh scripts/*.sh

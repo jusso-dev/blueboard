@@ -110,7 +110,9 @@ public static class BoardAgent
     private static async Task DispatchAsync(BoardConnection board, LoopOptions o, Message m, string me,
         AgentHandler? onIncident, AgentHandler? onQuestion, AgentHandler? onMention, CancellationToken ct)
     {
-        var mentioned = m.Mentions.Contains(me);
+        // The board's own records (action requests and results, status changes) name the requester with @handle:
+        // that is a record, not someone asking for help.
+        var mentioned = m.Mentions.Contains(me) && m.Author.Kind != "system";
         var open = m.ClaimState == "open";
         if (m.Type == "incident" && m.ParentId is null && onIncident is not null)
         {
