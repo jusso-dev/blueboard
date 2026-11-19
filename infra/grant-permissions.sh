@@ -5,6 +5,10 @@
 #   ./infra/grant-permissions.sh <board-mi-principal-id> <board-api-app-client-id> [<agent-principal-id> ...]
 #   READ_ONLY=1 ./infra/grant-permissions.sh ...      # read permissions only: no brokered actions possible
 #   ACTIONS="isolate_device run_av_scan" ./infra/grant-permissions.sh ...   # only the writes you will broker
+#   TI_MSTI=1 ./infra/grant-permissions.sh ...        # add ThreatIntelligence.Read.All (Microsoft Threat Intelligence lookups)
+#
+# publish_ti_indicator needs no Graph permission: it needs the Azure role Microsoft Sentinel Contributor on the
+# Sentinel workspace (main.bicep assignSentinelContributor, or the az role assignment in docs/THREAT_INTEL.md).
 #
 # Needs: Privileged Role Administrator (or Global Administrator) in Entra. Application permissions
 # are tenant-wide: review docs/SECURITY.md § Permissions before running.
@@ -55,16 +59,21 @@ perm_for() {
     reset_password) echo "$GRAPH_APP User-PasswordProfile.ReadWrite.All" ;;
     purge_email) echo "$GRAPH_APP SecurityAnalyzedMessage.ReadWrite.All" ;;
     update_incident | add_incident_comment) echo "$GRAPH_APP SecurityIncident.ReadWrite.All" ;;
+    publish_ti_indicator) echo "AZURE_RBAC" ;;
     *) return 1 ;;
   esac
 }
-ALL_ACTIONS="isolate_device release_device run_av_scan collect_investigation_package block_indicator disable_user revoke_sessions reset_password purge_email update_incident add_incident_comment"
+ALL_ACTIONS="isolate_device release_device run_av_scan collect_investigation_package block_indicator disable_user revoke_sessions reset_password purge_email update_incident add_incident_comment publish_ti_indicator"
 
 log "read permissions (incident ingest, hunting, entity lookups)"
 for p in SecurityIncident.Read.All SecurityAlert.Read.All ThreatHunting.Read.All User.Read.All IdentityRiskyUser.Read.All RoleManagement.Read.Directory; do
   grant "$GRAPH_APP" "$p"
 done
 for p in Machine.Read.All File.Read.All Ip.Read.All Url.Read.All; do grant "$MDE_APP" "$p"; done
+if [[ "${TI_MSTI:-}" == "1" ]]; then
+  log "Microsoft Threat Intelligence (TI_MSTI=1)"
+  grant "$GRAPH_APP" ThreatIntelligence.Read.All
+fi
 
 if [[ "${READ_ONLY:-}" == "1" ]]; then
   warn "READ_ONLY=1: no write permissions granted, every brokered action will fail at execution"
@@ -74,6 +83,10 @@ else
   done_perms=" "
   for a in $actions; do
     perm="$(perm_for "$a")" || die "unknown action $a"
+    if [[ "$perm" == "AZURE_RBAC" ]]; then
+      warn "$a needs Microsoft Sentinel Contributor on the workspace, not a Graph permission (see docs/THREAT_INTEL.md)"
+      continue
+    fi
     case "$done_perms" in *" $perm "*) continue ;; esac
     done_perms="$done_perms$perm "
     # shellcheck disable=SC2086

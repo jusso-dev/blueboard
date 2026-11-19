@@ -73,7 +73,8 @@ The trusted computing base is the Function App's code, its managed identity (`bl
 | T2 | A **compromised or malicious agent** (stolen workload identity) | Attacker gets an agent's federated credential | Agents can never approve (stripped from app-only tokens, refused by `assign-roles.sh`) · read endpoints need `Board.Post` · every action is attributed to the requesting principal and audited | The agent can read incident data and post misleading findings. Disable its principal; see the [runbook](#incident-response-for-the-board-itself). |
 | T3 | **Self-approval / collusion** | A person both requests and approves | `decided_by ≠ requested_by` enforced in SQL · approvals restricted to humans | Two colluding approvers. Use separate groups and review `audit_log`. |
 | T4 | **Over-broad action** | Isolating a domain controller; blocking `microsoft.com` | Protected lists matched by every alias (UPN↔object ID, MDE ID↔DNS name↔host name) · unresolvable targets are flagged and never auto-approved · indicator blocks expire (max 365 days) | Anything not on your protected lists. Maintain `policy.json`. |
-| T5 | **Token theft from the board** | SSRF to steal the managed identity's Graph token | `MsClient` sends tokens only to an exact origin (`graph.microsoft.com`, `api.security.microsoft.com`) · dot-segment paths refused · IDs validated by strict regex · lookups reject `/ \ ? #` | A code bug in the TCB. Keep dependencies patched; review changes to `api/Blueboard.Api/Graph` and `api/Blueboard.Api/Actions`. |
+| T5 | **Token theft from the board** | SSRF to steal the managed identity's Graph token | `MsClient` sends tokens only to an exact origin (`graph.microsoft.com`, `api.security.microsoft.com`, `api.ti.sentinel.azure.com`) · dot-segment paths refused · IDs validated by strict regex · lookups reject `/ \ ? #` | A code bug in the TCB. Keep dependencies patched; review changes to `api/Blueboard.Api/Graph` and `api/Blueboard.Api/Actions`. |
+| T5b | **Hostile threat intel feed** | A compromised feed redirects the fetcher to an internal address, serves a huge body, or puts instructions in an advisory | Outside feeds use their own fetcher with no token: https only, exact host allowlist per source, same-host https redirects only, 30 s timeout, 25 MB cap · feed text is quoted data in the UI, wrapped as `untrusted_data` for agents, can't @mention · KQL and STIX values are validated per kind and escaped | A feed can still be wrong. Every card names its source; agree / differ shows disagreement. See [THREAT_INTEL.md](THREAT_INTEL.md). |
 | T6 | **Unauthorised reader** in the tenant | Any employee calls `/api/incidents` | Every route and MCP tool requires `Board.Post` · enterprise app has *assignment required*, so unassigned people can't even get a token | n/a |
 | T6b | **Forged identity header** | A caller sends its own `x-ms-client-principal` to the Function App | The API reads identity only from a validated bearer token; principal headers are never parsed (regression test) | n/a |
 | T7 | **CSRF / clickjacking** against an approver | Malicious page posts an approval | No ambient credentials: the token is attached by the app's own code, so a cross-site form or fetch carries nothing · CORS allows only the web origin, without credentials · `frame-ancestors 'self'` + `X-Frame-Options: SAMEORIGIN` · strict CSP (scripts from the web origin only, network calls only to the API and Entra) · HSTS | n/a |
@@ -97,6 +98,7 @@ The trusted computing base is the Function App's code, its managed identity (`bl
 | Action parameter validation (strict ID formats) at request time *and* execution time | `Actions/Catalog.cs`, `Broker.ExecuteAsync` |
 | Policy: protected lists with alias matching, evidence scope check, incident-scoped writes, auto-approve allow-list | `Actions/Policy.cs` |
 | Token egress guard (exact origin, no dot-segments) | `MsClient.BuildUri` in `Graph/MsClient.cs` |
+| Threat intel fetcher (no token, https, host allowlist, same-host redirects, size cap, TTL) and KQL / STIX builders | `Intel/TiFetcher.cs`, `Intel/Kql.cs`, `Actions/Stix.cs` |
 | CORS: web origin only, no credentials | `infra/main.bicep` (Function App `siteConfig.cors`) |
 | Security headers and CSP (scripts self only; connect to the API and Entra only) | `web/host/SecurityHeaders.cs` |
 | Safe markdown rendering (no HTML, http(s) links only) | `web/src/components/markdown.tsx` |
@@ -129,6 +131,10 @@ Regression tests: `api/Blueboard.Api.Tests` (policy, aliases, parameter validati
 | Microsoft Graph | `User-PasswordProfile.ReadWrite.All` | `reset_password` | **write, high impact** |
 | Microsoft Graph | `SecurityAnalyzedMessage.ReadWrite.All` | `purge_email` | **write, high impact** |
 | Microsoft Graph | `SecurityIncident.ReadWrite.All` | `update_incident`, `add_incident_comment` | **write** |
+| Microsoft Graph | `ThreatIntelligence.Read.All` (only with `TI_MSTI=1`) | Microsoft Threat Intelligence lookups (`lookup_intel`) | read |
+| Azure RBAC on the Sentinel workspace | **Microsoft Sentinel Contributor** (only with `assignSentinelContributor`) | `publish_ti_indicator` (Sentinel upload API, **preview**) | **write** |
+
+Sentinel TI and Defender exposure checks use `ThreatHunting.Read.All`, already in the table. The optional MDE vulnerabilities API path (`TI_EXPOSURE_SOURCE=api`, `Vulnerability.Read.All`) is reserved and not granted.
 
 Agent identities get **no** Microsoft security permissions: three board app roles, plus `Cognitive Services User` on the Foundry resource for the reference agent. The Web App has no identity at all.
 

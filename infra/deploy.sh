@@ -9,6 +9,11 @@
 #   INGEST_ENABLED=true     poll Defender for incidents (default true)
 #   BROKER_EXECUTE=false    leave false until policy.json is reviewed (see docs/SECURITY.md)
 #   POLICY_FILE=…           your reviewed policy (default: policy.example.json)
+#   TI_PWNWATCH_ENABLED, TI_KEV_ENABLED, TI_EPSS_ENABLED, TI_NVD_ENABLED, TI_OSV_ENABLED,
+#   TI_SENTINEL_ENABLED, TI_EXPOSURE_ENABLED, TI_MSTI_ENABLED=false   threat intel sources (docs/THREAT_INTEL.md)
+#   NVD_API_KEY=…           optional, raises the NVD rate limit
+#   SENTINEL_WORKSPACE_ID=… resource id of the Sentinel workspace for publish_ti_indicator
+#   ASSIGN_SENTINEL_CONTRIBUTOR=false   give the board Microsoft Sentinel Contributor on that workspace
 #   BB_ALLOW_DIRTY=1        deploy from a working tree with uncommitted changes
 #   BB_YES=1                skip confirmation prompts (CI)
 #
@@ -30,6 +35,14 @@ WEB_SKU="${WEB_SKU:-B1}"
 INGEST_ENABLED="${INGEST_ENABLED:-true}"
 BROKER_EXECUTE="${BROKER_EXECUTE:-false}"
 PREFIX="${PREFIX:-blueboard}"
+TI_PARAMS=()
+for f in PWNWATCH KEV EPSS NVD OSV SENTINEL EXPOSURE MSTI; do
+  v="TI_${f}_ENABLED"
+  name="ti$(printf '%s' "$f" | cut -c1)$(printf '%s' "$f" | cut -c2- | tr '[:upper:]' '[:lower:]')Enabled"
+  TI_PARAMS+=("$name=${!v:-false}")
+done
+[[ -n "${NVD_API_KEY:-}" ]] && TI_PARAMS+=("nvdApiKey=$NVD_API_KEY")
+TI_PARAMS+=("sentinelWorkspaceResourceId=${SENTINEL_WORKSPACE_ID:-}" "assignSentinelContributor=${ASSIGN_SENTINEL_CONTRIBUTOR:-false}")
 POLICY_FILE="${POLICY_FILE:-$BB_ROOT/policy.example.json}"
 
 require az jq git dotnet pnpm zip curl
@@ -72,6 +85,7 @@ out="$(az deployment group create -g "$RESOURCE_GROUP" -n "blueboard-main" -f in
   -p location="$LOCATION" webSkuName="$WEB_SKU" namePrefix="$PREFIX" \
   boardApiClientId="$BOARD_API_CLIENT_ID" boardApiAudience="$BOARD_API_AUDIENCE" \
   ingestEnabled="$INGEST_ENABLED" brokerExecute="$BROKER_EXECUTE" policyJson=@"$POLICY_FILE" \
+  "${TI_PARAMS[@]}" \
   --query properties.outputs -o json)"
 
 # 4. outputs ------------------------------------------------------------------------------------

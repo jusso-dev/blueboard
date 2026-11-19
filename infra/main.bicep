@@ -39,6 +39,26 @@ param maximumInstanceCount int = 40
 @description('App Service plan for the web front end. B1 is enough for a SOC; P0v3 adds zone support and more headroom.')
 param webSkuName string = 'B1'
 
+// Threat intel and CVE sources (docs/THREAT_INTEL.md, docs/ti/sources.md). All off by default.
+@description('Outside feeds: pwn.watch, CISA KEV (scheduled); FIRST EPSS, NVD, OSV (on demand). Outbound https to each host only.')
+param tiPwnwatchEnabled bool = false
+param tiKevEnabled bool = false
+param tiEpssEnabled bool = false
+param tiNvdEnabled bool = false
+param tiOsvEnabled bool = false
+@description('Tenant intel through the board identity: Sentinel TI and Defender exposure use advanced hunting (ThreatHunting.Read.All, already granted).')
+param tiSentinelEnabled bool = false
+param tiExposureEnabled bool = false
+@description('Microsoft Threat Intelligence (Graph). Grant ThreatIntelligence.Read.All first: TI_MSTI=1 ./infra/grant-permissions.sh.')
+param tiMstiEnabled bool = false
+@description('Optional NVD API key (raises the rate limit from 5 to 50 requests per 30 seconds). Not a Microsoft credential.')
+@secure()
+param nvdApiKey string = ''
+@description('publish_ti_indicator: resource id of the Log Analytics workspace that has Microsoft Sentinel. Empty: the action dry-runs with no workspace and fails if executed.')
+param sentinelWorkspaceResourceId string = ''
+@description('publish_ti_indicator: assign Microsoft Sentinel Contributor on that workspace to the board identity. Needs Owner or User Access Administrator on the workspace.')
+param assignSentinelContributor bool = false
+
 var suffix = uniqueString(resourceGroup().id)
 var storageName = take('${replace(namePrefix, '-', '')}st${suffix}', 24)
 var deployContainer = 'app-package'
@@ -47,7 +67,10 @@ var roles = {
   storageQueueDataContributor: '974c5e8b-45b9-4653-ba55-5f855dd0fb88'
   storageTableDataContributor: '0a9a7e1f-b9d0-4cc4-a60d-0319b160aaa3'
   monitoringMetricsPublisher: '3913510d-42f4-4e42-8a64-420c390055eb'
+  sentinelContributor: 'ab8e14d6-4a74-4f29-9ba8-549422addade'
 }
+// /subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.OperationalInsights/workspaces/{name}; a placeholder when unset (never deployed).
+var sentinelWorkspaceParts = split(empty(sentinelWorkspaceResourceId) ? '/subscriptions/none/resourceGroups/none/providers/x/workspaces/none' : sentinelWorkspaceResourceId, '/')
 
 // ── observability ────────────────────────────────────────────────────────────────────────────
 resource logs 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
@@ -213,6 +236,34 @@ resource apiSettings 'Microsoft.Web/sites/config@2024-04-01' = {
     INGEST_ENABLED: string(ingestEnabled)
     BROKER_EXECUTE: string(brokerExecute)
     BLUEBOARD_POLICY_JSON: policyJson
+    TI_PWNWATCH_ENABLED: string(tiPwnwatchEnabled)
+    TI_KEV_ENABLED: string(tiKevEnabled)
+    TI_EPSS_ENABLED: string(tiEpssEnabled)
+    TI_NVD_ENABLED: string(tiNvdEnabled)
+    TI_OSV_ENABLED: string(tiOsvEnabled)
+    TI_SENTINEL_ENABLED: string(tiSentinelEnabled)
+    TI_EXPOSURE_ENABLED: string(tiExposureEnabled)
+    TI_MSTI_ENABLED: string(tiMstiEnabled)
+    NVD_API_KEY: nvdApiKey
+    SENTINEL_WORKSPACE_ID: empty(sentinelWorkspaceResourceId) ? '' : sentinelWorkspace!.properties.customerId
+    BOARD_WEB_URL: 'https://${web.properties.defaultHostName}'
+  }
+}
+
+// publish_ti_indicator (optional): the upload API needs Microsoft Sentinel Contributor on the workspace.
+// The workspace may live in another resource group, so the assignment is a module scoped there.
+resource sentinelWorkspace 'Microsoft.OperationalInsights/workspaces@2023-09-01' existing = if (!empty(sentinelWorkspaceResourceId)) {
+  name: last(sentinelWorkspaceParts)
+  scope: resourceGroup(sentinelWorkspaceParts[2], sentinelWorkspaceParts[4])
+}
+
+module sentinelRole 'sentinel-role.bicep' = if (assignSentinelContributor && !empty(sentinelWorkspaceResourceId)) {
+  name: 'blueboard-sentinel-contributor'
+  scope: resourceGroup(sentinelWorkspaceParts[2], sentinelWorkspaceParts[4])
+  params: {
+    workspaceName: last(sentinelWorkspaceParts)
+    principalId: idApi.properties.principalId
+    roleDefinitionId: roles.sentinelContributor
   }
 }
 
