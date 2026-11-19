@@ -86,7 +86,7 @@ public sealed record Settings
             IngestEnabled = Flag("INGEST_ENABLED"),
             IngestLookbackHours = Int("INGEST_LOOKBACK_HOURS", 24),
             BrokerExecute = Flag("BROKER_EXECUTE"),
-            PolicyFile = Env("BLUEBOARD_POLICY_FILE") ?? WritePolicyFromSetting(Env("BLUEBOARD_POLICY_JSON")),
+            PolicyFile = ResolvePath(Env("BLUEBOARD_POLICY_FILE")) ?? WritePolicyFromSetting(Env("BLUEBOARD_POLICY_JSON")),
             ClaimLeaseSeconds = Int("CLAIM_LEASE_SECONDS", 600),
             DemoMode = Flag("DEMO_MODE"),
             GraphBaseUrl = Env("GRAPH_BASE_URL"),
@@ -128,6 +128,22 @@ public sealed record Settings
         var buf = new byte[s.Length];
         var ok = Convert.TryFromBase64String(s, buf, out bytes);
         return ok;
+    }
+
+    /// <summary>
+    /// A relative BLUEBOARD_POLICY_FILE is tried against the working directory, then the project folder above bin/, so
+    /// the example local.settings.json works whether func starts from the project or from its output folder.
+    /// </summary>
+    internal static string? ResolvePath(string? path)
+    {
+        if (path is null || Path.IsPathRooted(path) || File.Exists(path)) return path;
+        for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir is not null; dir = dir.Parent)
+        {
+            var candidate = Path.GetFullPath(Path.Combine(dir.FullName, path));
+            if (File.Exists(candidate)) return candidate;
+            if (dir.Name == "bin") return Path.GetFullPath(Path.Combine(dir.Parent!.FullName, path));
+        }
+        return path;
     }
 
     /// <summary>In Azure the policy arrives as a (secret) app setting; write it to a private temp file once.</summary>
