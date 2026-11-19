@@ -201,7 +201,12 @@ public sealed class Broker(Db db, Audit audit, BoardService board, MsClient ms, 
         var open = (int)(await cnt.ExecuteScalarAsync(ct))!;
         var cap = policy.Limits.PendingActionsPerIncident;
         if (open < cap) return;
-        await audit.WriteAsync(p.Id, "limit.hit", p.Handle, new { bucket = "pending_actions_per_incident", incident = graphId, limit = cap }, ct);
+        // Audited on this transaction's connection (no second pooled connection while the incident row is locked),
+        // and committed even though the request itself is refused.
+        await using (var au = new NpgsqlCommand("insert into audit_log (actor_id, event, subject, detail) values (@a, 'limit.hit', @s, @d)", conn, tx)
+                         .With("a", p.Id).With("s", p.Handle).WithJson("d", new { bucket = "pending_actions_per_incident", incident = graphId, limit = cap }))
+            await au.ExecuteNonQueryAsync(ct);
+        await tx.CommitAsync(ct);
         throw new BoardException($"incident {graphId} already has {open} actions waiting for approval (limit {cap}); decide or let some expire first", 429)
         {
             Bucket = "pending_actions_per_incident",

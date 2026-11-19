@@ -211,6 +211,8 @@ public sealed class OpsTests(TestBoard t) : IClassFixture<TestBoard>
         var rx = new Receiver();
         var settings = t.Settings with { AuditDceEndpoint = "https://bb-dce.australiaeast-1.ingest.monitor.azure.com", AuditDcrId = "dcr-0123456789abcdef0123456789abcdef" };
         var exporter = new AuditExporter(new HttpClient(rx), t.Db, settings, new StaticToken());
+        // Don't depend on test order: make sure there is at least one row to export.
+        await t.Audit.WriteAsync(null, "test.event", "seed", null, Ct);
         var first = await exporter.RunOnceAsync(Ct);
         Assert.True(first > 0);
         Assert.Equal(0, await exporter.RunOnceAsync(Ct));

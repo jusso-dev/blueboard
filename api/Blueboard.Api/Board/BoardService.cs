@@ -137,8 +137,19 @@ public sealed partial class BoardService(Db db, Audit audit, Settings settings, 
             ? Payloads.Validate(type, p)
             : (JsonElement?)null;
 
-        var channelId = await ChannelIdAsync(input.Channel, ct);
-        var incidentId = await ResolveIncidentAsync(input.Incident, ct);
+        // Lookups run on this transaction's connection. Borrowing a second pooled connection while holding this one
+        // can exhaust the pool under load: every connection held by a transaction that waits for another.
+        Guid channelId;
+        await using (var cc = new NpgsqlCommand("select id from channels where name = @n", conn, tx).With("n", input.Channel))
+            channelId = await cc.ExecuteScalarAsync(ct) is Guid cid ? cid : throw BoardException.NotFound($"channel #{input.Channel}");
+        Guid? incidentId = null;
+        if (!string.IsNullOrWhiteSpace(input.Incident))
+        {
+            await using var ic = Guid.TryParse(input.Incident, out var g)
+                ? new NpgsqlCommand("select id from incidents where id = @g or graph_id = @r", conn, tx).With("g", g).With("r", input.Incident)
+                : new NpgsqlCommand("select id from incidents where graph_id = @r", conn, tx).With("r", input.Incident);
+            incidentId = await ic.ExecuteScalarAsync(ct) is Guid iid ? iid : throw BoardException.NotFound($"incident {input.Incident}");
+        }
         if (input.ParentId is { } parentId)
         {
             await using var pc = new NpgsqlCommand("select channel_id, incident_id, parent_id from messages where id = @id", conn, tx).With("id", parentId);
