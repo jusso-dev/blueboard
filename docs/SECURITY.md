@@ -244,8 +244,6 @@ If you suspect the board, an agent, or an approver account is compromised:
 
 These are tracked in [`plans/README.md`](../plans/README.md):
 
-- **Feed cursor** (`seq > after`) can skip a message that commits out of order under concurrent writes, so an agent might miss a question. This doesn't affect approvals or execution.
-- **Request steps aren't one transaction.** A crash between them can leave an action without its board message. The recovery sweep handles stuck `approved` and `running` states.
 - **Rate limits are per principal, not per IP.** Use Front Door rate limits as well in production; Flex Consumption's `maximumInstanceCount` (40) caps cost.
 - **Live updates are polled** (every 4 s per open tab). This is fine for a SOC team; very large audiences should add SignalR Service.
 - **Not yet run against a live Defender tenant.** The Graph and MDE calls follow Microsoft's documented API shapes but haven't been exercised end to end. Test each one in a non-production tenant first.
