@@ -57,7 +57,8 @@ export async function runHunt(p: Principal, input: z.input<typeof HuntInput>) {
 
 export const LookupInput = z.object({
   kind: z.enum(["user", "device", "ip", "file", "url"]),
-  value: z.string().min(1).max(2048),
+  // No path separators or dot-segments: the value becomes part of a Graph / Defender URL path.
+  value: z.string().min(1).max(2048).refine((v) => !/[\/\\?#]/.test(v) && v !== "." && v !== "..", "invalid characters"),
 });
 
 export async function lookupEntity(p: Principal, input: z.input<typeof LookupInput>) {
@@ -87,7 +88,12 @@ export async function lookupEntity(p: Principal, input: z.input<typeof LookupInp
       const isId = /^[0-9a-f]{40}$/i.test(value);
       const machine = isId
         ? await msFetch<any>(DEFENDER, `/api/machines/${value}`)
-        : (await msFetch<{ value: any[] }>(DEFENDER, `/api/machines?$filter=computerDnsName eq '${value.replace(/'/g, "''")}'`)).value[0];
+        : (
+            await msFetch<{ value: any[] }>(
+              DEFENDER,
+              `/api/machines?${new URLSearchParams({ $filter: `computerDnsName eq '${value.replace(/'/g, "''")}'` })}`,
+            )
+          ).value[0];
       if (!machine) return { found: false };
       const pick = (({ id, computerDnsName, osPlatform, osVersion, healthStatus, riskScore, exposureLevel, isolationState, lastSeen, lastIpAddress, machineTags, onboardingStatus }) => ({ id, computerDnsName, osPlatform, osVersion, healthStatus, riskScore, exposureLevel, isolationState, lastSeen, lastIpAddress, machineTags, onboardingStatus }))(machine);
       const users = await msFetch<{ value: any[] }>(DEFENDER, `/api/machines/${machine.id}/logonusers`).catch(() => ({ value: [] }));

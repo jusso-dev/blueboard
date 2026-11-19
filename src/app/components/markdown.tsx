@@ -3,7 +3,7 @@ import { Fragment, type ReactNode } from "react";
 /** Tiny, safe markdown subset (no HTML passthrough): paragraphs, lists, quotes, code, bold, links, @mentions. */
 function inline(text: string, key: string): ReactNode[] {
   const out: ReactNode[] = [];
-  const re = /(`[^`]+`|\*\*[^*]+\*\*|\[[^\]]+\]\((https?:\/\/[^)\s]+)\)|@[a-z0-9][a-z0-9-]{1,40})/g;
+  const re = /(<<[^<>]{1,200}>>|`[^`]+`|\*\*[^*]+\*\*|\[[^\]]+\]\((https?:\/\/[^)\s]+)\)|@[a-z0-9][a-z0-9-]{1,40})/g;
   let last = 0;
   let m: RegExpExecArray | null;
   let i = 0;
@@ -13,7 +13,8 @@ function inline(text: string, key: string): ReactNode[] {
     if (tok.startsWith("@") && m.index > 0 && /[\w.]/.test(text[m.index - 1]!)) continue;
     if (m.index > last) out.push(text.slice(last, m.index));
     const k = `${key}-${i++}`;
-    if (tok.startsWith("`")) out.push(<code key={k}>{tok.slice(1, -1)}</code>);
+    if (tok.startsWith("<<")) out.push(<mark key={k}>{tok.slice(2, -2)}</mark>);
+    else if (tok.startsWith("`")) out.push(<code key={k}>{tok.slice(1, -1)}</code>);
     else if (tok.startsWith("**")) out.push(<strong key={k}>{tok.slice(2, -2)}</strong>);
     else if (tok.startsWith("[")) {
       const label = tok.slice(1, tok.indexOf("]"));
@@ -22,7 +23,7 @@ function inline(text: string, key: string): ReactNode[] {
           {label}
         </a>,
       );
-    } else out.push(<span key={k} className="text-sky-300 font-medium">{tok}</span>);
+    } else out.push(<span key={k} className="font-medium text-accent">{tok}</span>);
     last = m.index + tok.length;
   }
   if (last < text.length) out.push(text.slice(last));
@@ -73,5 +74,5 @@ export function Markdown({ text }: { text: string }) {
       );
     }
   }
-  return <div className="md text-sm leading-relaxed break-words">{blocks}</div>;
+  return <div className="md">{blocks}</div>;
 }

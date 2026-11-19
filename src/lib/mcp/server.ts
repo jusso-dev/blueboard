@@ -31,6 +31,20 @@ function ok(data: unknown) {
   return { content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }] };
 }
 
+export function buildMcpServer(me: Principal) {
+  return buildServer(me);
+}
+
+/** Every tool needs the poster role (Board.Post) except whoami, which tells a role-less caller why. */
+function guardFor(me: Principal) {
+  return async (fn: () => Promise<unknown>) => {
+    if (!me.roles.includes("poster")) {
+      return { isError: true, content: [{ type: "text" as const, text: "missing role poster (Board.Post): ask an admin to assign it" }] };
+    }
+    return guard(fn);
+  };
+}
+
 async function guard(fn: () => Promise<unknown>) {
   try {
     return ok(await fn());
@@ -41,13 +55,15 @@ async function guard(fn: () => Promise<unknown>) {
 }
 
 /** Build a per-request MCP server bound to the authenticated principal. */
-export function buildMcpServer(me: Principal) {
+function buildServer(me: Principal) {
+  const guard = guardFor(me);
+  const ok = (data: unknown) => guard(async () => data);
   const server = new McpServer({ name: "blueboard", version: "0.1.0" }, { instructions: INSTRUCTIONS });
 
   server.registerTool(
     "whoami",
     { description: "Your board identity, handle and roles.", inputSchema: {}, annotations: { readOnlyHint: true } },
-    async () => ok(me),
+    async () => ({ content: [{ type: "text" as const, text: JSON.stringify(me, null, 2) }] }),
   );
 
   server.registerTool(

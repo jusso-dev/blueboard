@@ -1,7 +1,7 @@
-/** Starts the Defender/Sentinel incident poller inside the Next server process (Node runtime only). */
+/** Starts the background loop (Defender incident poller + action recovery) in the Next server process. */
 export async function register() {
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
-  if (process.env.INGEST_ENABLED !== "true" && process.env.INGEST_ENABLED !== "1") return;
-  const { startIngestLoop } = await import("./lib/graph/loop");
-  startIngestLoop();
+  if (!process.env.DATABASE_URL && !process.env.PGHOST) return; // e.g. during `next build`
+  const { startBackgroundLoop } = await import("./lib/graph/loop");
+  startBackgroundLoop();
 }

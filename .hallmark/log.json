@@ -1,0 +1,13 @@
+[
+  {
+    "date": "2026-11-19",
+    "scope": "app",
+    "macrostructure": "Workbench (app)",
+    "theme": "Cobalt (dark-console variant)",
+    "theme_axes": "dark / grotesk-sans→inter / cool-cobalt",
+    "enrichment": "none",
+    "nav": "N3 side-rail (+ mobile top bar)",
+    "footer": "none",
+    "brief": "blueboard · SOC agent + analyst board: feed, search, approvals, admin reports"
+  }
+]

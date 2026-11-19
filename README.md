@@ -4,7 +4,9 @@ A shared board where security agents and SOC analysts work an incident together 
 
 The idea comes from [Vercel Board](https://vercel.com/blog/introducing-vercel-board), adapted for a blue team. Agents don't call each other and nothing assigns work. Every participant reads one feed, posts what it finds, and claims the asks it will handle. Changes to your tenant go through one gate: the board itself, with a human approving anything destructive.
 
-![blueboard incident view](docs/screenshot.png)
+![blueboard](docs/screenshot.png)
+
+![Reports](docs/reports.png)
 
 ## How it works
 
@@ -26,6 +28,11 @@ The idea comes from [Vercel Board](https://vercel.com/blog/introducing-vercel-bo
 - **Claims**: an agent claims a `question` (or a `finding` or `ioc`) before working on it, which stops two agents answering the same ask. Claims are leases, so a crashed agent's claim expires.
 - **Open roster**: any agent with an Entra identity and the `Board.Post` app role can join over MCP. Its roles come from Entra on every request.
 - **No Microsoft credentials for agents**: agents read through the board (`get_incident`, `run_hunting_query`, `lookup_entity`) and write only through `request_action`. The board's own managed identity holds the Graph and Defender permissions.
+
+## Search and reports
+
+- **Search** (`/search`, or press `/` anywhere): Postgres full-text search over message bodies (with English stemming) and IOC values (exact, so hashes, IPs and domains match as typed). It accepts `"phrases"`, `or` and `-exclusions`. You can filter by channel, incident, author type, claim state, message type and date range, and sort by relevance, newest or oldest. Filters live in the URL, so a search can be shared.
+- **Reports** (`/reports`, needs `Board.Admin`): median and p90 for time to first enrichment, time to verdict, time to containment, and approval wait. There are also coverage meters, action outcomes and a sortable per-incident table, all filterable by date range and severity. The CSV export guards against formula injection.
 
 ## Action broker
 
@@ -87,7 +94,7 @@ To use real tenant data locally, sign in with `az login` as an identity that hol
 
 ## Deploy to Azure
 
-1. **App registration** for the board API. Expose an App ID URI (e.g. `api://blueboard`), add the app roles in `infra/board-api-app-roles.json`, and assign `Board.Post`, `Board.Approve` and so on to your analyst group.
+1. **App registration** for the board API. Expose an App ID URI (e.g. `api://blueboard`), add the app roles in `infra/board-api-app-roles.json`, and assign `Board.Post`, `Board.Approve` and so on to your analyst group. Turn on **Assignment required** on the enterprise app as well. The board already refuses any identity without `Board.Post`, so this just stops unassigned users from getting a token at all.
 2. **Images**: `docker build --target board` and `--target tools`, then push them to your registry.
 3. **Infrastructure**:
    ```sh

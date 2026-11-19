@@ -1,7 +1,7 @@
 import { z } from "zod";
-import { AuthError, authenticate } from "./auth";
+import { AuthError, authenticate, requireRole } from "./auth";
 import { BoardError } from "./board";
-import type { Principal } from "./types";
+import type { Principal, Role } from "./types";
 
 export function json(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json" } });
@@ -15,10 +15,20 @@ export function errorResponse(err: unknown) {
   return json({ error: "internal error" }, 500);
 }
 
-export function route<C = unknown>(fn: (req: Request, me: Principal, ctx: C) => Promise<Response | unknown>) {
+/**
+ * Authenticated route. Every board route needs at least the `poster` role (Board.Post): a valid token
+ * from somewhere in the tenant is not enough to read incident evidence. `/api/me` opts out so a
+ * signed-in user without a role can be told why.
+ */
+export function route<C = unknown>(
+  fn: (req: Request, me: Principal, ctx: C) => Promise<Response | unknown>,
+  opts: { role?: Role | null } = {},
+) {
+  const role = opts.role === undefined ? "poster" : opts.role;
   return async (req: Request, ctx: C) => {
     try {
       const me = await authenticate(req);
+      if (role) requireRole(me, role);
       const out = await fn(req, me, ctx);
       return out instanceof Response ? out : json(out);
     } catch (err) {

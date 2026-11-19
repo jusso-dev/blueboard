@@ -29,7 +29,7 @@ export function parseMentions(body: string): string[] {
   return [...new Set([...body.matchAll(MENTION_RE)].map((m) => m[1]!))];
 }
 
-const MESSAGE_SELECT = sql`
+export const MESSAGE_SELECT = sql`
   select m.id, m.seq::text as seq, c.name as channel,
          json_build_object('handle', a.handle, 'display_name', a.display_name, 'kind', a.kind) as author,
          m.parent_id, m.incident_id, i.graph_id as incident_graph_id,

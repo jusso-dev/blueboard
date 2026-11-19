@@ -96,3 +96,38 @@ describe("action schemas", () => {
     expect(ACTIONS.update_incident.schema.safeParse({ incident_id: "1" }).success).toBe(false);
   });
 });
+
+describe("policy hardening (improve audit)", () => {
+  it("rejects a protected device listed by DNS name when the request uses the MDE id", () => {
+    const d = evaluate(ACTIONS.isolate_device as never, { machine_id: DEVICE, isolation_type: "Full" }, incident, policy({ protected_devices: ["fin-lt-1.contoso.local"] }));
+    expect(d.outcome).toBe("reject");
+  });
+  it("rejects a protected device listed by short host name", () => {
+    const d = evaluate(ACTIONS.isolate_device as never, { machine_id: DEVICE, isolation_type: "Full" }, incident, policy({ protected_devices: ["FIN-LT-1"] }));
+    expect(d.outcome).toBe("reject");
+  });
+  it("rejects a protected user listed by UPN when the request uses the object id", () => {
+    const d = evaluate(ACTIONS.disable_user as never, { user: "u-1" }, incident, policy({ protected_users: ["j.doe@contoso.com"] }));
+    expect(d.outcome).toBe("reject");
+  });
+  it("flags, and never auto-approves, a device it cannot resolve while a protected list exists", () => {
+    const other = "1".repeat(40);
+    const d = evaluate(ACTIONS.run_av_scan as never, { machine_id: other, scan_type: "Quick" }, incident, policy({ protected_devices: ["dc01"] }));
+    expect(d.outcome).toBe("needs_approval");
+    expect(d.notes.join(" ")).toMatch(/checked by id only/);
+  });
+  it("rejects incident comments that are not linked to an incident", () => {
+    const d = evaluate(ACTIONS.add_incident_comment as never, { incident_id: "42", comment: "hi" }, null, policy());
+    expect(d.outcome).toBe("reject");
+  });
+  it("still auto-runs a comment on its own linked incident", () => {
+    const d = evaluate(ACTIONS.add_incident_comment as never, { incident_id: "42", comment: "hi" }, incident, policy());
+    expect(d.outcome).toBe("auto");
+  });
+  it("rejects path-like ids in incident and user params", () => {
+    expect(ACTIONS.update_incident.schema.safeParse({ incident_id: "..", status: "resolved" }).success).toBe(false);
+    expect(ACTIONS.disable_user.schema.safeParse({ user: "../me" }).success).toBe(false);
+    expect(ACTIONS.disable_user.schema.safeParse({ user: "j.doe@contoso.com" }).success).toBe(true);
+    expect(ACTIONS.disable_user.schema.safeParse({ user: "6f1c2d3e-4b5a-4c7d-8e9f-0a1b2c3d4e5f" }).success).toBe(true);
+  });
+});

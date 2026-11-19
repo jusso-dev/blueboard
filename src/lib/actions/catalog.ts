@@ -21,7 +21,10 @@ export type ActionDef<S extends z.ZodTypeAny = z.ZodTypeAny> = {
 };
 
 const deviceId = z.string().regex(/^[0-9a-f]{40}$/i, "MDE machine id (40 hex chars)");
-const userRef = z.string().min(3).max(200).describe("Entra user object id or UPN");
+const userRef = z
+  .string()
+  .regex(/^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[^\s/\\?#@]+@[^\s/\\?#@]+\.[^\s/\\?#@]+)$/i, "Entra user object id or UPN")
+  .describe("Entra user object id or UPN");
 const comment = (ctx: { comment: string }) => ctx.comment.slice(0, 900);
 
 function def<S extends z.ZodTypeAny>(d: ActionDef<S>): ActionDef<S> {
@@ -196,7 +199,7 @@ export const ACTIONS = {
     destructive: true,
     schema: z
       .object({
-        incident_id: z.string().min(1).max(50).describe("Defender XDR incident id"),
+        incident_id: z.string().regex(/^\d{1,20}$/, "Defender XDR incident id (digits)").describe("Defender XDR incident id"),
         status: z.enum(["active", "inProgress", "resolved", "redirected"]).optional(),
         classification: z.enum(["truePositive", "falsePositive", "informationalExpectedActivity", "unknown"]).optional(),
         determination: z.string().max(100).optional(),
@@ -233,7 +236,7 @@ export const ACTIONS = {
     title: "Comment on incident (Defender XDR / Sentinel)",
     stage: "record",
     destructive: false,
-    schema: z.object({ incident_id: z.string().min(1).max(50), comment: z.string().min(1).max(30000) }),
+    schema: z.object({ incident_id: z.string().regex(/^\d{1,20}$/, "Defender XDR incident id (digits)"), comment: z.string().min(1).max(30000) }),
     targets: () => ({}),
     describe: (p) => `Add a comment to incident ${p.incident_id}`,
     run: (p) =>

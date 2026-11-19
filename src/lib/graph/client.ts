@@ -36,7 +36,11 @@ export async function msFetch<T = unknown>(
   const token = await cred().getToken(SCOPES[base]!);
   if (!token) throw new Error(`could not get token for ${base}`);
   const url = path.startsWith("https://") ? path : `${base}${path}`;
-  if (!url.startsWith(base)) throw new Error(`refusing to send token to ${url}`);
+  const parsed = new URL(url);
+  // Exact origin match (a prefix check would accept graph.microsoft.com.evil.com), and no dot-segments
+  // that fetch would normalise into a different endpoint.
+  if (parsed.origin !== base) throw new Error(`refusing to send token to ${parsed.origin}`);
+  if (/(^|\/)\.\.?(\/|$)/.test(path.split("?")[0]!) || /%2e%2e/i.test(path)) throw new Error("refusing path with dot-segments");
   for (let attempt = 0; ; attempt++) {
     const res = await fetch(url, {
       method: init.method ?? "GET",

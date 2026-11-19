@@ -145,7 +145,7 @@ export async function decideAction(p: Principal, id: string, decision: "approve"
 /** Run an approved action exactly once (claim via status transition), then post the result. */
 export async function execute(id: string) {
   const [claimed] = await sql<{ id: string }[]>`
-    update actions set status = 'running', updated_at = now() where id = ${id} and status = 'approved' returning id`;
+    update actions set status = 'running', started_at = now(), updated_at = now() where id = ${id} and status = 'approved' returning id`;
   if (!claimed) return;
   const a = (await getAction(id))!;
   const def = ACTIONS[a.kind];
@@ -158,14 +158,16 @@ export async function execute(id: string) {
   let result: unknown = null;
   let error: string | null = null;
   try {
-    result = config().BROKER_EXECUTE ? await def.run(a.params as never, ctx) : { dry_run: true, would: def.describe(a.params as never) };
+    // Re-validate stored params: never run a write against Defender from unchecked JSON.
+    const params = def.schema.parse(a.params);
+    result = config().BROKER_EXECUTE ? await def.run(params as never, ctx) : { dry_run: true, would: def.describe(params as never) };
     status = "succeeded";
   } catch (err) {
     status = "failed";
     error = err instanceof Error ? err.message : String(err);
   }
   await sql`update actions set status = ${status}, result = ${result === null ? null : sql.json(result as never)},
-            error = ${error}, updated_at = now() where id = ${id}`;
+            error = ${error}, finished_at = now(), updated_at = now() where id = ${id}`;
   await audit(null, `action.${status}`, id, { error });
   const board = await boardPrincipal();
   await postMessage(
@@ -177,7 +179,7 @@ export async function execute(id: string) {
       incident: a.incident_id ?? undefined,
       body:
         status === "succeeded"
-          ? `**${def.title}** ${config().BROKER_EXECUTE ? "completed" : "completed (dry run: BROKER_EXECUTE is off)"}: ${def.describe(a.params as never)}`
+          ? `**${def.title}** ${config().BROKER_EXECUTE ? "completed" : "completed (dry run: BROKER_EXECUTE is off)"}: ${def.describe(def.schema.parse(a.params) as never)}`
           : `**${def.title}** failed: ${error}`,
       payload: { action_id: id, status, result: summariseResult(result), error },
     },
@@ -191,4 +193,42 @@ function summariseResult(result: unknown) {
   const r = result as Record<string, unknown>;
   const keep = ["id", "type", "status", "requestor", "creationDateTimeUtc", "dry_run", "would", "reset"];
   return Object.fromEntries(Object.entries(r).filter(([k]) => keep.includes(k)));
+}
+
+/**
+ * Recovery for actions a crash or a failed follow-up step left behind. Runs on the ingest loop's leader.
+ *  - `approved` for over a minute: never started, so it is safe to run now.
+ *  - `running` for over 10 minutes: may or may not have reached Defender. Never re-run it blindly:
+ *    mark it failed and post so a person can check the device or account and re-request if needed.
+ */
+export async function recoverActions() {
+  const stuck = await sql<{ id: string }[]>`
+    select id from actions where status = 'approved' and updated_at < now() - interval '1 minute' order by created_at limit 20`;
+  for (const a of stuck) await execute(a.id);
+
+  const stale = await sql<{ id: string }[]>`
+    update actions set status = 'failed', finished_at = now(), updated_at = now(),
+      error = 'interrupted while running: outcome unknown, check Defender before re-requesting'
+    where status = 'running' and coalesce(started_at, updated_at) < now() - interval '10 minutes'
+    returning id`;
+  if (!stale.length) return { resumed: stuck.length, interrupted: 0 };
+  const board = await boardPrincipal();
+  for (const { id } of stale) {
+    const a = (await getAction(id))!;
+    await audit(null, "action.interrupted", id);
+    await postMessage(
+      board,
+      {
+        channel: "containment",
+        type: "action_result",
+        parent_id: a.request_message_id ?? undefined,
+        incident: a.incident_id ?? undefined,
+        body: `**${ACTIONS[a.kind].title}** was interrupted while running. Its outcome is unknown: check Defender before requesting it again.`,
+        payload: { action_id: id, status: "failed", error: a.error },
+      },
+      { system: true },
+    );
+    await emit({ kind: "action", id, status: "failed" });
+  }
+  return { resumed: stuck.length, interrupted: stale.length };
 }
