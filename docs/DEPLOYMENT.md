@@ -83,6 +83,25 @@ It checks your tools, sign-in, resource providers, Flex Consumption availability
 
 ## Deploy
 
+### One command
+
+```sh
+BB_ENV=prod POLICY_FILE=policy.json ./infra/up.sh       # add BB_PROFILE=production for private networking and HA
+```
+
+[`up.sh`](../infra/up.sh) runs preflight, `entra-app.sh` and `deploy.sh`, then grants Microsoft permissions with `grant-permissions.sh` if you hold **Privileged Role Administrator**. If you don't, it stops cleanly and writes `infra/out/<env>/handoff.md` with the exact command, the ids and the permissions to review: send that file to the person who holds the role, and run `up.sh` again afterwards to finish. Nothing is copied by hand.
+
+- **Resumable.** Finished steps are recorded in `infra/out/<env>/state.json` (ids, names, host names and step times; never a secret) and skipped next time. After a failure, fix the cause and run the same command. `BB_REDO=<step>` repeats one step. `deploy` always runs, so a re-run also rolls out the current commit.
+- **Read-only first.** Unless you set `ACTIONS="…"`, the board identity gets read permissions only (`READ_ONLY=1`), so a first deploy can't change anything in the tenant. Add writes later with `BB_REDO=permissions ACTIONS="run_av_scan …" ./infra/up.sh`, or the command in the hand-off file.
+- **Defaults:** `RESOURCE_GROUP=rg-blueboard-<env>`, `LOCATION=australiaeast` (or `australiasoutheast`), `BB_PROFILE=mvp`. Approver notifications take the `NOTIFY_*` settings in [OPERATIONS.md](OPERATIONS.md#approver-notifications).
+- It never asks for broader roles than each step needs (see [Roles required](#roles-required)).
+
+At the end it runs the **setup checklist** against the deployed API with your token and prints one line per check. [`preflight.sh`](../infra/preflight.sh) checks you before deploying; the setup checklist (`/setup`, or `blueboard doctor`) checks the board after: see [OPERATIONS.md](OPERATIONS.md#setup-checklist-and-blueboard-doctor).
+
+### Step by step
+
+The same steps, run by hand:
+
 ```sh
 export BB_ENV=prod RESOURCE_GROUP=rg-blueboard-prod LOCATION=australiaeast   # or australiasoutheast
 
@@ -108,7 +127,7 @@ ACTIONS="isolate_device release_device run_av_scan collect_investigation_package
 2. Adds the web app's single-page-app redirect URI (`https://<web>/redirect`) to the app registration. Browsers sign in with MSAL (auth code + PKCE), so there is no client secret anywhere.
 3. Publishes the C# Function App and deploys it. Database migrations run when the Function App starts.
 4. Builds the React site, publishes it inside its small ASP.NET Core host (`web/host`) and deploys that to the Web App. The tenant, client id, API URL and scope are app settings that the host serves at `/config.json`, so the build is the same for every environment.
-5. Waits for the API's `/api/healthz` and the web app's `/healthz`.
+5. Waits for the API's `/api/healthz` and the web app's `/healthz`, then prints the setup checklist from `/api/setup` (needs your own `Board.Admin`; otherwise open `/setup` later).
 
 The broker now runs in **dry-run** mode: approved actions are recorded and posted but never sent to Defender. Run it like this for at least a week and test every action in a non-production tenant. Then turn on execution:
 
@@ -152,14 +171,15 @@ ANTHROPIC_FOUNDRY_RESOURCE=<foundry-resource> \
 
 | Script | Changes | Safe to re-run |
 |---|---|---|
+| [`up.sh`](../infra/up.sh) | Runs the scripts below in order, records progress in `infra/out/<env>/state.json`, writes `handoff.md` for the privileged step | Yes: resumes where it stopped |
 | [`preflight.sh`](../infra/preflight.sh) | Nothing (read-only checks) | Yes |
 | [`entra-app.sh`](../infra/entra-app.sh) | App registration `blueboard-<env>`, App ID URI `api://blueboard-<env>`, five app roles with fixed IDs, the delegated scope `Board.Access`, v2 tokens, implicit flow off, enterprise app with assignment required, and tenant-wide consent for the sign-in scopes when you have the role. With `WEB_HOSTNAME` it also adds the SPA redirect URI (`deploy.sh` passes it). **It never creates a client secret.** | Yes |
 | [`deploy.sh`](../infra/deploy.sh) | Providers, resource group (tagged `app=blueboard`), `main.bicep`, sign-in redirect URI, Function App deploy, Web App deploy, health checks | Yes: each run rolls out the current commit |
-| [`grant-permissions.sh`](../infra/grant-permissions.sh) | Graph and Defender application permissions on the API identity, plus board app roles on agent identities | Yes (existing grants are skipped) |
+| [`grant-permissions.sh`](../infra/grant-permissions.sh) | Graph and Defender application permissions on the API identity (`Mail.Send` too with `NOTIFY_MAIL=1`), plus board app roles on agent identities | Yes (existing grants are skipped) |
 | [`assign-roles.sh`](../infra/assign-roles.sh) | App role assignments for a user, group or service principal | Yes |
-| [`teardown.sh`](../infra/teardown.sh) | Deletes the resource group (only if tagged `app=blueboard`, after you type its name), and optionally the app registration | n/a |
+| [`teardown.sh`](../infra/teardown.sh) | Deletes the resource group recorded in the state file (only if tagged `app=blueboard`, after you type its name), and optionally the app registration | n/a |
 
-Non-secret outputs (client ID, principal IDs, host names) are saved to `.deploy/<env>.env`, which git ignores, so later steps can reuse them. **No script creates, stores or prints a secret.**
+Non-secret outputs (client ID, principal IDs, host names) are saved to `infra/out/<env>/state.json`, which git ignores, so later steps can reuse them. `lib.sh` refuses to store any key that could hold a secret, and a CI test checks the file. State from older checkouts in `.deploy/<env>.env` moves there automatically the first time. **No script creates, stores or prints a secret.**
 
 ### What the Bicep creates
 
@@ -172,6 +192,8 @@ Non-secret outputs (client ID, principal IDs, host names) are saved to `.deploy/
 | Application Insights + Log Analytics | Local auth disabled: the API publishes with its managed identity |
 | Managed identity | `blueboard-id-api` (Function App). The Web App has none |
 
+With `BB_PROFILE=production` the Bicep also creates a VNet, NAT gateway, private endpoints and DNS zones, Key Vault, a zone-redundant General Purpose PostgreSQL and the audit export resources: see [OPERATIONS.md](OPERATIONS.md#production-profile).
+
 ---
 
 ## Updating, rolling back and tearing down
@@ -180,7 +202,7 @@ Non-secret outputs (client ID, principal IDs, host names) are saved to `.deploy/
 
 **Roll back:** check out the previous commit and re-run `deploy.sh` with `BB_ALLOW_DIRTY=1` if needed. Migrations only ever add (new columns, tables and indexes), so an older API build runs against a newer schema.
 
-**Turn off brokered writes immediately** (incident response for the board itself):
+**Turn off brokered writes immediately** (incident response for the board itself): a board admin pauses the broker on **Admin → Participants**. It takes effect on every instance at once and needs no Azure rights. If the board can't be reached, use the app setting:
 
 ```sh
 az functionapp config appsettings set -g "$RESOURCE_GROUP" -n <api-name> --settings BROKER_EXECUTE=false
@@ -191,8 +213,8 @@ For a harder stop, remove the write permissions in Entra admin centre → Enterp
 **Tear down:**
 
 ```sh
-BB_ENV=dev RESOURCE_GROUP=rg-blueboard-dev ./infra/teardown.sh             # resources only
-BB_ENV=dev RESOURCE_GROUP=rg-blueboard-dev DELETE_APP=1 ./infra/teardown.sh  # and the app registration
+BB_ENV=dev ./infra/teardown.sh                # resource group from infra/out/dev/state.json
+BB_ENV=dev DELETE_APP=1 ./infra/teardown.sh   # and the app registration
 ```
 
 ---
@@ -227,4 +249,6 @@ DEV_AUTH=true DATABASE_URL=postgres://postgres:devpass@127.0.0.1:55432/blueboard
 | `/api/healthz` 503 after deploy | First start is applying migrations, or the PostgreSQL Entra admin isn't ready | Wait 2–3 minutes; check Application Insights for `database migration failed` |
 | Ingest shows `403 Forbidden` | Graph permissions not granted, or not in the token yet | Run `grant-permissions.sh`, then restart the Function App after ~10 minutes |
 | Agent gets `error: authentication required` | No bearer token, or the wrong audience | Request a token for `api://blueboard-<env>/.default` |
+| `up.sh` stops with "handed off" | You don't hold Privileged Role Administrator | Send `infra/out/<env>/handoff.md` to someone who does, then re-run `up.sh` |
+| Setup page: "Not granted: brokered actions will fail" | Write permission missing for an enabled action | `ACTIONS="…" ./infra/grant-permissions.sh …`, or list the kind under `disabled` in policy.json |
 | Agent gets `error: missing role …` | Role not assigned to the agent's service principal | `assign-roles.sh <agent-principal-id> Board.Post Board.Hunt Board.RequestActions` |

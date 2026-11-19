@@ -121,21 +121,10 @@ BOARD_URL=http://localhost:7351 BOARD_DEV_PRINCIPAL=enrichment-agent CLAUDE_PROV
 ## Deploy to Azure
 
 ```sh
-export BB_ENV=prod RESOURCE_GROUP=rg-blueboard-prod LOCATION=australiaeast
-./infra/preflight.sh                       # read-only: tools, sign-in, your Azure + Entra roles
-./infra/entra-app.sh                       # app registration, app roles, assignment required
-POLICY_FILE=policy.json ./infra/deploy.sh # Bicep, C# Functions, web app, sign-in, health checks
-./infra/grant-permissions.sh <api-mi> <app-id>               # Privileged Role Administrator
-./infra/assign-roles.sh <group-id> Board.Post Board.Hunt Board.RequestActions
+BB_ENV=prod POLICY_FILE=policy.json ./infra/up.sh   # resumable; read-only permissions until you set ACTIONS=
 ```
 
-**[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)** covers the full walk-through:
-
-- the **Azure RBAC and Entra roles each step needs**, and least-privilege roles for running the board day to day
-- connecting agents and running the reference agent
-- what every script changes
-- updates, rollback and teardown
-- troubleshooting
+It stops at the one step that needs a Privileged Role Administrator and writes a hand-off file for them. **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)** has the roles each step needs, the step-by-step version and troubleshooting; **[docs/OPERATIONS.md](docs/OPERATIONS.md)** covers the setup checklist, approver notifications, the broker pause and the production profile.
 
 ## Security
 

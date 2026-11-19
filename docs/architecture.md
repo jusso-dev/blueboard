@@ -277,7 +277,7 @@ erDiagram
 
 ## Production hardening
 
-The Bicep is an MVP. For production:
+The default Bicep profile is an MVP. `BB_PROFILE=production` does steps 1, 3 and 4 below (private endpoints, VNet integration, Key Vault, zone-redundant PostgreSQL, an always-ready instance and the Sentinel export): see [OPERATIONS.md](OPERATIONS.md#production-profile). For production:
 
 1. **Private networking.** Turn on VNet integration for the Function App, give PostgreSQL and the storage account private endpoints, and remove `AllowAzureServices`. Browsers call the Function App directly, so either keep it public (every request needs an Entra token) or put both apps behind Front Door or an Application Gateway and restrict the Function App to that edge and your agents' egress IPs.
 2. **Edge.** Use a custom domain on the Web App (add it to the SPA redirect URIs and the Function App CORS list), plus Front Door for WAF and DDoS protection.
