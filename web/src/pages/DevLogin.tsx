@@ -1,8 +1,9 @@
 import { useNavigate } from "react-router";
 
 /**
- * Local development only (not in production builds). The API accepts an x-dev-principal header when it
- * runs with DEV_AUTH=true, which Azure refuses. The choice is kept in sessionStorage and sent on every call.
+ * Local development and the local demo only: the route exists only when sign-in is in dev mode (Vite dev server,
+ * or a demo host whose API confirms DEV_AUTH). The API accepts an x-dev-principal header when it runs with
+ * DEV_AUTH=true, which Azure refuses. The choice is kept in sessionStorage and sent on every call.
  */
 const PEOPLE = [
   { handle: "analyst", label: "SOC Analyst (dev)", note: "human · all roles" },

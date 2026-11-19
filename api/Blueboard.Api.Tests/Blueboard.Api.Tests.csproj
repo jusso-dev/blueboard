@@ -8,5 +8,6 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../Blueboard.Api/Blueboard.Api.csproj" />
+    <ProjectReference Include="../../web/host/Blueboard.Web.csproj" />
   </ItemGroup>
 </Project>

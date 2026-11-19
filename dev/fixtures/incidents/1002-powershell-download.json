@@ -1,0 +1,44 @@
+{
+  "_minutesAgo": 25,
+  "id": "1002",
+  "displayName": "Suspicious PowerShell download cradle on ws-0142.contoso.com",
+  "severity": "high",
+  "status": "active",
+  "classification": null,
+  "determination": null,
+  "assignedTo": null,
+  "alerts": [
+    {
+      "id": "da1002-1",
+      "title": "Suspicious PowerShell command line",
+      "severity": "high",
+      "category": "Execution",
+      "serviceSource": "microsoftDefenderForEndpoint",
+      "detectionSource": "microsoftDefenderForEndpoint",
+      "mitreTechniques": ["T1059.001", "T1105"],
+      "description": "powershell.exe ran an encoded command that downloaded and ran a script from an external host.",
+      "evidence": [
+        {
+          "@odata.type": "#microsoft.graph.security.deviceEvidence",
+          "mdeDeviceId": "7c3f9e2a1b8d4c6e0f5a2b9d8c7e6f1a3b4c5d6e",
+          "deviceDnsName": "ws-0142.contoso.com",
+          "hostName": "ws-0142"
+        },
+        {
+          "@odata.type": "#microsoft.graph.security.userEvidence",
+          "userAccount": { "userPrincipalName": "sam.patel@contoso.com", "azureAdUserId": "0b6c2f1e-1002-4a7b-9c3d-000000000002", "displayName": "Sam Patel", "accountName": "spatel" }
+        },
+        {
+          "@odata.type": "#microsoft.graph.security.processEvidence",
+          "imageFile": { "fileName": "powershell.exe", "sha256": "de96a6e69944335375dc1ac238336066889d9ffc7d73628ef4fe1b1b160ab32c", "sha1": "6cbce4a295c163791b60fc23d285e6d84f28ee4c" }
+        },
+        {
+          "@odata.type": "#microsoft.graph.security.fileEvidence",
+          "fileDetails": { "fileName": "update-check.ps1", "sha256": "4f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b4a3f2e1d0c9b8a7f6e5d4c3b", "sha1": "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b" }
+        },
+        { "@odata.type": "#microsoft.graph.security.urlEvidence", "url": "https://cdn-update-check.example/update-check.ps1" },
+        { "@odata.type": "#microsoft.graph.security.ipEvidence", "ipAddress": "203.0.113.77" }
+      ]
+    }
+  ]
+}

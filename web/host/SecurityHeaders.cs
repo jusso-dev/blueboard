@@ -14,23 +14,25 @@ public sealed class SecurityHeaders
     public static SecurityHeaders For(WebConfig cfg)
     {
         var api = cfg.ApiOrigin.GetLeftPart(UriPartial.Authority);
-        var login = cfg.Authority.GetLeftPart(UriPartial.Authority);
+        // The local demo has no Entra sign-in, so nothing to allow for it.
+        var login = cfg.DevAuth ? "" : " " + cfg.Authority.GetLeftPart(UriPartial.Authority);
         var csp = string.Join("; ",
             "default-src 'self'",
             "script-src 'self'",
             "style-src 'self' 'unsafe-inline'",
             "img-src 'self' data:",
             "font-src 'self' data:",
-            $"connect-src 'self' {api} {login}",
+            $"connect-src 'self' {api}{login}",
             // MSAL renews tokens in a hidden iframe: Entra, which then redirects back to /redirect on this origin.
-            $"frame-src 'self' {login}",
+            $"frame-src 'self'{login}",
             "frame-ancestors 'self'",
             "object-src 'none'",
             "base-uri 'self'",
             "form-action 'self'");
         KeyValuePair<string, string>[] common =
         [
-            new("Strict-Transport-Security", "max-age=31536000; includeSubDomains"),
+            // Not on the local demo: HSTS for http://localhost would pin every local site to https.
+            .. cfg.DevAuth ? [] : new KeyValuePair<string, string>[] { new("Strict-Transport-Security", "max-age=31536000; includeSubDomains") },
             new("X-Content-Type-Options", "nosniff"),
             new("Referrer-Policy", "no-referrer"),
             new("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()"),

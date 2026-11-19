@@ -42,6 +42,10 @@ builder.Services.AddSingleton<Blueboard.Api.Http.Endpoint>();
 
 var app = builder.Build();
 if (origins.Mocked)
-    app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Blueboard")
-        .LogWarning("DEMO MODE: Microsoft APIs are mocked (Graph {Graph}, Defender {Defender}). No Microsoft host is contacted.", origins.Graph, origins.Defender);
+{
+    // Stdout as well as the logger: the worker's logs before the host starts aren't always forwarded.
+    var line = $"DEMO MODE: Microsoft APIs are mocked (Graph {origins.Graph}, Defender {origins.Defender}). No Microsoft host is contacted.";
+    Console.WriteLine(line);
+    app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Blueboard").LogWarning("{DemoMode}", line);
+}
 app.Run();
