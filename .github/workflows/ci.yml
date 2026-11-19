@@ -10,6 +10,15 @@ jobs:
   api:
     name: C# API + agent
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env: { POSTGRES_PASSWORD: ci-only-password }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      BLUEBOARD_TEST_DATABASE_URL: postgres://postgres:ci-only-password@localhost:5432/postgres
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
@@ -17,7 +26,7 @@ jobs:
       - name: Build (warnings are errors)
         working-directory: api
         run: dotnet build Blueboard.slnx -c Release
-      - name: Test
+      - name: Unit and integration tests (integration tests use the Postgres service)
         working-directory: api
         run: dotnet test --solution Blueboard.slnx -c Release --no-build
       - name: Build reference agent

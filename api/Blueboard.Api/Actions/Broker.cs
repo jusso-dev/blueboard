@@ -77,20 +77,29 @@ public sealed class Broker(Db db, Audit audit, BoardService board, MsClient ms, 
         var decision = PolicyEngine.Evaluate(def, prms, incident, policy);
         var status = decision.Outcome switch { Outcome.Reject => "rejected", Outcome.Auto => "approved", _ => "pending_approval" };
 
-        await using var ins = db.Command("""
-            insert into actions (kind, params, incident_id, requested_by, justification, status, requires_approval, policy_notes)
-            values (@k, @p, @i, @r, @j, @s, @ra, @n) returning id
-            """).With("k", def.Kind).WithJson("p", prms).With("i", incidentId).With("r", p.Id).With("j", req.Justification)
-            .With("s", status).With("ra", decision.Outcome == Outcome.NeedsApproval).With("n", decision.Notes.ToArray());
-        var actionId = (Guid)(await ins.ExecuteScalarAsync(ct))!;
-        await audit.WriteAsync(p.Id, "action.requested", actionId.ToString(), new { kind = def.Kind, @params = prms, outcome = decision.Outcome.ToString(), notes = decision.Notes }, ct);
-
+        // The action row, its board message and the link between them commit together (issue #4): a crash can't
+        // leave an action without its message, or a message without its action.
         var label = status switch { "rejected" => "REJECTED by policy", "approved" => "auto-approved (non-destructive)", _ => "awaiting human approval" };
         var body = $"@{p.Handle} requests **{def.Title}**: {def.Describe(prms)}\n\n> {req.Justification.Replace("\n", "\n> ")}\n\nStatus: **{label}**"
                    + (decision.Notes.Count > 0 ? "\n\nPolicy notes:\n" + string.Join("\n", decision.Notes.Select(n => $"- {n}")) : "");
-        var msg = await board.PostAsync(await system.GetAsync(ct), new PostInput("containment", body, "action_request",
-            Json.Element(new { action_id = actionId, kind = def.Kind, @params = prms, status, policy_notes = decision.Notes }), null, incidentId?.ToString()), system: true, ct);
-        await using (var up = db.Command("update actions set request_message_id = @m where id = @id").With("m", msg.Id).With("id", actionId)) await up.ExecuteNonQueryAsync(ct);
+        var sys = await system.GetAsync(ct);
+        Guid actionId;
+        await using (var conn = await db.OpenAsync(ct))
+        await using (var tx = await conn.BeginTransactionAsync(ct))
+        {
+            await using (var ins = new NpgsqlCommand("""
+                insert into actions (kind, params, incident_id, requested_by, justification, status, requires_approval, policy_notes)
+                values (@k, @p, @i, @r, @j, @s, @ra, @n) returning id
+                """, conn, tx).With("k", def.Kind).WithJson("p", prms).With("i", incidentId).With("r", p.Id).With("j", req.Justification)
+                .With("s", status).With("ra", decision.Outcome == Outcome.NeedsApproval).With("n", decision.Notes.ToArray()))
+                actionId = (Guid)(await ins.ExecuteScalarAsync(ct))!;
+            var msgId = await board.PostInTransactionAsync(conn, tx, sys, new PostInput("containment", body, "action_request",
+                Json.Element(new { action_id = actionId, kind = def.Kind, @params = prms, status, policy_notes = decision.Notes }), null, incidentId?.ToString()), system: true, ct);
+            await using (var up = new NpgsqlCommand("update actions set request_message_id = @m where id = @id", conn, tx).With("m", msgId).With("id", actionId))
+                await up.ExecuteNonQueryAsync(ct);
+            await tx.CommitAsync(ct);
+        }
+        await audit.WriteAsync(p.Id, "action.requested", actionId.ToString(), new { kind = def.Kind, @params = prms, outcome = decision.Outcome.ToString(), notes = decision.Notes }, ct);
 
         if (status == "approved") await ExecuteAsync(actionId, ct);
         return (await GetAsync(actionId, ct))!;
@@ -103,23 +112,37 @@ public sealed class Broker(Db db, Audit audit, BoardService board, MsClient ms, 
         if (decision is not ("approve" or "deny")) throw new BoardException("decision must be approve or deny");
         if (note is { Length: > 2000 }) throw new BoardException("note too long");
         var status = decision == "approve" ? "approved" : "denied";
-        await using (var cmd = db.Command("""
-            update actions set status = @s, decided_by = @p, decided_at = now(), decision_note = @n, updated_at = now()
-            where id = @id and status = 'pending_approval' and requested_by <> @p returning id
-            """).With("s", status).With("p", p.Id).With("n", note).With("id", id))
+        var sys = await system.GetAsync(ct);
+        // The decision and its status message commit together (issue #4).
+        await using (var conn = await db.OpenAsync(ct))
+        await using (var tx = await conn.BeginTransactionAsync(ct))
         {
-            if (await cmd.ExecuteScalarAsync(ct) is null)
+            await using (var cmd = new NpgsqlCommand("""
+                update actions set status = @s, decided_by = @p, decided_at = now(), decision_note = @n, updated_at = now()
+                where id = @id and status = 'pending_approval' and requested_by <> @p returning kind, request_message_id, incident_id
+                """, conn, tx).With("s", status).With("p", p.Id).With("n", note).With("id", id))
             {
-                var a = await GetAsync(id, ct) ?? throw BoardException.NotFound("action");
-                if (a.RequestedBy == p.Handle) throw BoardException.Forbidden("you cannot approve your own request");
-                throw BoardException.Conflict($"action is {a.Status}");
+                string kind; Guid? requestMessageId; Guid? incidentId;
+                await using (var r = await cmd.ExecuteReaderAsync(ct))
+                {
+                    if (!await r.ReadAsync(ct))
+                    {
+                        await r.DisposeAsync();
+                        await tx.RollbackAsync(ct);
+                        var a = await GetAsync(id, ct) ?? throw BoardException.NotFound("action");
+                        if (a.RequestedBy == p.Handle) throw BoardException.Forbidden("you cannot approve your own request");
+                        throw BoardException.Conflict($"action is {a.Status}");
+                    }
+                    kind = r.GetString(0); requestMessageId = r.Get<Guid?>("request_message_id"); incidentId = r.Get<Guid?>("incident_id");
+                }
+                var requester = (await GetAsync(id, ct))!.RequestedBy;
+                await board.PostInTransactionAsync(conn, tx, sys, new PostInput("containment",
+                    $"@{p.Handle} **{status}** {Catalog.Get(kind).Title}{(note is null ? "" : $": {note}")} (requested by @{requester})",
+                    "status", Json.Element(new { state = $"action_{status}", action_id = id }), requestMessageId, incidentId?.ToString()), system: true, ct);
             }
+            await tx.CommitAsync(ct);
         }
         await audit.WriteAsync(p.Id, $"action.{status}", id.ToString(), new { note }, ct);
-        var row = (await GetAsync(id, ct))!;
-        await board.PostAsync(await system.GetAsync(ct), new PostInput("containment",
-            $"@{p.Handle} **{status}** {Catalog.Get(row.Kind).Title}{(note is null ? "" : $": {note}")} (requested by @{row.RequestedBy})",
-            "status", Json.Element(new { state = $"action_{status}", action_id = id }), row.RequestMessageId, row.IncidentId?.ToString()), system: true, ct);
         if (status == "approved") await ExecuteAsync(id, ct);
         return (await GetAsync(id, ct))!;
     }
@@ -186,6 +209,22 @@ public sealed class Broker(Db db, Audit audit, BoardService board, MsClient ms, 
             await board.PostAsync(await system.GetAsync(ct), new PostInput("containment",
                 $"**{Catalog.Get(a.Kind).Title}** was interrupted while running. Its outcome is unknown: check Defender before requesting it again.",
                 "action_result", Json.Element(new { action_id = id, status = "failed", error = a.Error }), a.RequestMessageId, a.IncidentId?.ToString()), system: true, ct);
+        }
+        // Actions filed before requests became transactional could be left without their board message.
+        var orphans = new List<Guid>();
+        await using (var cmd = db.Command("select id from actions where request_message_id is null and created_at < now() - interval '1 minute' order by created_at limit 20"))
+        await using (var r = await cmd.ExecuteReaderAsync(ct))
+            while (await r.ReadAsync(ct)) orphans.Add(r.GetGuid(0));
+        foreach (var id in orphans)
+        {
+            var a = (await GetAsync(id, ct))!;
+            var def = Catalog.Get(a.Kind);
+            var msg = await board.PostAsync(await system.GetAsync(ct), new PostInput("containment",
+                $"@{a.RequestedBy} requested **{def.Title}** (status: {a.Status}). This request was recovered after an interruption.",
+                "action_request", Json.Element(new { action_id = id, kind = a.Kind, @params = a.Params, status = a.Status, policy_notes = a.PolicyNotes }),
+                null, a.IncidentId?.ToString()), system: true, ct);
+            await using var up = db.Command("update actions set request_message_id = @m where id = @id and request_message_id is null").With("m", msg.Id).With("id", id);
+            await up.ExecuteNonQueryAsync(ct);
         }
         return (stuck.Count, stale.Count);
     }

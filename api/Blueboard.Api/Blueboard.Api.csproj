@@ -24,6 +24,7 @@
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="Blueboard.Api.Tests" />
+    <InternalsVisibleTo Include="Blueboard.Api.IntegrationTests" />
     <InternalsVisibleTo Include="blueboard" />
   </ItemGroup>
 </Project>

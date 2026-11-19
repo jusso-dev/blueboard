@@ -1,5 +1,6 @@
 <Solution>
   <Project Path="Blueboard.Api/Blueboard.Api.csproj" />
   <Project Path="Blueboard.Api.Tests/Blueboard.Api.Tests.csproj" />
+  <Project Path="Blueboard.Api.IntegrationTests/Blueboard.Api.IntegrationTests.csproj" />
   <Project Path="Blueboard.Tools/Blueboard.Tools.csproj" />
 </Solution>

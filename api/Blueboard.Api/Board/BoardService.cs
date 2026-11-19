@@ -121,7 +121,28 @@ public sealed partial class BoardService(Db db, Audit audit, Settings settings)
         return await cmd.ExecuteScalarAsync(ct) is Guid id ? id : throw BoardException.NotFound($"incident {reference}");
     }
 
+    /// <summary>
+    /// Feed ordering lock. Every message insert takes it (transaction-scoped) before its seq is allocated, so
+    /// messages commit in seq order. A reader therefore never sees seq n+1 while seq n is still in flight, and an
+    /// agent's after_seq cursor can't skip a message (issue #4). Board write volume is low; the lock is held only
+    /// for the insert transaction.
+    /// </summary>
+    internal const long FeedLock = 7340003;
+
     public async Task<Message> PostAsync(Principal author, PostInput input, bool system = false, CancellationToken ct = default)
+    {
+        await using var conn = await db.OpenAsync(ct);
+        await using var tx = await conn.BeginTransactionAsync(ct);
+        var id = await PostInTransactionAsync(conn, tx, author, input, system, ct);
+        await tx.CommitAsync(ct);
+        return (await GetAsync(id, ct))!;
+    }
+
+    /// <summary>
+    /// Validates and inserts a message inside the caller's transaction (the broker uses this so an action and its
+    /// board message commit together). Returns the new message id; the message becomes visible on commit.
+    /// </summary>
+    internal async Task<Guid> PostInTransactionAsync(NpgsqlConnection conn, NpgsqlTransaction tx, Principal author, PostInput input, bool system, CancellationToken ct)
     {
         var type = input.Type ?? "chat";
         if (!system)
@@ -139,7 +160,7 @@ public sealed partial class BoardService(Db db, Audit audit, Settings settings)
         var incidentId = await ResolveIncidentAsync(input.Incident, ct);
         if (input.ParentId is { } parentId)
         {
-            await using var pc = db.Command("select channel_id, incident_id, parent_id from messages where id = @id").With("id", parentId);
+            await using var pc = new NpgsqlCommand("select channel_id, incident_id, parent_id from messages where id = @id", conn, tx).With("id", parentId);
             await using var r = await pc.ExecuteReaderAsync(ct);
             if (!await r.ReadAsync(ct)) throw BoardException.NotFound("parent message");
             if (!r.IsDBNull(2)) throw new BoardException("reply to the thread root, not to a reply");
@@ -147,13 +168,14 @@ public sealed partial class BoardService(Db db, Audit audit, Settings settings)
             incidentId ??= r.Get<Guid?>("incident_id");
         }
 
-        await using var cmd = db.Command("""
+        await using (var lk = new NpgsqlCommand("select pg_advisory_xact_lock(@k)", conn, tx).With("k", FeedLock))
+            await lk.ExecuteNonQueryAsync(ct);
+        await using var cmd = new NpgsqlCommand("""
             insert into messages (channel_id, author_id, parent_id, incident_id, type, body, payload, mentions)
             values (@c, @a, @p, @i, @t, @b, @pl, @m) returning id
-            """).With("c", channelId).With("a", author.Id).With("p", input.ParentId).With("i", incidentId)
+            """, conn, tx).With("c", channelId).With("a", author.Id).With("p", input.ParentId).With("i", incidentId)
                 .With("t", type).With("b", input.Body).WithJson("pl", payload).With("m", ParseMentions(input.Body));
-        var id = (Guid)(await cmd.ExecuteScalarAsync(ct))!;
-        return (await GetAsync(id, ct))!;
+        return (Guid)(await cmd.ExecuteScalarAsync(ct))!;
     }
 
     public async Task<Message?> GetAsync(Guid id, CancellationToken ct = default)
