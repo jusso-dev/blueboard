@@ -4,6 +4,7 @@ using Blueboard.Api.Board;
 using Blueboard.Api.Core;
 using Blueboard.Api.Data;
 using Blueboard.Api.Graph;
+using Blueboard.Api.Ops;
 using Microsoft.Azure.Functions.Worker.Builder;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -27,6 +28,12 @@ builder.Services.AddSingleton<Reporting>();
 builder.Services.AddSingleton<Enrichment>();
 builder.Services.AddSingleton<Ingest>();
 builder.Services.AddSingleton<Migrator>();
+// Outbound notifications and audit export: no redirects (a redirect could leave the host allowlist), short timeouts.
+static HttpMessageHandler NoRedirects() => new SocketsHttpHandler { AllowAutoRedirect = false, ConnectTimeout = TimeSpan.FromSeconds(10) };
+builder.Services.AddHttpClient<Notifier>().ConfigurePrimaryHttpMessageHandler(NoRedirects);
+builder.Services.AddHttpClient<AuditExporter>().ConfigurePrimaryHttpMessageHandler(NoRedirects);
+builder.Services.AddSingleton<Setup>();
+builder.Services.AddSingleton<Participants>();
 builder.Services.AddHostedService<MigrateOnStart>();
 builder.Services.AddSingleton<Blueboard.Api.Http.Endpoint>();
 

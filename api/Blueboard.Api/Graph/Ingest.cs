@@ -7,6 +7,7 @@ using Blueboard.Api.Data;
 namespace Blueboard.Api.Graph;
 
 public enum UpsertOutcome { Created, Updated, Unchanged }
+public sealed record IngestResult(string Since, int Fetched, int Created, int Updated, int Unchanged);
 
 /// <summary>
 /// Polls Graph /security/incidents (Defender XDR + Sentinel) and announces new or changed incidents in
@@ -14,9 +15,9 @@ public enum UpsertOutcome { Created, Updated, Unchanged }
 /// </summary>
 public sealed class Ingest(Db db, BoardService board, MsClient ms, SystemPrincipal system, Settings settings)
 {
-    private const string CursorKey = "ingest.lastUpdateDateTime";
+    private const string CursorKey = KvState.IngestCursor;
 
-    public async Task<object> RunOnceAsync(CancellationToken ct = default)
+    public async Task<IngestResult> RunOnceAsync(CancellationToken ct = default)
     {
         var since = await GetCursorAsync(ct);
         var incidents = new List<JsonElement>();
@@ -42,7 +43,7 @@ public sealed class Ingest(Db db, BoardService board, MsClient ms, SystemPrincip
             if (Str(inc, "lastUpdateDateTime") is { } u && string.CompareOrdinal(u, max) > 0) max = u;
         }
         if (max != since) await SetCursorAsync(max, ct);
-        return new { since, fetched = incidents.Count, created, updated, unchanged };
+        return new IngestResult(since, incidents.Count, created, updated, unchanged);
     }
 
     public async Task<UpsertOutcome> UpsertAsync(JsonElement inc, CancellationToken ct = default)

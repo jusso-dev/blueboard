@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.Json.Serialization;
 using Blueboard.Api.Core;
 using Blueboard.Api.Graph;
 
@@ -15,10 +16,16 @@ public sealed record Policy
     public string[] ProtectedIndicators { get; init; } = [];
     public bool RequireTargetInIncident { get; init; } = true;
 
+    /// <summary>Where this policy was loaded from (setup page), or null for the built-in default. Not a policy key.</summary>
+    [JsonIgnore] public string? Source { get; init; }
+    /// <summary>A policy was configured but its file is missing, so the default is in force.</summary>
+    [JsonIgnore] public bool Missing { get; init; }
+
     public static Policy Load(Settings settings)
     {
-        if (settings.PolicyFile is not { } path || !File.Exists(path)) return new Policy();
-        return JsonSerializer.Deserialize<Policy>(File.ReadAllText(path), Json.Options) ?? new Policy();
+        if (settings.PolicyFile is not { } path) return new Policy();
+        if (!File.Exists(path)) return new Policy { Missing = true };
+        return (JsonSerializer.Deserialize<Policy>(File.ReadAllText(path), Json.Options) ?? new Policy()) with { Source = settings.PolicySource ?? path };
     }
 }
 

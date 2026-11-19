@@ -45,6 +45,19 @@ public sealed partial class MsClient(HttpClient http, TokenCredential? credentia
         return uri;
     }
 
+    /// <summary>
+    /// Application permissions the managed identity's token for this API carries (its "roles" claim). Lets the setup
+    /// checks see which writes would work without calling a write endpoint. The token itself is never returned or logged.
+    /// </summary>
+    public async Task<string[]> TokenRolesAsync(MsApi api, CancellationToken ct = default)
+    {
+        var token = await _cred.GetTokenAsync(new TokenRequestContext([Target(api).Scope]), ct);
+        return RolesOf(token.Token);
+    }
+
+    internal static string[] RolesOf(string jwt) =>
+        new Microsoft.IdentityModel.JsonWebTokens.JsonWebToken(jwt).Claims.Where(c => c.Type == "roles").Select(c => c.Value).Order(StringComparer.Ordinal).ToArray();
+
     public async Task<JsonElement?> SendAsync(MsApi api, string pathOrUrl, HttpMethod? method = null, object? body = null, CancellationToken ct = default)
     {
         var uri = BuildUri(api, pathOrUrl);

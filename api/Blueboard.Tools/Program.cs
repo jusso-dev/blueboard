@@ -4,9 +4,11 @@ using Blueboard.Api.Board;
 using Blueboard.Api.Core;
 using Blueboard.Api.Data;
 using Blueboard.Api.Graph;
+using Blueboard.Api.Ops;
 
 // blueboard migrate                 apply db/migrations (DATABASE_URL, or PGHOST + PG_ENTRA_AUTH=true)
 // blueboard seed-dev [--sample]     local principals with roles, plus an optional sample incident (refused in Azure)
+// blueboard doctor [--json]         the setup checklist (same checks as /api/setup); exit 1 if any check failed
 var cmd = args.FirstOrDefault() ?? "help";
 var settings = Settings.FromEnvironment();
 await using var db = new Db(settings);
@@ -35,8 +37,19 @@ switch (cmd)
         Console.WriteLine("seeded");
         break;
 
+    case "doctor":
+    {
+        // Run with the board's own settings and identity (on the Function App, or locally with az login as a stand-in).
+        var http = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+        var ms = new MsClient(http);
+        var notifier = new Notifier(new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false }), db, new Audit(db), ms, settings);
+        var report = await new Setup(db, settings, Policy.Load(settings), ms, notifier).RunAsync();
+        Console.Write(args.Contains("--json") ? Json.Serialize(report) + "\n" : Setup.Format(report));
+        return report.Ok ? 0 : 1;
+    }
+
     default:
-        Console.WriteLine("usage: blueboard migrate | seed-dev [--sample]");
+        Console.WriteLine("usage: blueboard migrate | seed-dev [--sample] | doctor [--json]");
         return cmd == "help" ? 0 : 1;
 }
 return 0;
