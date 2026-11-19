@@ -71,6 +71,12 @@ public sealed record LookupInput(
     [Description("user | device | ip | file | url")][AllowedValues("user", "device", "ip", "file", "url")] string Kind,
     [Description("The entity: UPN or object id, MDE id or DNS name, IP, sha1/sha256, URL or domain")][StringLength(2048, MinimumLength = 1)] string Value);
 
+public sealed record IntelLookupInput(
+    [Description("e.g. CVE-2021-44228, GHSA-jfh8-c2jp-5v3q, 203.0.113.5, bad.example, a sha256")][StringLength(2048, MinimumLength = 3)] string Key);
+
+public sealed record ExposureInput(
+    [Description("CVE ids, e.g. [\"CVE-2021-44228\",\"CVE-2024-3400\"] (1-100)")] string[] CveIds);
+
 public sealed record ActionRequest(
     [Description("Action kind from list_action_types")] string Kind,
     [Description("Action params, matching the kind's schema from list_action_types")] JsonElement Params,

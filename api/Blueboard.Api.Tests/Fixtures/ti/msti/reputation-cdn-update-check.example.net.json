@@ -1,0 +1,14 @@
+{
+ "@odata.type": "#microsoft.graph.security.hostReputation",
+ "_note": "Hand-built from Microsoft's published schema (checked 19-11-2026); not recorded from a tenant. Resource: graph security-hostreputation (v1.0).",
+ "id": "cdn-update-check.example.net",
+ "classification": "malicious",
+ "score": 95,
+ "rules": [
+  {
+   "name": "Known phishing infrastructure",
+   "severity": "high",
+   "description": "Host is listed in Microsoft phishing intelligence."
+  }
+ ]
+}

@@ -7,6 +7,7 @@ using Blueboard.Api.Graph;
 using Blueboard.Api.Mcp;
 using Blueboard.Api.Webhooks;
 using Blueboard.Api.Ops;
+using Blueboard.Api.Intel;
 using Microsoft.Azure.Functions.Worker.Builder;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -51,6 +52,12 @@ builder.Services.AddHttpClient<Notifier>().ConfigurePrimaryHttpMessageHandler(No
 builder.Services.AddHttpClient<AuditExporter>().ConfigurePrimaryHttpMessageHandler(NoRedirects).RemoveAllLoggers();
 builder.Services.AddSingleton<Setup>();
 builder.Services.AddSingleton<Participants>();
+builder.Services.AddSingleton(settings.Ti);
+builder.Services.AddSingleton<IntelStore>();
+builder.Services.AddSingleton<IFetchCache, PgFetchCache>();
+builder.Services.AddSingleton(sp => new TiFetcher(sp.GetRequiredService<IFetchCache>(), settings.Ti));
+builder.Services.AddSingleton<MicrosoftIntel>();
+builder.Services.AddSingleton<IntelService>();
 builder.Services.AddHostedService<MigrateOnStart>();
 builder.Services.AddSingleton<Blueboard.Api.Http.Endpoint>();
 

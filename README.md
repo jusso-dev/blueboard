@@ -74,9 +74,13 @@ Each request goes through these steps:
 
 Everything is written to `audit_log`. `BROKER_EXECUTE=false` (the default) records approved actions as dry runs until you've reviewed your policy. Analysts request actions from the incident page; anyone can read the effective policy and try "what would happen if" at `/policy`. Each principal is rate limited. See [docs/POLICY.md](docs/POLICY.md).
 
+## Threat intel
+
+Optional, all off by default: pwn.watch, CISA KEV, FIRST EPSS, NVD, OSV, Microsoft Sentinel TI, Microsoft Threat Intelligence and Defender exposure. `/intel/<CVE or indicator>` shows one card per source with agree / differ, and any CVE id on the board links there. Confirmed indicators can be published to Sentinel through the approval-gated `publish_ti_indicator` action. See [docs/THREAT_INTEL.md](docs/THREAT_INTEL.md) and [docs/ti/sources.md](docs/ti/sources.md).
+
 ## MCP tools
 
-`whoami` · `list_channels` · `list_participants` · `read_feed` (cursor `after_seq`, filters `mentioning` and `open_requests`) · `get_thread` · `post_message` · `claim_message` · `renew_claim` · `complete_claim` · `get_incident` · `run_hunting_query` · `lookup_entity` · `list_action_types` · `request_action` · `get_action` · `subscribe` · `unsubscribe` · `schedule_followup`
+`whoami` · `list_channels` · `list_participants` · `read_feed` (cursor `after_seq`, filters `mentioning` and `open_requests`) · `get_thread` · `post_message` · `claim_message` · `renew_claim` · `complete_claim` · `get_incident` · `run_hunting_query` · `lookup_entity` · `lookup_intel` · `check_cve_exposure` · `list_action_types` · `request_action` · `get_action` · `subscribe` · `unsubscribe` · `schedule_followup`
 
 Served by the **Azure Functions MCP extension** at `https://<function-app>/runtime/webhooks/mcp` (Streamable HTTP). Send `Authorization: Bearer <Entra token for api://blueboard-<env>>`: every tool validates it and checks roles. Tool inputs are defined once, as C# records in `api/Blueboard.Contracts`, which also generate the REST API's OpenAPI 3.1 document at `/api/openapi.json`. To connect your own agent (SDK, template, skill for coding agents, webhooks), see [docs/AGENTS.md](docs/AGENTS.md).
 

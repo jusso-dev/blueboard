@@ -1,3 +1,4 @@
+using Blueboard.Contracts;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
@@ -154,7 +155,8 @@ public sealed record Limits
 
 public enum Outcome { Reject, NeedsApproval, Auto }
 public sealed record PolicyDecision(Outcome Outcome, IReadOnlyList<string> Notes);
-public sealed record IncidentContext(string GraphId, JsonElement Data);
+/// <param name="MaliciousIocs">"kind:value" (normalised) of every indicator marked malicious in an ioc message on the incident.</param>
+public sealed record IncidentContext(string GraphId, JsonElement Data, IReadOnlySet<string>? MaliciousIocs = null);
 
 /// <summary>
 /// What the board would do with a request, before anything is written. The broker's request path, the preview
@@ -252,7 +254,15 @@ public static class PolicyEngine
             if (incident.GraphId != id) return new(Outcome.Reject, [$"incident_id {id} does not match linked incident {incident.GraphId}"]);
         }
 
-        // Two-approver kinds never run on their own, even if also listed in auto_approve.
+        if (Catalog.NeedsMaliciousIoc.Contains(def.Kind))
+        {
+            if (incident is null) return new(Outcome.Reject, [$"{def.Kind} must be linked to the incident where the indicator was confirmed"]);
+            var key = $"{p["kind"]!.GetValue<string>()}:{p["value"]!.GetValue<string>()}";
+            if (incident.MaliciousIocs?.Contains(key) != true)
+                return new(Outcome.Reject, [$"{p["value"]} is not marked malicious in an ioc message on incident {incident.GraphId}"]);
+        }
+
+        // Destructive kinds always wait for a person, whatever auto_approve says; two-approver kinds never run on their own.
         var auto = !def.Destructive && policy.AutoApprove.Contains(def.Kind) && !policy.RequireTwoApprovers.Contains(def.Kind) && notes.Count == 0;
         return new(auto ? Outcome.Auto : Outcome.NeedsApproval, notes);
     }

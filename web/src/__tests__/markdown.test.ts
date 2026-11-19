@@ -15,6 +15,12 @@ describe("Markdown", () => {
   it("escapes HTML", () => {
     expect(html("<img src=x onerror=alert(1)>")).not.toContain("<img");
   });
+  it("links CVE ids to the intel page", () => {
+    const out = html("patch cve-2021-44228 now, not CVE-21-1");
+    expect(out).toContain('href="/intel/CVE-2021-44228"');
+    expect(out.match(/\/intel\//g)).toHaveLength(1);
+    expect(html("**Intel: CVE-2024-3400**")).toContain('href="/intel/CVE-2024-3400"');
+  });
   it("only links http(s) URLs", () => {
     expect(html("[x](javascript:alert(1))")).not.toContain("href");
     expect(html("[x](https://security.microsoft.com)")).toContain('href="https://security.microsoft.com"');

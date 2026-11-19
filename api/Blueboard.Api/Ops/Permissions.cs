@@ -28,6 +28,16 @@ public static class Permissions
         ["add_incident_comment"] = new(MsApi.Graph, "SecurityIncident.ReadWrite.All"),
     };
 
+    /// <summary>
+    /// Kinds that need an Azure role rather than a Graph or Defender application permission. publish_ti_indicator needs
+    /// Microsoft Sentinel Contributor on the Sentinel workspace, which no token roles claim can show, so the setup page
+    /// lists it as a note instead of checking it.
+    /// </summary>
+    public static readonly IReadOnlyDictionary<string, string> AzureRoleFor = new Dictionary<string, string>
+    {
+        ["publish_ti_indicator"] = "Microsoft Sentinel Contributor on the Sentinel workspace",
+    };
+
     /// <summary>Optional: email notifications to approvers (NOTIFY_MAIL=1 in grant-permissions.sh).</summary>
     public static readonly Perm MailSend = new(MsApi.Graph, "Mail.Send");
 }

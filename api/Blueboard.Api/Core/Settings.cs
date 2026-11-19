@@ -27,6 +27,8 @@ public sealed record Settings
     public string? PolicySource { get; init; }
     /// <summary>Folder of playbook Markdown files. Defaults to the copy bundled with the Function App.</summary>
     public string PlaybooksDir { get; init; } = Path.Combine(AppContext.BaseDirectory, "playbooks");
+    /// <summary>Threat intel and CVE sources (all off by default).</summary>
+    public TiSettings Ti { get; init; } = new();
 
     /// <summary>Public base URL of the web app (deep links in notifications), e.g. https://blueboard-web-x.azurewebsites.net.</summary>
     public string? WebBaseUrl { get; init; }
@@ -107,6 +109,7 @@ public sealed record Settings
             AuditDcrId = Env("AUDIT_DCR_ID"),
             AuditStream = Env("AUDIT_STREAM") ?? "Custom-BlueboardAudit_CL",
             PlaybooksDir = Env("BLUEBOARD_PLAYBOOKS_DIR") ?? Path.Combine(AppContext.BaseDirectory, "playbooks"),
+            Ti = TiSettings.From(Env, Env("WEBSITE_INSTANCE_ID") is not null),
         };
         // WEBSITE_INSTANCE_ID is set on every Azure Functions host: never allow dev auth or the demo there.
         var inAzure = Env("WEBSITE_INSTANCE_ID") is not null;

@@ -36,6 +36,7 @@ internal static class A1
         public required Broker Broker { get; init; }
         public required Blueboard.Api.Webhooks.WebhookService Hooks { get; init; }
         public required PlaybookRunner Playbooks { get; init; }
+        public required Blueboard.Api.Intel.IntelService Intel { get; init; }
         public required Enrichment Enrich { get; init; }
         public required Authenticator Auth { get; init; }
         public required BoardApi Api { get; init; }
@@ -60,9 +61,15 @@ internal static class A1
         var hooks = new Blueboard.Api.Webhooks.WebhookService(db, audit, board, sys, t.Settings);
         var books = PlaybookSet.Empty;
         var api = new BoardApi(ep, board, new Search(db, board), new Reporting(db), broker, enrich, hooks, db, policy,
-            new IncidentQueries(db, board, books), new PlaybookRunner(db, board, sys, books), books);
-        return new App { Db = db, Policy = policy, Limiter = limiter, Board = board, Broker = broker, Enrich = enrich, Auth = auth, Api = api, Hooks = hooks, Playbooks = new PlaybookRunner(db, board, sys, books), Microsoft = fake };
+            new IncidentQueries(db, board, books), new PlaybookRunner(db, board, sys, books), books, Intel(db, board, ms, enrich, sys, t.Settings));
+        return new App { Db = db, Policy = policy, Limiter = limiter, Board = board, Broker = broker, Enrich = enrich, Auth = auth, Api = api, Hooks = hooks, Intel = Intel(db, board, ms, enrich, sys, t.Settings), Playbooks = new PlaybookRunner(db, board, sys, books), Microsoft = fake };
     }
+
+    /// <summary>Threat intel with every source off (the default), so these tests never fetch anything.</summary>
+    private static Blueboard.Api.Intel.IntelService Intel(Db db, BoardService board, MsClient ms, Enrichment enrich, SystemPrincipal sys, Blueboard.Api.Core.Settings settings) =>
+        new(db, new Blueboard.Api.Intel.IntelStore(db), new Blueboard.Api.Intel.TiFetcher(new Blueboard.Api.Intel.PgFetchCache(db), settings.Ti),
+            new Blueboard.Api.Intel.MicrosoftIntel(enrich, ms, settings), board, new Search(db, board), sys, settings,
+            NullLogger<Blueboard.Api.Intel.IntelService>.Instance);
 
     /// <summary>An HTTP request as the Functions host would hand it over, signed in as a dev principal.</summary>
     public static HttpRequest Request(string handle, string method = "GET", object? body = null, string? query = null)

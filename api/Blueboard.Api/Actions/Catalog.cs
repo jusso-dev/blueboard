@@ -24,7 +24,10 @@ public sealed record ActionDef(
     Func<JsonElement, JsonObject> Validate,
     Func<JsonObject, Targets> TargetsOf,
     Func<JsonObject, string> Describe,
-    Func<MsClient, JsonObject, string, CancellationToken, Task<object?>> Run);
+    Func<MsClient, JsonObject, string, CancellationToken, Task<object?>> Run,
+    // Builds the exact outbound request from params plus broker context. When set, the dry run shows it in full and
+    // Run receives it instead of the params (publish_ti_indicator).
+    Func<JsonObject, ActionContext, JsonObject>? Prepare = null);
 
 /// <summary>
 /// Every write the board can make in Defender, Entra and Sentinel. Agents only request these; the broker
@@ -58,6 +61,14 @@ public static partial class Catalog
         if (p.ValueKind != JsonValueKind.Object || !p.TryGetProperty(name, out var v) || v.ValueKind == JsonValueKind.Null) return null;
         var s = v.ValueKind == JsonValueKind.String ? v.GetString() : throw new BoardException($"{name} must be a string");
         return s!.Length <= max ? s : throw new BoardException($"{name} too long");
+    }
+
+    private static int Int(JsonElement p, string name, int? fallback, int min, int max)
+    {
+        if (p.ValueKind != JsonValueKind.Object || !p.TryGetProperty(name, out var v) || v.ValueKind == JsonValueKind.Null)
+            return fallback ?? throw new BoardException($"{name} is required");
+        if (v.ValueKind != JsonValueKind.Number || !v.TryGetInt32(out var n) || n < min || n > max) throw new BoardException($"{name} must be a whole number {min}–{max}");
+        return n;
     }
 
     private static JsonObject Schema(object properties, string[] required) =>
@@ -243,6 +254,62 @@ public static partial class Catalog
                 return Send(ms, MsApi.Graph, $"/v1.0/security/incidents/{Enc(S(p, "incident_id"))}", HttpMethod.Patch, body, ct);
             }),
 
+        new("publish_ti_indicator", "Publish indicator to Sentinel threat intelligence (preview API)", "contain", true,
+            Schema(new
+            {
+                kind = new { type = "string", @enum = Stix.Kinds },
+                value = new { type = "string", maxLength = 2048 },
+                confidence = new { type = "integer", minimum = 0, maximum = 100 },
+                valid_days = new { type = "integer", minimum = 1, maximum = 90, @default = 30 },
+                tlp = new { type = "string", @enum = Stix.Tlp.Keys.ToArray(), @default = "amber" },
+                description = new { type = "string", minLength = 10, maxLength = 2000 },
+            }, ["kind", "value", "confidence", "description"]),
+            p =>
+            {
+                var kind = Enum(p, "kind", Stix.Kinds, "");
+                var value = Intel.Indicators.Normalise(kind, Req(p, "value")) ?? throw new BoardException($"value is not a valid {kind}");
+                var confidence = Int(p, "confidence", null, 0, 100);
+                var days = Int(p, "valid_days", 30, 1, 90);
+                var description = Req(p, "description", max: 2000);
+                if (description.Length < 10) throw new BoardException("description must be at least 10 characters");
+                return new JsonObject
+                {
+                    ["kind"] = kind, ["value"] = value, ["confidence"] = confidence, ["valid_days"] = days,
+                    ["tlp"] = Enum(p, "tlp", Stix.Tlp.Keys.ToArray(), "amber"), ["description"] = description,
+                };
+            },
+            p => new Targets([], [], [S(p, "value")]),
+            p => $"Publish {S(p, "kind")} {S(p, "value")} to Microsoft Sentinel threat intelligence (confidence {p["confidence"]}, valid {p["valid_days"]} days, TLP:{S(p, "tlp").ToUpperInvariant()})",
+            async (ms, req, _, ct) =>
+            {
+                var ws = S(req, "workspace_id");
+                var body = req["body"]!.AsObject();
+                var id = body["stixobjects"]!.AsArray().Last()!["id"]!.GetValue<string>();
+                JsonElement? res;
+                try
+                {
+                    res = await ms.SendAsync(MsApi.SentinelTi, $"/workspaces/{Enc(ws)}/threat-intelligence-stix-objects:upload?api-version={Stix.ApiVersion}", HttpMethod.Post, body, ct);
+                }
+                catch (BoardException ex) when (ex.UpstreamStatus is 401 or 403)
+                {
+                    throw new BoardException($"Microsoft Sentinel Contributor not assigned on workspace {ws}", 502) { UpstreamStatus = ex.UpstreamStatus };
+                }
+                // The upload API answers 200 even when objects fail validation, listing them under errors[].
+                if (res is { } r && r.TryGetProperty("errors", out var errs) && errs.ValueKind == JsonValueKind.Array && errs.GetArrayLength() > 0)
+                {
+                    var text = errs.GetRawText();
+                    throw new BoardException($"Sentinel rejected the indicator: {(text.Length > 500 ? text[..500] : text)}", 502);
+                }
+                return new
+                {
+                    stix_id = id,
+                    workspace_id = ws,
+                    find_in_sentinel = $"ThreatIntelIndicators | where SourceSystem == \"{Stix.SourceSystem}\" and Id has \"{id["indicator--".Length..]}\"",
+                    note = "Indicators can take a few minutes to appear in Threat intelligence (Defender portal) and in ThreatIntelIndicators.",
+                };
+            },
+            Prepare: Stix.UploadRequest),
+
         new("add_incident_comment", "Comment on incident (Defender XDR / Sentinel)", "record", false,
             Schema(new { incident_id = IncidentProp, comment = new { type = "string", minLength = 1, maxLength = 30000 } }, ["incident_id", "comment"]),
             p => new JsonObject { ["incident_id"] = Req(p, "incident_id", IncidentId(), "Defender XDR incident id (digits)"), ["comment"] = Req(p, "comment", max: 30000) },
@@ -260,10 +327,13 @@ public static partial class Catalog
     {
         "isolate_device" or "release_device" or "run_av_scan" or "collect_investigation_package" => "device",
         "disable_user" or "revoke_sessions" or "reset_password" => "user",
-        "block_indicator" => "indicator",
+        "block_indicator" or "publish_ti_indicator" => "indicator",
         "purge_email" => "email",
         _ => "incident",
     };
+
+    /// <summary>Kinds whose value must already be confirmed malicious by an ioc message on the linked incident.</summary>
+    public static readonly HashSet<string> NeedsMaliciousIoc = ["publish_ti_indicator"];
 
     private static async Task<object?> Send(MsClient ms, MsApi api, string path, HttpMethod method, object? body, CancellationToken ct) =>
         await ms.SendAsync(api, path, method, body, ct);

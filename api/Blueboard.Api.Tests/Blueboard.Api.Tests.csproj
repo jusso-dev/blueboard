@@ -13,4 +13,7 @@
   <ItemGroup>
     <None Include="../../playbooks/*.md" LinkBase="playbooks"><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory></None>
   </ItemGroup>
+  <ItemGroup>
+    <None Include="Fixtures/ti/**/*" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>

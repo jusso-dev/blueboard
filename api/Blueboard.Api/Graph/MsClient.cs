@@ -9,7 +9,7 @@ using Blueboard.Api.Core;
 
 namespace Blueboard.Api.Graph;
 
-public enum MsApi { Graph, Defender }
+public enum MsApi { Graph, Defender, SentinelTi }
 
 /// <summary>
 /// Where Microsoft API calls go. Real mode: the exact Microsoft origins, with the managed identity's token.
@@ -44,14 +44,19 @@ public sealed partial class MsClient(HttpClient http, TokenCredential? credentia
 {
     public const string GraphOrigin = "https://graph.microsoft.com";
     public const string DefenderOrigin = "https://api.security.microsoft.com";
+    /// <summary>Microsoft Sentinel threat intelligence upload API (publish_ti_indicator). Token audience: Azure Resource Manager.</summary>
+    public const string SentinelTiOrigin = "https://api.ti.sentinel.azure.com";
     private readonly MsOrigins _origins = origins ?? MsOrigins.Real;
     private readonly Lazy<TokenCredential> _cred = new(() => credential ?? new DefaultAzureCredential());
 
     public bool Mocked => _origins.Mocked;
 
-    private static string Scope(MsApi api) => api == MsApi.Graph
-        ? "https://graph.microsoft.com/.default"
-        : "https://api.securitycenter.microsoft.com/.default";
+    private static string Scope(MsApi api) => api switch
+    {
+        MsApi.Graph => "https://graph.microsoft.com/.default",
+        MsApi.SentinelTi => "https://management.azure.com/.default",
+        _ => "https://api.securitycenter.microsoft.com/.default",
+    };
 
     [GeneratedRegex(@"(^|/)\.\.?(/|$)")]
     private static partial Regex DotSegment();
@@ -62,7 +67,8 @@ public sealed partial class MsClient(HttpClient http, TokenCredential? credentia
     /// <summary>Builds and checks the absolute URL: exact origin match, no dot-segments.</summary>
     public static Uri BuildUri(MsOrigins origins, MsApi api, string pathOrUrl)
     {
-        var origin = api == MsApi.Graph ? origins.Graph : origins.Defender;
+        // Sentinel TI is never overridden, not even in demo mode: it is a write path and has no mock.
+        var origin = api switch { MsApi.Graph => origins.Graph, MsApi.SentinelTi => SentinelTiOrigin, _ => origins.Defender };
         var absolute = pathOrUrl.StartsWith("https://", StringComparison.Ordinal) || pathOrUrl.StartsWith("http://", StringComparison.Ordinal);
         var uri = new Uri(absolute ? pathOrUrl : origin + pathOrUrl);
         if (!string.Equals(uri.GetLeftPart(UriPartial.Authority), origin, StringComparison.OrdinalIgnoreCase))
@@ -109,7 +115,7 @@ public sealed partial class MsClient(HttpClient http, TokenCredential? credentia
             if (!res.IsSuccessStatusCode)
             {
                 var msg = json?.TryGetProperty("error", out var e) == true && e.TryGetProperty("message", out var m) ? m.GetString() : res.ReasonPhrase;
-                throw new BoardException($"{req.Method} {uri.AbsolutePath}: {(int)res.StatusCode} {msg}", 502);
+                throw new BoardException($"{req.Method} {uri.AbsolutePath}: {(int)res.StatusCode} {msg}", 502) { UpstreamStatus = (int)res.StatusCode };
             }
             return json;
         }

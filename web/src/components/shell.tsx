@@ -83,6 +83,7 @@ function MobileBar() {
   const items = [
     { href: "/", label: "Queue", active: path === "/" || path.startsWith("/incidents") },
     { href: "/search", label: "Search", active: path === "/search" },
+    { href: "/intel", label: "Intel", active: path.startsWith("/intel") },
     { href: "/approvals", label: pending?.length ? `Approvals · ${pending.length}` : "Approvals", active: path === "/approvals" },
   ];
   return (
@@ -240,6 +241,9 @@ function Rail({ me }: { me: Me | null }) {
           </RailLink>
           <RailLink href="/policy" active={path === "/policy"}>
             Policy
+          </RailLink>
+          <RailLink href="/intel" active={path.startsWith("/intel")}>
+            Threat intel
           </RailLink>
           {isAdmin && (
             <>

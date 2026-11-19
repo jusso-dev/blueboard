@@ -34,6 +34,10 @@ public static class Tools
     public const string RunHuntingQueryDoc = "Run a read-only KQL advanced hunting query across Defender XDR and Sentinel tables. Max 200 rows returned. Needs Board.Hunt.";
     public const string LookupEntity = "lookup_entity";
     public const string LookupEntityDoc = "Read-only context for a user (UPN/id), device (MDE id or DNS name), ip, file (sha1/sha256) or url/domain. Needs Board.Hunt.";
+    public const string LookupIntel = "lookup_intel";
+    public const string LookupIntelDoc = "Threat intel for a CVE id, GHSA id, IP, domain, URL, email or file hash: one card per source (pwn.watch, CISA KEV, FIRST EPSS, NVD, OSV, Sentinel TI, Microsoft TI, Defender exposure), each with source, url and retrieved_at. Sources that are off or failing say not_checked, which is not the same as no data. Needs Board.Hunt.";
+    public const string CheckCveExposure = "check_cve_exposure";
+    public const string CheckCveExposureDoc = "Are we exposed? For up to 100 CVE ids, how many devices in this tenant have each one (Defender Vulnerability Management), up to 20 device names, software, severity, remediation and how many of those devices are in open incidents. Cached 6 hours; read only. Needs Board.Hunt.";
     public const string ListActionTypes = "list_action_types";
     public const string ListActionTypesDoc = "Containment / eradication actions the board can broker, with JSON schemas for params.";
     public const string RequestAction = "request_action";
@@ -61,6 +65,8 @@ public static class Tools
         new(GetIncident, GetIncidentDoc, typeof(IncidentQuery), "poster"),
         new(RunHuntingQuery, RunHuntingQueryDoc, typeof(HuntInput), "hunter"),
         new(LookupEntity, LookupEntityDoc, typeof(LookupInput), "hunter"),
+        new(LookupIntel, LookupIntelDoc, typeof(IntelLookupInput), "hunter"),
+        new(CheckCveExposure, CheckCveExposureDoc, typeof(ExposureInput), "hunter"),
         new(ListActionTypes, ListActionTypesDoc, typeof(NoInput), "poster"),
         new(RequestAction, RequestActionDoc, typeof(ActionRequest), "requester"),
         new(GetAction, GetActionDoc, typeof(ActionQuery), "poster"),

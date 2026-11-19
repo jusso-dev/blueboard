@@ -198,6 +198,10 @@ With `BB_PROFILE=production` the Bicep also creates a VNet, NAT gateway, private
 
 ---
 
+### Threat intel (optional)
+
+Off by default. Set any of `TI_PWNWATCH_ENABLED`, `TI_KEV_ENABLED`, `TI_EPSS_ENABLED`, `TI_NVD_ENABLED`, `TI_OSV_ENABLED`, `TI_SENTINEL_ENABLED`, `TI_EXPOSURE_ENABLED`, `TI_MSTI_ENABLED` to `true` when running `deploy.sh`. Microsoft Threat Intelligence also needs `TI_MSTI=1 ./infra/grant-permissions.sh …`. `publish_ti_indicator` needs `SENTINEL_WORKSPACE_ID=<workspace resource id>` and, if you want Bicep to grant the role, `ASSIGN_SENTINEL_CONTRIBUTOR=true` (Owner or User Access Administrator on the workspace). Details: [THREAT_INTEL.md](THREAT_INTEL.md).
+
 ## Updating, rolling back and tearing down
 
 **Update:** commit, then re-run `./infra/deploy.sh`.

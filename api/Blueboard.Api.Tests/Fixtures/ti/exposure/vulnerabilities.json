@@ -1,0 +1,58 @@
+{
+ "_note": "Hand-built from Microsoft's published schema (checked 19-11-2026); not recorded from a tenant. Columns: learn.microsoft.com/defender-xdr/advanced-hunting-devicetvmsoftwarevulnerabilities-table",
+ "results": [
+  {
+   "CveId": "CVE-2021-44228",
+   "Devices": 14,
+   "DeviceIds": [
+    "4b1d7e2c9f0a3b6d8e5c1a7f2e9d0c3b6a8f1e4d",
+    "0000000000000000000000000000000000000001",
+    "0000000000000000000000000000000000000002",
+    "0000000000000000000000000000000000000003",
+    "0000000000000000000000000000000000000004",
+    "0000000000000000000000000000000000000005",
+    "0000000000000000000000000000000000000006",
+    "0000000000000000000000000000000000000007",
+    "0000000000000000000000000000000000000008",
+    "0000000000000000000000000000000000000009",
+    "000000000000000000000000000000000000000a",
+    "000000000000000000000000000000000000000b",
+    "000000000000000000000000000000000000000c",
+    "000000000000000000000000000000000000000d"
+   ],
+   "DeviceNames": [
+    "fin-lt-0423.contoso.local",
+    "app-01.contoso.local",
+    "app-02.contoso.local",
+    "app-03.contoso.local",
+    "app-04.contoso.local",
+    "app-05.contoso.local",
+    "app-06.contoso.local",
+    "app-07.contoso.local",
+    "app-08.contoso.local",
+    "app-09.contoso.local",
+    "app-10.contoso.local",
+    "app-11.contoso.local",
+    "app-12.contoso.local",
+    "app-13.contoso.local"
+   ],
+   "Software": [
+    "apache log4j 2.14.1",
+    "vmware vcenter_server 7.0.2"
+   ],
+   "Severity": "Critical",
+   "Remediation": [
+    "Update Apache Log4j to version 2.17.1 or later"
+   ]
+  },
+  {
+   "CveId": "CVE-2024-3400",
+   "Devices": 0,
+   "DeviceIds": [],
+   "DeviceNames": [],
+   "Software": [],
+   "Severity": "",
+   "Remediation": []
+  }
+ ]
+}

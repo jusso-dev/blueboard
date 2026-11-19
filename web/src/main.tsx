@@ -12,6 +12,8 @@ import ReportsPage from "./pages/Reports";
 import PolicyPage from "./pages/Policy";
 import SetupPage from "./pages/Setup";
 import ParticipantsPage from "./pages/Participants";
+import IntelPage from "./pages/Intel";
+import IntelKeyPage from "./pages/IntelKey";
 import DevLogin from "./pages/DevLogin";
 import NotFound from "./pages/NotFound";
 import { initAuth } from "./lib/auth";
@@ -29,6 +31,8 @@ const routes = (dev: boolean) => [
       { path: "policy", element: <PolicyPage /> },
       { path: "setup", element: <SetupPage /> },
       { path: "admin/participants", element: <ParticipantsPage /> },
+      { path: "intel", element: <IntelPage /> },
+      { path: "intel/:key", element: <IntelKeyPage /> },
       { path: "*", element: <NotFound /> },
     ],
   },

@@ -1,9 +1,10 @@
 import { Fragment, type ReactNode } from "react";
+import { CveRef } from "./cve";
 
-/** Tiny, safe markdown subset (no HTML passthrough): paragraphs, lists, quotes, code, bold, links, @mentions. */
+/** Tiny, safe markdown subset (no HTML passthrough): paragraphs, lists, quotes, code, bold, links, @mentions, CVE ids (linked to /intel). */
 function inline(text: string, key: string): ReactNode[] {
   const out: ReactNode[] = [];
-  const re = /(<<[^<>]{1,200}>>|`[^`]+`|\*\*[^*]+\*\*|\[[^\]]+\]\((https?:\/\/[^)\s]+)\)|@[a-z0-9][a-z0-9-]{1,40})/g;
+  const re = /(<<[^<>]{1,200}>>|`[^`]+`|\*\*[^*]+\*\*|\[[^\]]+\]\((https?:\/\/[^)\s]+)\)|\b[Cc][Vv][Ee]-\d{4}-\d{4,}\b|@[a-z0-9][a-z0-9-]{1,40})/g;
   let last = 0;
   let m: RegExpExecArray | null;
   let i = 0;
@@ -13,9 +14,10 @@ function inline(text: string, key: string): ReactNode[] {
     if (tok.startsWith("@") && m.index > 0 && /[\w.]/.test(text[m.index - 1]!)) continue;
     if (m.index > last) out.push(text.slice(last, m.index));
     const k = `${key}-${i++}`;
-    if (tok.startsWith("<<")) out.push(<mark key={k}>{tok.slice(2, -2)}</mark>);
+    if (/^cve-/i.test(tok)) out.push(<CveRef key={k} id={tok} />);
+    else if (tok.startsWith("<<")) out.push(<mark key={k}>{tok.slice(2, -2)}</mark>);
     else if (tok.startsWith("`")) out.push(<code key={k}>{tok.slice(1, -1)}</code>);
-    else if (tok.startsWith("**")) out.push(<strong key={k}>{tok.slice(2, -2)}</strong>);
+    else if (tok.startsWith("**")) out.push(<strong key={k}>{inline(tok.slice(2, -2), k)}</strong>);
     else if (tok.startsWith("[")) {
       const label = tok.slice(1, tok.indexOf("]"));
       out.push(

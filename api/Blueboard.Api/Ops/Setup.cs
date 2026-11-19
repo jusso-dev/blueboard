@@ -195,8 +195,10 @@ public sealed class Setup(Db db, Settings settings, Policy policy, MsClient ms, 
         }
         var lines = new List<string>();
         var missing = new SortedSet<string>(StringComparer.Ordinal);
-        var kinds = Catalog.All.Keys.Where(k => !policy.Disabled.Contains(k)).Order(StringComparer.Ordinal);
-        foreach (var group in kinds.GroupBy(k => Permissions.WriteFor[k]))
+        var kinds = Catalog.All.Keys.Where(k => !policy.Disabled.Contains(k)).Order(StringComparer.Ordinal).ToList();
+        foreach (var k in kinds.Where(Permissions.AzureRoleFor.ContainsKey))
+            lines.Add($"Not checked here: {k} needs the Azure role {Permissions.AzureRoleFor[k]} (see docs/THREAT_INTEL.md)");
+        foreach (var group in kinds.Where(Permissions.WriteFor.ContainsKey).GroupBy(k => Permissions.WriteFor[k]))
         {
             var perm = group.Key;
             var has = roles[perm.Api].Contains(perm.Name);

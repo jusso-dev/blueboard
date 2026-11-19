@@ -5,6 +5,7 @@ using Blueboard.Api.Data;
 using Blueboard.Api.Graph;
 using Blueboard.Api.Webhooks;
 using Blueboard.Api.Ops;
+using Blueboard.Api.Intel;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
 using Npgsql;
@@ -15,13 +16,15 @@ namespace Blueboard.Api.Jobs;
 /// Background work. Timer triggers run on one instance at a time (singleton lock in host storage);
 /// a Postgres advisory lock makes that hold even across deployment slots.
 /// </summary>
-public sealed class Timers(Db db, Ingest ingest, Broker broker, WebhookService hooks, Notifier notifier, AuditExporter auditExport, PlaybookRunner playbooks, Settings settings, ILogger<Timers> log)
+public sealed class Timers(Db db, Ingest ingest, Broker broker, WebhookService hooks, Notifier notifier, AuditExporter auditExport, PlaybookRunner playbooks, IntelService intel, Settings settings, ILogger<Timers> log)
 {
     private const long LockKey = 7_340_001;
     /// <summary>The webhook loop has its own lock so a slow ingest never delays an agent's wake-up.</summary>
     private const long WebhookLockKey = 7_340_004;
     private const long NotifyLockKey = 7_340_005;
     private const long AuditLockKey = 7_340_006;
+    /// <summary>Threat intel runs take their own lock, so a slow feed never holds up incident ingest.</summary>
+    private const long IntelLockKey = 7_340_010;
 
     [Function("ingest-incidents")]
     public async Task IngestIncidents([TimerTrigger("0 */1 * * * *")] TimerInfo timer, CancellationToken ct)
@@ -107,6 +110,42 @@ public sealed class Timers(Db db, Ingest ingest, Broker broker, WebhookService h
         }, ct);
     }
 
+
+    [Function("ti-feeds")]
+    public async Task IntelFeeds([TimerTrigger("0 */15 * * * *")] TimerInfo timer, CancellationToken ct)
+    {
+        if (!settings.Ti.PwnWatch && !settings.Ti.Kev) return;
+        await WithLock(IntelLockKey, async () => log.LogInformation("threat intel feeds {@Result}", await intel.RunFeedsAsync(ct)), ct);
+    }
+
+    [Function("ti-sentinel-auto")]
+    public async Task IntelSentinelAuto([TimerTrigger("15 */2 * * * *")] TimerInfo timer, CancellationToken ct)
+    {
+        if (!settings.Ti.Sentinel) return;
+        await WithLock(IntelLockKey, async () =>
+        {
+            try
+            {
+                var n = await intel.AutoEnrichSentinelAsync(ct);
+                if (n > 0) log.LogInformation("Sentinel TI auto-enrich posted {Count} finding(s)", n);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                log.LogWarning(ex, "Sentinel TI auto-enrich failed");
+            }
+        }, ct);
+    }
+
+    [Function("ti-daily")]
+    public async Task IntelDaily([TimerTrigger("0 30 17 * * *")] TimerInfo timer, CancellationToken ct) // 03:30 or 04:30 in Sydney
+    {
+        if (!settings.Ti.Epss && !settings.Ti.Exposure) return;
+        await WithLock(IntelLockKey, async () => log.LogInformation("threat intel daily {@Result}", await intel.RunDailyAsync(ct)), ct);
+    }
+
+    [Function("ti-cvewatch-recheck")]
+    public async Task CveWatchRecheck([TimerTrigger("0 0 18 1 * *")] TimerInfo timer, CancellationToken ct) =>
+        await WithLock(IntelLockKey, async () => log.LogInformation("cve.watch re-check: {Status}", await intel.RecheckCveWatchAsync(ct)), ct);
 
     private async Task WithLock(long key, Func<Task> work, CancellationToken ct)
     {

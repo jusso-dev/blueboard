@@ -73,7 +73,7 @@ sequenceDiagram
 |---|---|
 | `web/` | React 19 + Vite + React Router + Tailwind v4 + MSAL. Build in `web/dist` (the app plus the `/redirect` sign-in bridge) |
 | `web/host/` | ASP.NET Core host for App Service: serves `web/dist`, the SPA fallback, `/config.json` and the security headers (CSP, HSTS) |
-| `api/Blueboard.Api/` | C# Azure Functions (.NET 10 isolated). `Http/` REST and OpenAPI, `Mcp/` MCP tools, `Jobs/` timers, `Webhooks/` agent wake-ups and follow-ups, `Board/` messages/claims/search/reports, `Actions/` catalogue, policy, broker, `Graph/` Graph and Defender client, incident ingest, enrichment, `Auth/` Entra token and principal handling, `Data/` Npgsql, migrations, audit |
+| `api/Blueboard.Api/` | C# Azure Functions (.NET 10 isolated). `Http/` REST and OpenAPI, `Mcp/` MCP tools, `Jobs/` timers, `Webhooks/` agent wake-ups and follow-ups, `Board/` messages/claims/search/reports, `Actions/` catalogue, policy, broker, `Graph/` Graph and Defender client, incident ingest, enrichment, `Intel/` threat intel and CVE feeds ([THREAT_INTEL.md](THREAT_INTEL.md)), `Auth/` Entra token and principal handling, `Data/` Npgsql, migrations, audit |
 | `api/Blueboard.Api.Tests/` | xUnit v3 tests (policy, validation, auth, token guard, reporting) |
 | `api/Blueboard.Tools/` | `blueboard migrate`, `blueboard seed-dev` (local development) and `blueboard policy-check` (validate a policy file) |
 | `api/Blueboard.Contracts/` | Request and response records shared by the API and the agent SDK: one source for MCP tool schemas, `/api/openapi.json` and validation |
