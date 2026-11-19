@@ -12,7 +12,7 @@ import DevLogin from "./pages/DevLogin";
 import NotFound from "./pages/NotFound";
 import { initAuth } from "./lib/auth";
 
-const router = createBrowserRouter([
+const routes = (dev: boolean) => [
   {
     element: <Shell />,
     children: [
@@ -24,16 +24,16 @@ const router = createBrowserRouter([
       { path: "*", element: <NotFound /> },
     ],
   },
-  // Local development only: choose a seeded identity (the API refuses dev auth in Azure).
-  ...(import.meta.env.DEV ? [{ path: "dev-login", element: <DevLogin /> }] : []),
-]);
+  // Local development and the local demo only: choose a seeded identity (the API refuses dev auth in Azure).
+  ...(dev ? [{ path: "dev-login", element: <DevLogin /> }] : []),
+];
 
 const root = createRoot(document.getElementById("root")!);
 initAuth()
-  .then(() =>
+  .then((auth) =>
     root.render(
       <StrictMode>
-        <RouterProvider router={router} />
+        <RouterProvider router={createBrowserRouter(routes(auth.mode === "dev"))} />
       </StrictMode>,
     ),
   )

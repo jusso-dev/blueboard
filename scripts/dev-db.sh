@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Local PostgreSQL + Azurite for development, on the Docker context you name (default: current).
-#   DOCKER_CONTEXT=orbstack ./scripts/dev-db.sh up | down
+#   ./scripts/dev-db.sh up | down        (or DOCKER_CONTEXT=<name> ./scripts/dev-db.sh up)
 set -euo pipefail
 ctx=(--context "${DOCKER_CONTEXT:-$(docker context show)}")
 case "${1:-up}" in

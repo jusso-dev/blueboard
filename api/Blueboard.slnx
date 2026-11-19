@@ -1,4 +1,5 @@
 <Solution>
+  <Project Path="Blueboard.Contracts/Blueboard.Contracts.csproj" />
   <Project Path="Blueboard.Api/Blueboard.Api.csproj" />
   <Project Path="Blueboard.Api.Tests/Blueboard.Api.Tests.csproj" />
   <Project Path="Blueboard.Api.IntegrationTests/Blueboard.Api.IntegrationTests.csproj" />

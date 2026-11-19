@@ -1,0 +1,98 @@
+# One-command local demo (issue #1): ./scripts/demo.sh up   (or: docker compose -f docker-compose.demo.yml up -d --build)
+# Open http://localhost:3417/dev-login. Remove everything: docker compose -f docker-compose.demo.yml down -v
+#
+# No Azure account, Entra app or model key. Microsoft Graph and Defender are mocked (mock-msapi), the board runs
+# with DEMO_MODE + DEV_AUTH (both refused in Azure), the broker is in dry run, and the reference agent replays a
+# script. Nothing here talks to Microsoft. Host ports: 3417 (web), 7370 (board API + MCP).
+name: blueboard-demo
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: demo-only-password
+      POSTGRES_DB: blueboard
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d blueboard"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  azurite:
+    # Functions host storage (timer locks). Only reachable inside the compose network.
+    image: mcr.microsoft.com/azure-storage/azurite:3.37.0
+    command: azurite --blobHost 0.0.0.0 --queueHost 0.0.0.0 --tableHost 0.0.0.0 --skipApiVersionCheck --loose
+
+  mock-msapi:
+    build: { context: ., dockerfile: dev/dotnet-app.Dockerfile, args: { PROJECT: dev/mock-msapi, DLL: blueboard-mock-msapi.dll } }
+    environment:
+      DEMO_MODE: "true"
+      FIXTURES_DIR: /app/fixtures
+      ASPNETCORE_URLS: http://+:8080
+
+  seed:
+    # One-shot: apply migrations and create the dev identities (analyst, analyst2, enrichment-agent, my-agent, ...).
+    # The board also migrates at start; running it here first means the agent never races an empty database.
+    build: { context: ., dockerfile: dev/api.Dockerfile }
+    platform: linux/amd64
+    depends_on:
+      postgres: { condition: service_healthy }
+    entrypoint: ["sh", "-c", "blueboard migrate && blueboard seed-dev"]
+    environment:
+      DATABASE_URL: postgres://postgres:demo-only-password@postgres:5432/blueboard
+      DEV_AUTH: "true"
+    restart: "no"
+
+  api:
+    build: { context: ., dockerfile: dev/api.Dockerfile }
+    platform: linux/amd64
+    depends_on:
+      seed: { condition: service_completed_successfully }
+      azurite: { condition: service_started }
+      mock-msapi: { condition: service_started }
+    ports: ["127.0.0.1:7370:80"]
+    environment:
+      # Azurite's development account via the documented emulator shortcut; no key is written here.
+      AzureWebJobsStorage: UseDevelopmentStorage=true;DevelopmentStorageProxyUri=http://azurite
+      DATABASE_URL: postgres://postgres:demo-only-password@postgres:5432/blueboard
+      DEV_AUTH: "true"
+      DEMO_MODE: "true"
+      GRAPH_BASE_URL: http://mock-msapi:8080
+      DEFENDER_BASE_URL: http://mock-msapi:8080
+      INGEST_ENABLED: "true"
+      INGEST_LOOKBACK_HOURS: "24"
+      BROKER_EXECUTE: "false"
+      BLUEBOARD_POLICY_FILE: /home/site/policy.json
+      CORS_ORIGIN: http://localhost:3417
+      # Webhooks are off in the demo (no allowlisted hosts). See docs/AGENTS.md to try them.
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost/api/healthz || exit 1"]
+      interval: 3s
+      timeout: 3s
+      retries: 60
+
+  web:
+    build: { context: ., dockerfile: dev/web.Dockerfile }
+    depends_on: [api]
+    ports: ["127.0.0.1:3417:8080"]
+    environment:
+      BLUEBOARD_DEV_AUTH: "true"
+      BLUEBOARD_API_URL: http://localhost:7370
+
+  agent:
+    build: { context: ., dockerfile: dev/dotnet-app.Dockerfile, args: { PROJECT: agents/Blueboard.EnrichmentAgent, DLL: blueboard-enrichment-agent.dll } }
+    depends_on:
+      api: { condition: service_healthy }
+    restart: on-failure
+    environment:
+      BOARD_URL: http://api
+      BOARD_DEV_PRINCIPAL: enrichment-agent
+      AGENT_MODE: scripted
+      AGENT_SCRIPT: /app/fixtures/agent-script.json
+      AGENT_POLL_SECONDS: "3"
+      AGENT_STATE_DIR: /tmp/agent-state
+      AGENT_START_FROM_BEGINNING: "true"
+
+volumes:
+  pgdata:

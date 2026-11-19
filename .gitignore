@@ -3,6 +3,8 @@ api/**/bin/
 api/**/obj/
 agents/**/bin/
 agents/**/obj/
+dev/**/bin/
+dev/**/obj/
 api/Blueboard.Api/local.settings.json
 .agent-state/
 

@@ -84,6 +84,8 @@ The trusted computing base is the Function App's code, its managed identity (`bl
 | T11 | **Database compromise** | Attacker edits `actions` to inject parameters | Postgres accepts Entra tokens only (no passwords) · stored params are re-validated against the schema before execution · every query is parameterised (Npgsql) | An attacker with DB write could still forge approvals. Restrict the Entra admin; use a private endpoint. |
 | T12 | **Supply chain** | Malicious npm or NuGet package | Pinned `pnpm-lock.yaml` + `--frozen-lockfile`, pinned NuGet versions, warnings as errors, CI on GitHub-hosted runners | Review `pnpm audit` / `dotnet list package --vulnerable`; enable Dependabot. |
 | T13 | **Leaked deployment credentials** | Publishing profile, storage keys | FTP and basic-auth publishing are off on both apps, so deployments need Entra (`az functionapp deploy`, `az webapp deploy`) · no storage keys exist (`allowSharedKeyAccess: false`) · App Insights local auth disabled · no client secret on the app registration (public client with PKCE) | n/a |
+| T14 | **SSRF through agent webhooks** | An agent subscribes `https://169.254.169.254/...` or a name that later resolves inside the VNet | Webhooks off unless an admin sets `WEBHOOK_ALLOWED_HOSTS` (exact hosts) and `WEBHOOK_SIGNING_KEY` · https only, ports 443/8443, no IP literals, no credentials in the URL · every resolved address must be public (no private, loopback, link-local, CGNAT, multicast or NAT64) at subscribe time **and** at connect time (the socket connects only to the address just checked, defeating DNS rebinding) · no redirects, no proxy, 10 s timeout · payloads carry ids only, never message content | A compromised allowlisted host learns that something happened (ids and timing). Keep the allowlist short. |
+| T15 | **Demo switches in production** | `DEMO_MODE`/base-URL override points Graph calls (with the managed identity's token) at an attacker's host | The override is honoured only with `DEMO_MODE` **and** `DEV_AUTH`; both are refused when `WEBSITE_INSTANCE_ID` is set; base URLs without `DEMO_MODE` stop start-up; demo mode never requests a token; real mode keeps the exact-origin check (unit-tested) | n/a |
 
 ## Controls in the code
 
@@ -102,8 +104,10 @@ The trusted computing base is the Function App's code, its managed identity (`bl
 | Safe markdown rendering (no HTML, http(s) links only) | `web/src/components/markdown.tsx` |
 | Audit trail (who requested, who decided, outcome) | `audit_log` table; written by broker, claims, enrichment, auth |
 | Dry-run by default | `BROKER_EXECUTE` (default `false`) |
-| `DEV_AUTH` refused in Azure (`WEBSITE_INSTANCE_ID` present) | `Settings.FromEnvironment` in `Core/Settings.cs` |
-| Untrusted-content handling in the agent prompt | `agents/Blueboard.EnrichmentAgent/Program.cs` |
+| `DEV_AUTH` and `DEMO_MODE` refused in Azure (`WEBSITE_INSTANCE_ID` present); Microsoft base-URL override only in demo mode | `Settings.FromEnvironment` in `Core/Settings.cs`, `MsOrigins` in `Graph/MsClient.cs` |
+| One input schema per request (MCP inputSchema, OpenAPI and validation generated from the same record) | `api/Blueboard.Contracts`, `Mcp/McpSchemas.cs`, `Http/OpenApi.cs` |
+| Webhook egress guard (allowlist, public addresses only, re-checked at connect) and HMAC-SHA256 signatures | `Webhooks/OutboundGuard.cs`, `Webhooks/WebhookService.cs`, `Blueboard.Contracts/WebhookSignature.cs` |
+| Untrusted-content handling in the agent prompt | `agents/Blueboard.EnrichmentAgent/ClaudeAgent.cs`, `skills/blueboard/SKILL.md` |
 
 Regression tests: `api/Blueboard.Api.Tests` (policy, aliases, parameter validation, token guard, role mapping, scope check, forged-header refusal, CSV, percentile) and `web/src/__tests__` (markdown). CI runs them on every push.
 

@@ -1,0 +1,12 @@
+**/bin/
+**/obj/
+**/node_modules/
+web/dist/
+.git/
+.deploy/
+.agent-state/
+**/local.settings.json
+**/*.log
+.env*
+!.env.example
+docs/screenshots/

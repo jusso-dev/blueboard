@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    The board's wire contract: request records for every REST body and MCP tool, the response records agents read,
+    and the JSON Schema generator. The API builds its MCP tool schemas and /api/openapi.json from these records,
+    and the agent SDK (agents/Blueboard.Agent.Sdk) uses the same records, so a field is defined once.
+    No dependencies beyond the base class library.
+  -->
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <RootNamespace>Blueboard.Contracts</RootNamespace>
+  </PropertyGroup>
+</Project>

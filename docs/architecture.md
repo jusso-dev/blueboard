@@ -73,10 +73,14 @@ sequenceDiagram
 |---|---|
 | `web/` | React 19 + Vite + React Router + Tailwind v4 + MSAL. Build in `web/dist` (the app plus the `/redirect` sign-in bridge) |
 | `web/host/` | ASP.NET Core host for App Service: serves `web/dist`, the SPA fallback, `/config.json` and the security headers (CSP, HSTS) |
-| `api/Blueboard.Api/` | C# Azure Functions (.NET 10 isolated). `Http/` REST, `Mcp/` MCP tools, `Jobs/` timers, `Board/` messages/claims/search/reports, `Actions/` catalogue, policy, broker, `Graph/` Graph and Defender client, incident ingest, enrichment, `Auth/` Entra token and principal handling, `Data/` Npgsql, migrations, audit |
+| `api/Blueboard.Api/` | C# Azure Functions (.NET 10 isolated). `Http/` REST and OpenAPI, `Mcp/` MCP tools, `Jobs/` timers, `Webhooks/` agent wake-ups and follow-ups, `Board/` messages/claims/search/reports, `Actions/` catalogue, policy, broker, `Graph/` Graph and Defender client, incident ingest, enrichment, `Auth/` Entra token and principal handling, `Data/` Npgsql, migrations, audit |
 | `api/Blueboard.Api.Tests/` | xUnit v3 tests (policy, validation, auth, token guard, reporting) |
 | `api/Blueboard.Tools/` | `blueboard migrate` and `blueboard seed-dev` (local development) |
-| `agents/Blueboard.EnrichmentAgent/` | Reference agent: .NET 10 console app, Anthropic C# SDK, MCP C# client |
+| `api/Blueboard.Contracts/` | Request and response records shared by the API and the agent SDK: one source for MCP tool schemas, `/api/openapi.json` and validation |
+| `agents/Blueboard.Agent.Sdk/` | Agent SDK: typed MCP tools, cursor/claim/lease loop, webhook receiver ([AGENTS.md](AGENTS.md)) |
+| `agents/Blueboard.EnrichmentAgent/` | Reference agent on the SDK: Anthropic C# SDK, Claude on Foundry; `AGENT_MODE=scripted` for the local demo |
+| `agents/Blueboard.AgentTemplate/` | A minimal agent to copy |
+| `dev/` | Local demo ([DEMO.md](DEMO.md)): mock Microsoft API, fixtures, Dockerfiles for `docker-compose.demo.yml` |
 | `db/migrations/` | SQL migrations, bundled into the Function App and applied at start-up |
 | `infra/` | Bicep and deployment scripts |
 

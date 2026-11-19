@@ -1,0 +1,73 @@
+{
+  "_comment": "Canned results for AGENT_MODE=scripted (local demo, no model). Keyed by Defender incident id. Each entry runs board lookups through MCP (so they show in the audit log), then posts a finding, IOCs and a verdict in the incident thread, then requests one action that waits for a human.",
+  "incidents": {
+    "1001": {
+      "lookups": [
+        { "kind": "user", "value": "ana.lopez@contoso.com" },
+        { "kind": "url", "value": "contoso-payroll-update.example" }
+      ],
+      "hunt": "EmailUrlInfo | where Url has 'contoso-payroll-update.example' | summarize recipients = dcount(NetworkMessageId)",
+      "finding": {
+        "body": "**Credential phishing, one recipient, link not yet clicked.** The sender domain `contoso-payroll-update.example` is a look-alike registered this week. Only ana.lopez@contoso.com received it (hunting: 1 message). URL detonation flagged the landing page as a fake sign-in form. No sign-ins from new locations for Ana since delivery.",
+        "payload": { "confidence": 0.9, "entities": ["ana.lopez@contoso.com", "contoso-payroll-update.example"], "evidence": "EmailUrlInfo hunt, URL detonation verdict, user lookup" }
+      },
+      "iocs": [
+        { "kind": "url", "value": "https://contoso-payroll-update.example/login", "verdict": "malicious", "source": "URL detonation" },
+        { "kind": "domain", "value": "contoso-payroll-update.example", "verdict": "malicious", "source": "look-alike domain" },
+        { "kind": "email", "value": "payroll-notice@contoso-payroll-update.example", "verdict": "malicious", "source": "sender" }
+      ],
+      "verdict": { "classification": "truePositive", "confidence": 0.9, "determination": "phishing" },
+      "action": {
+        "kind": "purge_email",
+        "params": { "messages": [ { "network_message_id": "6f2a1c9e-0b7d-4e3a-9c5f-1001a0000001", "recipient": "ana.lopez@contoso.com" } ], "action": "softDelete" },
+        "justification": "Confirmed credential-phishing message (look-alike payroll domain, fake sign-in page per URL detonation) still in one mailbox. Soft delete removes it before it is clicked."
+      }
+    },
+    "1002": {
+      "lookups": [
+        { "kind": "device", "value": "7c3f9e2a1b8d4c6e0f5a2b9d8c7e6f1a3b4c5d6e" },
+        { "kind": "file", "value": "4f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b4a3f2e1d0c9b8a7f6e5d4c3b" },
+        { "kind": "ip", "value": "203.0.113.77" }
+      ],
+      "hunt": "DeviceNetworkEvents | where RemoteIP == '203.0.113.77' | summarize devices = dcount(DeviceId)",
+      "finding": {
+        "body": "**Malicious script ran on ws-0142, contained to one device so far.** `update-check.ps1` was fetched from `cdn-update-check.example` by an encoded PowerShell command and has no prevalence in the tenant. The device then connected to 203.0.113.77, which no other device has contacted (hunting: 1 device). The machine is a finance workstation with high exposure in MDE.",
+        "payload": { "confidence": 0.85, "entities": ["ws-0142.contoso.com", "update-check.ps1", "203.0.113.77"], "evidence": "device and file lookups, DeviceNetworkEvents hunt" }
+      },
+      "iocs": [
+        { "kind": "sha256", "value": "4f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b4a3f2e1d0c9b8a7f6e5d4c3b", "verdict": "malicious", "source": "file lookup: no prevalence" },
+        { "kind": "url", "value": "https://cdn-update-check.example/update-check.ps1", "verdict": "malicious", "source": "download cradle" },
+        { "kind": "ip", "value": "203.0.113.77", "verdict": "suspicious", "source": "outbound after execution" }
+      ],
+      "verdict": { "classification": "truePositive", "confidence": 0.85, "determination": "malware" },
+      "action": {
+        "kind": "isolate_device",
+        "params": { "machine_id": "7c3f9e2a1b8d4c6e0f5a2b9d8c7e6f1a3b4c5d6e", "isolation_type": "Selective" },
+        "justification": "Unknown script executed via an encoded PowerShell download cradle, followed by a connection to a rare external IP. Selective isolation keeps Outlook and Teams working while we collect evidence."
+      }
+    },
+    "1003": {
+      "lookups": [
+        { "kind": "user", "value": "j.chen@contoso.com" },
+        { "kind": "ip", "value": "203.0.113.200" }
+      ],
+      "hunt": "SigninLogs | where UserPrincipalName == 'j.chen@contoso.com' | summarize countries = dcount(Location) by bin(TimeGenerated, 1h)",
+      "finding": {
+        "body": "**Likely account compromise: the Amsterdam sign-in used a legacy client and a hosting-provider IP.** Jordan signed in from Sydney on a managed device, then 20 minutes later from 203.0.113.200 (a hosting range, not a VPN Contoso uses) with IMAP. No MFA was performed on the second sign-in. I could not see mailbox rule changes: someone with Exchange access should check.",
+        "payload": { "confidence": 0.75, "entities": ["j.chen@contoso.com", "203.0.113.200"], "evidence": "user lookup, IP lookup, SigninLogs hunt" }
+      },
+      "iocs": [
+        { "kind": "ip", "value": "203.0.113.200", "verdict": "suspicious", "source": "hosting provider, legacy auth" },
+        { "kind": "user", "value": "j.chen@contoso.com", "verdict": "suspicious", "source": "impossible travel" }
+      ],
+      "verdict": { "classification": "truePositive", "confidence": 0.75, "determination": "compromisedAccount" },
+      "question": "@analyst can you check whether j.chen@contoso.com has new inbox rules or forwarding? I can't see Exchange.",
+      "action": {
+        "kind": "revoke_sessions",
+        "params": { "user": "j.chen@contoso.com" },
+        "justification": "Second sign-in from a hosting-provider IP over legacy IMAP 20 minutes after a Sydney sign-in, with no MFA. Revoking sessions cuts off any stolen refresh token."
+      }
+    }
+  },
+  "mention_reply": "Thanks for the mention. I'm the scripted demo agent: I replay canned results and can't investigate new questions. In a real deployment Claude would answer here."
+}

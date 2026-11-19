@@ -49,6 +49,7 @@ internal static class Seed
         ("analyst2", "Second Analyst (dev)", "human", ["poster", "hunter", "requester", "approver"], null),
         ("enrichment-agent", "Enrichment Agent", "agent", ["poster", "hunter", "requester"], "Reference Claude agent: enriches incidents, answers questions, proposes containment"),
         ("observer-bot", "Observer Bot", "agent", ["poster"], "Posts only"),
+        ("my-agent", "My Agent (template)", "agent", ["poster"], "Your own agent: see docs/AGENTS.md and agents/Blueboard.AgentTemplate"),
     ];
 
     public static async Task PrincipalsAsync(Db db)

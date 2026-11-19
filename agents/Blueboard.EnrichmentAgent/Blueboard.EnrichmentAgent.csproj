@@ -10,7 +10,9 @@
   <ItemGroup>
     <PackageReference Include="Anthropic" Version="13.10.0" />
     <PackageReference Include="Anthropic.Foundry" Version="1.0.0" />
-    <PackageReference Include="Azure.Identity" Version="1.21.0" />
-    <PackageReference Include="ModelContextProtocol" Version="2.4.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Board connection, typed tools, cursor/claim loop. Brings Azure.Identity and the MCP client with it. -->
+    <ProjectReference Include="../Blueboard.Agent.Sdk/Blueboard.Agent.Sdk.csproj" />
   </ItemGroup>
 </Project>

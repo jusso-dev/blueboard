@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { authHeaders, current } from "./auth";
+import { LiveCache, type Snapshot } from "./live";
 
 export type Author = { handle: string; display_name: string; kind: "agent" | "human" | "system" };
 export type Message = {
@@ -93,15 +94,30 @@ export async function download(path: string, filename: string) {
  * slowly. One shared ticker; it pauses while the tab is hidden and fires immediately when it returns.
  */
 const POLL_MS = 4000;
-const listeners = new Set<() => void>();
 let timer: ReturnType<typeof setInterval> | undefined;
 let lastOk = true;
 const statusListeners = new Set<(ok: boolean) => void>();
 
+/**
+ * One shared cache keyed by path: the shell, the rail and a page all asking for /actions?status=pending_approval
+ * share one request per tick instead of one each.
+ */
+const cache = new LiveCache(async (path) => {
+  try {
+    const data = await api<unknown>(path);
+    setLive(true);
+    return data;
+  } catch (e) {
+    const err = e instanceof ApiError ? e : new ApiError(String(e), 0);
+    if (err.status === 0 || err.status >= 500) setLive(false);
+    throw err;
+  }
+});
+
 function ensureTicker() {
   if (timer || typeof window === "undefined") return;
   const tick = () => {
-    if (document.visibilityState === "visible") listeners.forEach((l) => l());
+    if (document.visibilityState === "visible") void cache.refreshAll();
   };
   timer = setInterval(tick, POLL_MS);
   document.addEventListener("visibilitychange", tick);
@@ -115,7 +131,7 @@ export function setLive(ok: boolean) {
 
 /** Call after a write so every open view refreshes now, not on the next tick. */
 export function refreshAll() {
-  listeners.forEach((l) => l());
+  void cache.refreshAll();
 }
 
 export function useLive() {
@@ -127,37 +143,17 @@ export function useLive() {
   return ok;
 }
 
-/** Fetch JSON and keep it fresh with the shared poll. Pass null to skip. */
+const idle: Snapshot<never> = Object.freeze({ data: undefined, error: null, loading: false });
+const noop = () => () => {};
+
+/** Fetch JSON and keep it fresh with the shared poll. Pass null to skip. Same path, same request. */
 export function useLiveQuery<T>(path: string | null) {
-  const [data, setData] = useState<T | undefined>();
-  const [error, setError] = useState<ApiError | null>(null);
-  const [loading, setLoading] = useState(false);
-  const inflight = useRef(false);
-  const load = useCallback(async () => {
-    if (!path || inflight.current) return;
-    inflight.current = true;
-    setLoading(true);
-    try {
-      setData(await api<T>(path));
-      setError(null);
-      setLive(true);
-    } catch (e) {
-      const err = e instanceof ApiError ? e : new ApiError(String(e), 0);
-      setError(err);
-      if (err.status === 0 || err.status >= 500) setLive(false);
-    } finally {
-      inflight.current = false;
-      setLoading(false);
-    }
-  }, [path]);
-  useEffect(() => {
-    setData(undefined);
-    void load();
-  }, [load]);
-  useEffect(() => {
+  const subscribe = useCallback((onChange: () => void) => {
+    if (!path) return noop();
     ensureTicker();
-    listeners.add(load);
-    return () => void listeners.delete(load);
-  }, [load]);
-  return { data, error, loading, reload: load };
+    return cache.subscribe(path, onChange);
+  }, [path]);
+  const snap = useSyncExternalStore(subscribe, () => (path ? cache.get<T>(path) : idle), () => idle);
+  const reload = useCallback(() => (path ? cache.load(path) : Promise.resolve()), [path]);
+  return { data: snap.data as T | undefined, error: (snap.error as ApiError | null) ?? null, loading: snap.loading, reload };
 }

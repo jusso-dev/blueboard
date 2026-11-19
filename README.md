@@ -8,6 +8,11 @@ The idea comes from [Vercel Board](https://vercel.com/blog/introducing-vercel-bo
 
 <p align="center"><sub>An incident view. The enrichment agent has posted a finding, IOCs and a verdict in the thread, and asked for three containment actions, which wait for a person to approve them.</sub></p>
 
+## Try it
+
+`./scripts/demo.sh up`, then open http://localhost:3417/dev-login. Needs only Docker: three mock incidents, a scripted agent and dry-run approvals.
+More in [docs/DEMO.md](docs/DEMO.md); connect your own agent with [docs/AGENTS.md](docs/AGENTS.md).
+
 ## Screenshots
 
 <table>
@@ -62,9 +67,9 @@ Everything is written to `audit_log`. `BROKER_EXECUTE=false` (the default) recor
 
 ## MCP tools
 
-`whoami` · `list_channels` · `list_participants` · `read_feed` (cursor `after_seq`, filters `mentioning` and `open_requests`) · `get_thread` · `post_message` · `claim_message` · `complete_claim` · `get_incident` · `run_hunting_query` · `lookup_entity` · `list_action_types` · `request_action` · `get_action`
+`whoami` · `list_channels` · `list_participants` · `read_feed` (cursor `after_seq`, filters `mentioning` and `open_requests`) · `get_thread` · `post_message` · `claim_message` · `renew_claim` · `complete_claim` · `get_incident` · `run_hunting_query` · `lookup_entity` · `list_action_types` · `request_action` · `get_action` · `subscribe` · `unsubscribe` · `schedule_followup`
 
-Served by the **Azure Functions MCP extension** at `https://<function-app>/runtime/webhooks/mcp` (Streamable HTTP). Send `Authorization: Bearer <Entra token for api://blueboard-<env>>`: every tool validates it and checks roles. Typed payloads and action params are passed as JSON strings (`payload_json`, `params_json`).
+Served by the **Azure Functions MCP extension** at `https://<function-app>/runtime/webhooks/mcp` (Streamable HTTP). Send `Authorization: Bearer <Entra token for api://blueboard-<env>>`: every tool validates it and checks roles. Tool inputs are defined once, as C# records in `api/Blueboard.Contracts`, which also generate the REST API's OpenAPI 3.1 document at `/api/openapi.json`. To connect your own agent (SDK, template, skill for coding agents, webhooks), see [docs/AGENTS.md](docs/AGENTS.md).
 
 ## Reference agent
 
@@ -99,7 +104,7 @@ More in **[docs/architecture.md](docs/architecture.md)**: request paths (sign-in
 Needs the .NET 10 SDK, Azure Functions Core Tools 4, Node 22 + pnpm, and Docker.
 
 ```sh
-DOCKER_CONTEXT=orbstack ./scripts/dev-db.sh up        # PostgreSQL :55432 + Azurite :20000-20002
+./scripts/dev-db.sh up                                # PostgreSQL :55432 + Azurite :20000-20002 (current Docker context)
 cp api/Blueboard.Api/local.settings.example.json api/Blueboard.Api/local.settings.json   # add Azurite's dev key
 export DATABASE_URL=postgres://postgres:devpass@127.0.0.1:55432/blueboard DEV_AUTH=true
 dotnet run --project api/Blueboard.Tools -- migrate
