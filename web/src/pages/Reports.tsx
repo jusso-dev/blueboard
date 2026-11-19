@@ -27,6 +27,10 @@ type Report = {
   approval: Stat;
   actions: { status: string; n: number }[];
   rows: Row[];
+  dry_run?: {
+    would_have_run: number;
+    kinds: { kind: string; ran_auto: number; ran_approved: number; rejected: number; denied: number; expired: number; failed: number }[];
+  } | null;
 };
 
 const RANGES = [
@@ -192,6 +196,44 @@ export default function ReportsPage() {
                 )}
               </div>
             </section>
+
+            {r.dry_run && r.dry_run.kinds.length > 0 && (
+              <section aria-label="Dry run" className="overflow-x-auto border-b border-rule px-5 py-5">
+                <h2 className="text-sm font-semibold">
+                  Dry run <span className="label tnum ml-1">{r.dry_run.would_have_run} would have run</span>
+                </h2>
+                <p className="mt-1 text-xs text-muted">
+                  What the board would have done in this range with BROKER_EXECUTE on. Evidence for the week of dry run before going live.
+                </p>
+                <table className="mt-2 w-full min-w-[36rem] max-w-3xl text-[13px]">
+                  <caption className="sr-only">Dry-run outcomes by action</caption>
+                  <thead className="label">
+                    <tr className="border-b border-rule">
+                      <th className="py-1.5 text-left font-normal">Action</th>
+                      <th className="py-1.5 text-right font-normal">Would run (auto)</th>
+                      <th className="py-1.5 text-right font-normal">Would run (approved)</th>
+                      <th className="py-1.5 text-right font-normal">Rejected by policy</th>
+                      <th className="py-1.5 text-right font-normal">Denied</th>
+                      <th className="py-1.5 text-right font-normal">Expired</th>
+                      <th className="py-1.5 text-right font-normal">Failed</th>
+                    </tr>
+                  </thead>
+                  <tbody className="tnum">
+                    {r.dry_run.kinds.map((k) => (
+                      <tr key={k.kind} className="border-b border-rule last:border-0">
+                        <td className="label py-1.5 text-ink-2">{k.kind}</td>
+                        <td className="py-1.5 text-right text-ink">{k.ran_auto}</td>
+                        <td className="py-1.5 text-right text-ink">{k.ran_approved}</td>
+                        <td className="py-1.5 text-right text-ink-2">{k.rejected}</td>
+                        <td className="py-1.5 text-right text-ink-2">{k.denied}</td>
+                        <td className="py-1.5 text-right text-ink-2">{k.expired}</td>
+                        <td className="py-1.5 text-right text-ink-2">{k.failed}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </section>
+            )}
 
             <section aria-label="Incidents" className="overflow-x-auto">
               {rows.length === 0 ? (

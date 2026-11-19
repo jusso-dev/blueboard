@@ -1,7 +1,10 @@
+import { useMemo } from "react";
 import { useParams } from "react-router";
 import { Feed } from "../components/feed";
 import { PageHeader } from "../components/shell";
 import { useLiveQuery } from "../lib/api";
+import { targetsFromEntities, type IncidentEntities } from "../lib/actions";
+import { RequestActionButton, useCanRequest } from "../components/request-action";
 import { Empty, Severity } from "../components/ui";
 
 type IncidentDetail = {
@@ -12,15 +15,18 @@ type IncidentDetail = {
   status: string;
   web_url: string | null;
   alerts: { id: string; title?: string }[];
-  entities: { devices: unknown[]; users: unknown[]; ips: string[]; files: unknown[]; mitre: string[] };
+  entities: IncidentEntities;
 };
 
 export default function IncidentPage() {
   const { id = "" } = useParams();
   const { data: inc, error } = useLiveQuery<IncidentDetail>(`/incidents/${encodeURIComponent(id)}`);
+  const canRequest = useCanRequest();
+  const targets = useMemo(() => (inc ? targetsFromEntities(inc.entities, inc.graph_id) : []), [inc]);
   if (error) return <Empty title="Couldn't load this incident">{error.message}</Empty>;
   if (!inc) return null;
   const e = inc.entities;
+  const entityTargets = targets.filter((t) => t.type !== "incident");
   return (
     <>
       <PageHeader
@@ -38,6 +44,7 @@ export default function IncidentPage() {
           </span>
         }
       >
+        <RequestActionButton targets={targets} incident={inc.id} />
         {inc.web_url && (
           <a
             href={inc.web_url}
@@ -49,6 +56,19 @@ export default function IncidentPage() {
           </a>
         )}
       </PageHeader>
+      {canRequest && entityTargets.length > 0 && (
+        <section aria-label="Evidence you can act on" className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-rule px-5 py-1.5">
+          {entityTargets.map((t, i) => (
+            <span key={i} className="inline-flex min-w-0 items-center gap-1">
+              <span className="label">{t.type}</span>
+              <span className="max-w-64 truncate font-mono text-xs text-ink-2" title={t.label}>
+                {t.label}
+              </span>
+              <RequestActionButton targets={[t]} incident={inc.id} size="sm" label="Act" />
+            </span>
+          ))}
+        </section>
+      )}
       <Feed
         query={`incident=${inc.id}`}
         composer={{ channel: "incidents", incident: inc.id, placeholder: `Message about INC ${inc.graph_id}` }}

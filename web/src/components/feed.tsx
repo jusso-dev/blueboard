@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useLocation } from "react-router";
 import { api, refreshAll, useLiveQuery, type Message } from "../lib/api";
 import { MessageRow } from "./message";
 import { Button, cx, Empty, ErrorLine, Select } from "./ui";
@@ -146,9 +147,21 @@ export function Feed({
   const [thread, setThread] = useState<string | null>(null);
   const end = useRef<HTMLDivElement>(null);
   const count = data?.messages.length ?? 0;
+  // #m-<id> in the URL (after requesting an action): scroll to that message and open its thread, where status replies land.
+  const { hash } = useLocation();
+  const target = hash.startsWith("#m-") ? hash.slice(3) : null;
+  const shown = useRef<string | null>(null);
   useEffect(() => {
+    if (target && data?.messages.some((m) => m.id === target)) {
+      if (shown.current !== target) {
+        shown.current = target;
+        setThread(target);
+        document.getElementById(`m-${target}`)?.scrollIntoView({ block: "center" });
+      }
+      return;
+    }
     end.current?.scrollIntoView({ block: "end" });
-  }, [count, query]);
+  }, [count, query, target, data]);
   useEffect(() => setThread(null), [query]);
 
   return (

@@ -29,7 +29,7 @@ export function Shell() {
 /** Below md the rail collapses to a single row of the destinations people switch between most. */
 function MobileBar() {
   const path = useLocation().pathname;
-  const { data: pending } = useLiveQuery<Action[]>("/actions?status=pending_approval");
+  const { data: pending } = useLiveQuery<Action[]>("/actions?status=open");
   const items = [
     { href: "/", label: "Board", active: path === "/" || path.startsWith("/incidents") },
     { href: "/search", label: "Search", active: path === "/search" },
@@ -133,7 +133,7 @@ function Rail({ me }: { me: Me | null }) {
   const navigate = useNavigate();
   const { data: channels } = useLiveQuery<Channel[]>("/channels");
   const { data: incidents } = useLiveQuery<Incident[]>("/incidents");
-  const { data: pending } = useLiveQuery<Action[]>("/actions?status=pending_approval");
+  const { data: pending } = useLiveQuery<Action[]>("/actions?status=open");
   const searchRef = useRef<HTMLInputElement>(null);
 
   // "/" focuses search from anywhere (except while typing).
@@ -193,6 +193,9 @@ function Rail({ me }: { me: Me | null }) {
         <div className="space-y-px">
           <RailLink href="/approvals" active={path === "/approvals"} count={pending?.length}>
             Approvals
+          </RailLink>
+          <RailLink href="/policy" active={path === "/policy"}>
+            Policy
           </RailLink>
           {isAdmin && (
             <RailLink href="/reports" active={path === "/reports"}>

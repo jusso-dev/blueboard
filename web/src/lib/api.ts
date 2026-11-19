@@ -43,8 +43,61 @@ export type Action = {
   decided_by: string | null;
   decision_note: string | null;
   created_at: string;
+  request_message_id?: string | null;
+  expires_at?: string | null;
+  approvals_required?: number;
+  approvals?: string[];
+  /** Set for kinds in the policy's confirm_target list: the approver types this name back to approve. */
+  confirm_prompt?: string | null;
 };
 export type Me = { handle: string; display_name: string; kind: string; roles: string[] };
+
+/** One action kind from GET /actions?catalog=true. */
+export type CatalogEntry = {
+  kind: string;
+  title: string;
+  stage: string;
+  destructive: boolean;
+  target: TargetType;
+  params: JsonSchema;
+  mode: PolicyMode | null;
+};
+export type TargetType = "device" | "user" | "indicator" | "email" | "incident";
+export type PolicyMode = "auto" | "approval" | "two_approvers" | "disabled";
+export type JsonSchema = {
+  type?: string;
+  properties?: Record<string, JsonSchema>;
+  required?: string[];
+  enum?: string[];
+  default?: unknown;
+  description?: string;
+  pattern?: string;
+  minimum?: number;
+  maximum?: number;
+  minLength?: number;
+  maxLength?: number;
+  items?: JsonSchema;
+  minItems?: number;
+  maxItems?: number;
+};
+
+/** What policy would do with a request: POST /actions/preview and /policy/simulate. */
+export type Assessment = {
+  kind: string;
+  title: string;
+  destructive: boolean;
+  outcome: "reject" | "needs_approval" | "auto";
+  status: string;
+  approvals_required: number;
+  confirm_target: boolean;
+  expires_in_hours: number;
+  notes: string[];
+  summary: string;
+  describe: string;
+};
+
+/** Open = still waiting on a person: no approval yet, or 1 of 2. */
+export const OPEN_STATUSES = ["pending_approval", "approved_once"];
 
 export class ApiError extends Error {
   constructor(
