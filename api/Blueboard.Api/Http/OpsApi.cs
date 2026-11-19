@@ -31,13 +31,13 @@ public sealed class OpsApi(Endpoint ep, Setup setup, Notifier notifier, Particip
         ep.RunAsync(req, async me => await notifier.SendTestAsync(me, req.HttpContext.RequestAborted), Roles.Admin);
 
     [Function("admin-participants")]
-    public Task<IActionResult> ListParticipants([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "admin/participants")] HttpRequest req) =>
+    public Task<IActionResult> ListParticipants([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "manage/participants")] HttpRequest req) =>
         ep.RunAsync(req, async me => await participants.ListAsync(me, req.HttpContext.RequestAborted), Roles.Admin);
 
     public sealed record EnabledBody(bool Enabled, string? Reason);
 
     [Function("admin-participant-set")]
-    public Task<IActionResult> SetParticipant([HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "admin/participants/{handle}")] HttpRequest req, string handle) =>
+    public Task<IActionResult> SetParticipant([HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "manage/participants/{handle}")] HttpRequest req, string handle) =>
         ep.RunAsync(req, async me =>
         {
             var b = await Endpoint.BodyAsync<EnabledBody>(req);
@@ -45,13 +45,13 @@ public sealed class OpsApi(Endpoint ep, Setup setup, Notifier notifier, Particip
         }, Roles.Admin);
 
     [Function("admin-broker")]
-    public Task<IActionResult> GetBroker([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "admin/broker")] HttpRequest req) =>
+    public Task<IActionResult> GetBroker([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "manage/broker")] HttpRequest req) =>
         ep.RunAsync(req, async _ => await broker.GetPauseAsync(req.HttpContext.RequestAborted), Roles.Admin);
 
     public sealed record PauseBody(bool Paused, string? Reason);
 
     [Function("admin-broker-set")]
-    public Task<IActionResult> SetBroker([HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "admin/broker")] HttpRequest req) =>
+    public Task<IActionResult> SetBroker([HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "manage/broker")] HttpRequest req) =>
         ep.RunAsync(req, async me =>
         {
             var b = await Endpoint.BodyAsync<PauseBody>(req);

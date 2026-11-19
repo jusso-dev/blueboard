@@ -2,7 +2,7 @@ import { Link, Outlet, useLocation, useNavigate, useSearchParams } from "react-r
 import { createContext, useContext, useEffect, useRef, type ReactNode } from "react";
 import { cx, Kbd, Severity } from "./ui";
 import { signIn, signOut } from "../lib/auth";
-import { useLive, useLiveQuery, type Action, type Channel, type Incident, type Me } from "../lib/api";
+import { useLive, useLiveQuery, type Action, type BoardStatus, type Channel, type Incident, type Me } from "../lib/api";
 
 const MeContext = createContext<Me | null>(null);
 export const useMe = () => useContext(MeContext);
@@ -19,10 +19,57 @@ export function Shell() {
         <Rail me={me ?? null} />
         <MobileBar />
         <div className="flex min-h-0 min-w-0 flex-col">
+          <StatusBanner admin={!!me?.roles.includes("admin")} />
           <Outlet />
         </div>
       </div>
     </MeContext.Provider>
+  );
+}
+
+/**
+ * Persistent banner while the broker is paused, in dry run, or the policy is the default. Words first: the colour only
+ * repeats what the text says (design.md). Paused is critical; dry run and default policy are warnings.
+ */
+function StatusBanner({ admin }: { admin: boolean }) {
+  const { data: s } = useLiveQuery<BoardStatus>("/status");
+  if (!s) return null;
+  const lines: { tone: "critical" | "warning"; label: string; text: string }[] = [];
+  if (s.broker === "paused")
+    lines.push({
+      tone: "critical",
+      label: "Broker paused",
+      text: `by @${s.paused_by}. Nothing runs in the tenant; approvals are recorded and held${s.held ? ` (${s.held} held)` : ""}.`,
+    });
+  else if (s.broker === "dry_run") lines.push({ tone: "warning", label: "Dry run", text: "Approved actions are recorded but never sent to Defender or Entra (BROKER_EXECUTE is off)." });
+  if (s.broker !== "paused" && s.held > 0) lines.push({ tone: "warning", label: "Held actions", text: `${s.held} action(s) approved during a pause are waiting for Run now on Approvals.` });
+  if (s.policy !== "loaded")
+    lines.push({
+      tone: s.policy === "missing" ? "critical" : "warning",
+      label: s.policy === "missing" ? "Policy file missing" : "Default policy",
+      text: "No protected users, devices or indicators are configured.",
+    });
+  if (lines.length === 0) return null;
+  return (
+    <div role="status" className="shrink-0 border-b border-rule">
+      {lines.map((l) => (
+        <p
+          key={l.label}
+          className={cx(
+            "flex flex-wrap items-baseline gap-x-2 px-5 py-1.5 text-xs",
+            l.tone === "critical" ? "bg-critical-soft/50 text-ink" : "bg-warning-soft/40 text-ink",
+          )}
+        >
+          <span className={cx("font-semibold", l.tone === "critical" ? "text-critical" : "text-warning")}>{l.label}:</span>
+          <span className="text-ink-2">{l.text}</span>
+          {admin && (
+            <Link to={l.label === "Broker paused" ? "/admin/participants" : "/setup"} className="text-accent underline-offset-4 hover:underline">
+              {l.label === "Broker paused" ? "Broker controls" : "Setup"}
+            </Link>
+          )}
+        </p>
+      ))}
+    </div>
   );
 }
 
@@ -195,9 +242,17 @@ function Rail({ me }: { me: Me | null }) {
             Approvals
           </RailLink>
           {isAdmin && (
-            <RailLink href="/reports" active={path === "/reports"}>
-              Reports
-            </RailLink>
+            <>
+              <RailLink href="/reports" active={path === "/reports"}>
+                Reports
+              </RailLink>
+              <RailLink href="/admin/participants" active={path === "/admin/participants"}>
+                Participants
+              </RailLink>
+              <RailLink href="/setup" active={path === "/setup"}>
+                Setup
+              </RailLink>
+            </>
           )}
         </div>
 

@@ -8,6 +8,8 @@ import IncidentPage from "./pages/Incident";
 import SearchPage from "./pages/Search";
 import ApprovalsPage from "./pages/Approvals";
 import ReportsPage from "./pages/Reports";
+import SetupPage from "./pages/Setup";
+import ParticipantsPage from "./pages/Participants";
 import DevLogin from "./pages/DevLogin";
 import NotFound from "./pages/NotFound";
 import { initAuth } from "./lib/auth";
@@ -21,6 +23,8 @@ const router = createBrowserRouter([
       { path: "search", element: <SearchPage /> },
       { path: "approvals", element: <ApprovalsPage /> },
       { path: "reports", element: <ReportsPage /> },
+      { path: "setup", element: <SetupPage /> },
+      { path: "admin/participants", element: <ParticipantsPage /> },
       { path: "*", element: <NotFound /> },
     ],
   },

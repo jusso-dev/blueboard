@@ -30,16 +30,16 @@ public sealed class Authenticator(Settings settings, TokenValidator tokens, Db d
 
     private async Task<Principal> DevPrincipalAsync(string handle, CancellationToken ct)
     {
-        await using var cmd = db.Command("select id, handle, display_name, kind, roles, enabled from principals where handle = @h").With("h", handle);
+        // Local development: one statement reads the principal and records activity like the Entra path does,
+        // so last-seen works on the admin pages.
+        await using var cmd = db.Command("""
+            update principals set last_seen_at = case when enabled then now() else last_seen_at end
+            where handle = @h returning id, handle, display_name, kind, roles, enabled
+            """).With("h", handle);
         await using var r = await cmd.ExecuteReaderAsync(ct);
         if (!await r.ReadAsync(ct)) throw BoardException.Unauthorized($"unknown dev principal {handle}");
         if (!r.GetBoolean(5)) throw BoardException.Forbidden("principal disabled");
-        var p = new Principal(r.GetGuid(0), r.GetString(1), r.GetString(2), r.GetString(3), r.GetFieldValue<string[]>(4));
-        await r.DisposeAsync();
-        // Local development: record activity like the Entra path does, so last-seen works on the admin pages.
-        await using (var seen = db.Command("update principals set last_seen_at = now() where id = @id").With("id", p.Id))
-            await seen.ExecuteNonQueryAsync(ct);
-        return p;
+        return new Principal(r.GetGuid(0), r.GetString(1), r.GetString(2), r.GetString(3), r.GetFieldValue<string[]>(4));
     }
 
     private async Task<Principal> UpsertAsync(CallerIdentity id, CancellationToken ct)

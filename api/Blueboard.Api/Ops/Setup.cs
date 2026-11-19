@@ -317,6 +317,10 @@ public sealed class Setup(Db db, Settings settings, Policy policy, MsClient ms, 
         if (broken.Count > 0)
             return new("notify", name, CheckStatus.Failed, $"{broken.Count} sink(s) can't send: {string.Join(", ", broken.Select(b => b.Sink))}.",
                 "Fix the settings named below (docs/OPERATIONS.md § Notifications), then use Send test notification.", lines);
+        var failing = sinks.Where(s => last.TryGetValue(s.Sink, out var l) && l.Status == "failed").Select(s => s.Sink).ToList();
+        if (failing.Count > 0)
+            return new("notify", name, CheckStatus.Warning, $"Last delivery failed for {string.Join(", ", failing)}: approvers may not have been told.",
+                "Check the receiving end (Teams workflow, mailbox, webhook receiver) and NOTIFY_ALLOWED_HOSTS, then use Send test notification.", lines);
         return new("notify", name, CheckStatus.Ok, $"{string.Join(", ", sinks.Select(s => s.Sink))}, reminders every {settings.NotifyRemindMinutes} minutes.", null, lines);
     }
 

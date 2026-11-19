@@ -43,6 +43,15 @@ export type Action = {
   decided_by: string | null;
   decision_note: string | null;
   created_at: string;
+  held_at?: string | null;
+};
+/** Shell banner state: broker mode, pause, whether a policy file is loaded. Cheap, polled with everything else. */
+export type BoardStatus = {
+  broker: "live" | "dry_run" | "paused";
+  paused_by: string | null;
+  paused_at: string | null;
+  policy: "loaded" | "default" | "missing";
+  held: number;
 };
 export type Me = { handle: string; display_name: string; kind: string; roles: string[] };
 
