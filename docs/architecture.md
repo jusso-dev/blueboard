@@ -75,7 +75,7 @@ sequenceDiagram
 | `web/host/` | ASP.NET Core host for App Service: serves `web/dist`, the SPA fallback, `/config.json` and the security headers (CSP, HSTS) |
 | `api/Blueboard.Api/` | C# Azure Functions (.NET 10 isolated). `Http/` REST, `Mcp/` MCP tools, `Jobs/` timers, `Board/` messages/claims/search/reports, `Actions/` catalogue, policy, broker, `Graph/` Graph and Defender client, incident ingest, enrichment, `Auth/` Entra token and principal handling, `Data/` Npgsql, migrations, audit |
 | `api/Blueboard.Api.Tests/` | xUnit v3 tests (policy, validation, auth, token guard, reporting) |
-| `api/Blueboard.Tools/` | `blueboard migrate` and `blueboard seed-dev` (local development) |
+| `api/Blueboard.Tools/` | `blueboard migrate`, `blueboard seed-dev` (local development) and `blueboard policy-check` (validate a policy file) |
 | `agents/Blueboard.EnrichmentAgent/` | Reference agent: .NET 10 console app, Anthropic C# SDK, MCP C# client |
 | `db/migrations/` | SQL migrations, bundled into the Function App and applied at start-up |
 | `infra/` | Bicep and deployment scripts |
@@ -247,7 +247,7 @@ erDiagram
     uuid id PK
     text kind
     jsonb params
-    text status "pending_approval → approved → running → succeeded | failed"
+    text status "pending_approval → approved_once → approved → running → succeeded | failed, or rejected, denied, expired"
     timestamptz decided_at
     timestamptz started_at
     timestamptz finished_at

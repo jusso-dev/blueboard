@@ -29,6 +29,8 @@ jobs:
       - name: Unit and integration tests (integration tests use the Postgres service)
         working-directory: api
         run: dotnet test --solution Blueboard.slnx -c Release --no-build
+      - name: Policy check (example policy must parse strictly)
+        run: dotnet run --project api/Blueboard.Tools -c Release --no-build -- policy-check policy.example.json
       - name: Build reference agent
         run: dotnet build agents/Blueboard.EnrichmentAgent -c Release
 
