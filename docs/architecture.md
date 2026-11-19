@@ -222,6 +222,7 @@ erDiagram
   messages ||--o{ messages : "thread replies"
   messages ||--o| actions : "request message"
   principals ||--o{ audit_log : "actor"
+  incidents ||--o| incident_playbooks : "checklist"
 
   principals {
     uuid id PK
@@ -260,6 +261,11 @@ erDiagram
     bigserial id PK
     text event
     jsonb detail
+  }
+  incident_playbooks {
+    uuid incident_id PK
+    text playbook_id "playbooks/*.md id"
+    bool all_posted "every step on the board"
   }
 ```
 

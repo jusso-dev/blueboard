@@ -25,6 +25,8 @@ public sealed record Settings
     public int ClaimLeaseSeconds { get; init; } = 600;
     /// <summary>Where the policy came from, in words, for the setup page. Null when no policy is configured.</summary>
     public string? PolicySource { get; init; }
+    /// <summary>Folder of playbook Markdown files. Defaults to the copy bundled with the Function App.</summary>
+    public string PlaybooksDir { get; init; } = Path.Combine(AppContext.BaseDirectory, "playbooks");
 
     /// <summary>Public base URL of the web app (deep links in notifications), e.g. https://blueboard-web-x.azurewebsites.net.</summary>
     public string? WebBaseUrl { get; init; }
@@ -104,6 +106,7 @@ public sealed record Settings
             AuditDceEndpoint = Env("AUDIT_DCE_ENDPOINT"),
             AuditDcrId = Env("AUDIT_DCR_ID"),
             AuditStream = Env("AUDIT_STREAM") ?? "Custom-BlueboardAudit_CL",
+            PlaybooksDir = Env("BLUEBOARD_PLAYBOOKS_DIR") ?? Path.Combine(AppContext.BaseDirectory, "playbooks"),
         };
         // WEBSITE_INSTANCE_ID is set on every Azure Functions host: never allow dev auth or the demo there.
         var inAzure = Env("WEBSITE_INSTANCE_ID") is not null;

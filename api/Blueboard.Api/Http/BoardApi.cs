@@ -17,7 +17,8 @@ namespace Blueboard.Api.Http;
 /// Inputs are the contract records in Blueboard.Contracts (the same ones the MCP tools use), and each route's
 /// [RouteDoc] feeds /api/openapi.json.
 /// </summary>
-public sealed class BoardApi(Endpoint ep, BoardService board, Search search, Reporting reporting, Broker broker, Enrichment enrich, WebhookService hooks, Db db, Policy policy)
+public sealed class BoardApi(Endpoint ep, BoardService board, Search search, Reporting reporting, Broker broker, Enrichment enrich, WebhookService hooks, Db db, Policy policy,
+    IncidentQueries incidents, PlaybookRunner playbookRunner, PlaybookSet playbooks)
 {
     /// <summary>The web app sends ?type=a&amp;type=b; the contract field is types.</summary>
     private static readonly Dictionary<string, string> TypeAlias = new() { ["type"] = "types" };
@@ -60,9 +61,10 @@ public sealed class BoardApi(Endpoint ep, BoardService board, Search search, Rep
         ep.RunAsync(req, async me =>
         {
             var b = await Endpoint.BodyAsync<ClaimOp>(req);
-            return b.Op == "claim"
-                ? await board.ClaimAsync(me, Id(id), b.LeaseSeconds, Ct(req))
-                : await board.SettleClaimAsync(me, Id(id), b.Op, Ct(req));
+            if (b.Op == "claim") return await board.ClaimAsync(me, Id(id), b.LeaseSeconds, Ct(req));
+            var settled = await board.SettleClaimAsync(me, Id(id), b.Op, Ct(req));
+            await playbookRunner.AfterSettleAsync(settled, Ct(req));
+            return settled;
         });
 
     [Function("search")]
@@ -70,31 +72,39 @@ public sealed class BoardApi(Endpoint ep, BoardService board, Search search, Rep
     public Task<IActionResult> SearchMessages([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "search")] HttpRequest req) =>
         ep.RunAsync(req, async _ => await search.RunAsync(Endpoint.Query<SearchQuery>(req, TypeAlias), Ct(req)));
 
+    /// <summary>?view=queue: the Queue home page (open incidents with aggregates). Otherwise the most recent incidents.</summary>
     [Function("incidents-list")]
-    [RouteDoc("Latest 100 incidents")]
+    [RouteDoc("Incidents: view=queue for the home page queue, otherwise the latest", Query = typeof(IncidentsQuery))]
     public Task<IActionResult> Incidents([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "incidents")] HttpRequest req) =>
-        ep.RunAsync(req, async _ =>
+        ep.RunAsync(req, async me =>
         {
-            await using var cmd = db.Command("""
-                select id, graph_id, display_name, severity, status, classification, alert_count, web_url,
-                       (select count(*)::int from messages m where m.incident_id = incidents.id) as message_count
-                from incidents order by coalesce(updated_at_src, first_seen_at) desc limit 100
-                """);
-            var list = new List<object>();
-            await using var r = await cmd.ExecuteReaderAsync(Ct(req));
-            while (await r.ReadAsync())
-                list.Add(new
-                {
-                    id = r.GetGuid(0), graph_id = r.GetString(1), display_name = r.GetString(2), severity = r.GetString(3), status = r.GetString(4),
-                    classification = r.Get<string>("classification"), alert_count = r.GetInt32(6), web_url = r.Get<string>("web_url"), message_count = r.GetInt32(8),
-                });
-            return list;
+            var q = Endpoint.Query<IncidentsQuery>(req);
+            return q.View == "queue"
+                ? await incidents.QueueAsync(me, q.IncludeResolved, Ct(req))
+                : await incidents.ListAsync(q.Limit, Ct(req));
         });
 
+    /// <summary>Incident detail plus the summary panel, rolled up from stored messages and actions.</summary>
     [Function("incident-get")]
     [RouteDoc("Incident detail: alerts, MITRE techniques, entities")]
     public Task<IActionResult> Incident([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "incidents/{id}")] HttpRequest req, string id) =>
-        ep.RunAsync(req, async _ => await enrich.GetIncidentAsync(id, Ct(req)));
+        ep.RunAsync(req, async _ =>
+        {
+            var inc = await enrich.GetIncidentAsync(id, Ct(req));
+            var summary = await incidents.SummaryAsync(Guid.Parse(inc["id"]!.GetValue<string>()), Ct(req));
+            inc["summary"] = System.Text.Json.JsonSerializer.SerializeToNode(summary, Json.Options);
+            return inc;
+        });
+
+    /// <summary>Loaded playbooks and the files skipped at startup (for a setup page).</summary>
+    [Function("playbooks")]
+    [RouteDoc("Loaded playbooks and the files skipped at startup")]
+    public Task<IActionResult> PlaybookList([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "playbooks")] HttpRequest req) =>
+        ep.RunAsync(req, _ => Task.FromResult<object?>(new
+        {
+            playbooks = playbooks.All.Select(p => new { p.Id, p.Title, p.File, p.Match, steps = p.Steps.Count }),
+            problems = playbooks.Problems,
+        }));
 
     [Function("actions-list")]
     [RouteDoc("Brokered actions (or the catalogue with catalog=true)", Query = typeof(ActionsQuery), Response = typeof(ActionRow[]))]

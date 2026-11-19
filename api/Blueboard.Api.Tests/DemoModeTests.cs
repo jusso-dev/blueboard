@@ -1,3 +1,4 @@
+using Blueboard.Contracts;
 using Blueboard.Api.Core;
 using Blueboard.Api.Graph;
 using Xunit;

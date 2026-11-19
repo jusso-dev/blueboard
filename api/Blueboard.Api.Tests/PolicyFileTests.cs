@@ -1,3 +1,4 @@
+using Blueboard.Contracts;
 using System.Text.Json;
 using Blueboard.Api.Actions;
 using Blueboard.Api.Data;

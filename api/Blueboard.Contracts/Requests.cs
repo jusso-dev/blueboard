@@ -55,6 +55,11 @@ public sealed record CompleteClaimInput(
     [Description("Message id")] Guid MessageId,
     [Description("done (finished) or release (hand it back)")][AllowedValues("done", "release")] string Outcome);
 
+public sealed record IncidentsQuery(
+    [Description("queue: open incidents with what needs a person, for the home page")][AllowedValues("queue")] string? View = null,
+    [Description("Queue only: include resolved incidents")] bool IncludeResolved = false,
+    [Description("Plain list: 1-200, default 100")][Range(1, 200)] int Limit = 100);
+
 public sealed record IncidentQuery(
     [Description("Board incident id or Defender incident id")][StringLength(100, MinimumLength = 1)] string Incident);
 

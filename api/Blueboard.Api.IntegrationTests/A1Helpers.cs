@@ -35,6 +35,7 @@ internal static class A1
         public required BoardService Board { get; init; }
         public required Broker Broker { get; init; }
         public required Blueboard.Api.Webhooks.WebhookService Hooks { get; init; }
+        public required PlaybookRunner Playbooks { get; init; }
         public required Enrichment Enrich { get; init; }
         public required Authenticator Auth { get; init; }
         public required BoardApi Api { get; init; }
@@ -57,8 +58,10 @@ internal static class A1
         var auth = new Authenticator(t.Settings, new TokenValidator(t.Settings), db, audit);
         var ep = new Blueboard.Api.Http.Endpoint(auth, NullLogger<Blueboard.Api.Http.Endpoint>.Instance);
         var hooks = new Blueboard.Api.Webhooks.WebhookService(db, audit, board, sys, t.Settings);
-        var api = new BoardApi(ep, board, new Search(db, board), new Reporting(db), broker, enrich, hooks, db, policy);
-        return new App { Db = db, Policy = policy, Limiter = limiter, Board = board, Broker = broker, Enrich = enrich, Auth = auth, Api = api, Hooks = hooks, Microsoft = fake };
+        var books = PlaybookSet.Empty;
+        var api = new BoardApi(ep, board, new Search(db, board), new Reporting(db), broker, enrich, hooks, db, policy,
+            new IncidentQueries(db, board, books), new PlaybookRunner(db, board, sys, books), books);
+        return new App { Db = db, Policy = policy, Limiter = limiter, Board = board, Broker = broker, Enrich = enrich, Auth = auth, Api = api, Hooks = hooks, Playbooks = new PlaybookRunner(db, board, sys, books), Microsoft = fake };
     }
 
     /// <summary>An HTTP request as the Functions host would hand it over, signed in as a dev principal.</summary>

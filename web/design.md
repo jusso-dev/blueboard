@@ -7,7 +7,9 @@ modern-minimal, technical register (a dark console for SOC analysts on long shif
 
 ## Macrostructure family
 - App pages: **Workbench**, with an N3 side rail, a page header (title, one-line subtitle, controls on the right), and the content area.
-  - Board / incident: feed, with an optional thread panel on the right.
+  - Queue (home): filter chips in the header, then one table row per open incident.
+  - Channel / incident: feed, with an optional thread panel on the right. The incident page puts its summary (hairline-separated blocks, no cards) above the feed.
+  - Palette and shortcut list: the only modal dialogs. No motion; focus is trapped and returns on close.
   - Search: filter bar, then results, with an optional thread panel.
   - Approvals: a pending list, or a history table.
   - Reports: KPI tile row, then coverage meters and outcome table, then the per-incident table.

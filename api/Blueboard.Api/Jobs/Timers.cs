@@ -1,4 +1,5 @@
 using Blueboard.Api.Actions;
+using Blueboard.Api.Board;
 using Blueboard.Api.Core;
 using Blueboard.Api.Data;
 using Blueboard.Api.Graph;
@@ -14,7 +15,7 @@ namespace Blueboard.Api.Jobs;
 /// Background work. Timer triggers run on one instance at a time (singleton lock in host storage);
 /// a Postgres advisory lock makes that hold even across deployment slots.
 /// </summary>
-public sealed class Timers(Db db, Ingest ingest, Broker broker, WebhookService hooks, Notifier notifier, AuditExporter auditExport, Settings settings, ILogger<Timers> log)
+public sealed class Timers(Db db, Ingest ingest, Broker broker, WebhookService hooks, Notifier notifier, AuditExporter auditExport, PlaybookRunner playbooks, Settings settings, ILogger<Timers> log)
 {
     private const long LockKey = 7_340_001;
     /// <summary>The webhook loop has its own lock so a slow ingest never delays an agent's wake-up.</summary>
@@ -94,6 +95,18 @@ public sealed class Timers(Db db, Ingest ingest, Broker broker, WebhookService h
             if (n > 0) log.LogInformation("exported {Count} audit row(s)", n);
         }, ct);
     }
+
+    /// <summary>Backstop for playbook steps whose prerequisites were completed outside the API (e.g. a lease edge case).</summary>
+    [Function("unlock-playbook-steps")]
+    public async Task UnlockPlaybookSteps([TimerTrigger("15 */1 * * * *")] TimerInfo timer, CancellationToken ct)
+    {
+        await WithLock(LockKey, async () =>
+        {
+            var posted = await playbooks.UnlockPendingAsync(ct);
+            if (posted > 0) log.LogInformation("posted {Count} unlocked playbook steps", posted);
+        }, ct);
+    }
+
 
     private async Task WithLock(long key, Func<Task> work, CancellationToken ct)
     {

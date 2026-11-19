@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useLocation } from "react-router";
 import { PageHeader, useMe } from "../components/shell";
+import { useListNav, type NavRowProps } from "../components/shortcuts";
 import { api, refreshAll, useLiveQuery, type Action, type BoardStatus } from "../lib/api";
 import { actionTitle } from "../lib/actions";
 import { ActionStatusTag } from "../components/request-action";
@@ -82,7 +83,7 @@ function Held({ a, canRun, mine, paused, target }: { a: Action; canRun: boolean;
   );
 }
 
-function Pending({ a, canDecide, me, target }: { a: Action; canDecide: boolean; me: string | undefined; target: boolean }) {
+function Pending({ a, canDecide, me, target, navProps }: { a: Action; canDecide: boolean; me: string | undefined; target: boolean; navProps?: NavRowProps }) {
   const [note, setNote] = useState("");
   const [confirm, setConfirm] = useState("");
   const [busy, setBusy] = useState<"approve" | "deny" | null>(null);
@@ -105,11 +106,13 @@ function Pending({ a, canDecide, me, target }: { a: Action; canDecide: boolean; 
   };
   const confirmed = !needsConfirm || confirm.trim().length > 0;
   return (
+    // j/k move between requests. Deliberately no Enter or single-key shortcut here: approving is always a click.
     <article
+      {...navProps}
       id={`action-${a.id}`}
-      tabIndex={-1}
+      aria-label={`${actionTitle(a.kind)} requested by @${a.requested_by}`}
       aria-current={target || undefined}
-      className={cx("border-b border-rule px-5 py-4 focus:outline-none", target && "bg-accent-soft/30 shadow-[inset_2px_0_0_var(--color-accent)]")}
+      className={cx("border-b border-rule px-5 py-4 focus:outline-none focus-visible:outline-offset-[-2px]", target && "bg-accent-soft/30 shadow-[inset_2px_0_0_var(--color-accent)]")}
     >
       <header className="flex flex-wrap items-center gap-2">
         <h2 className="text-sm font-semibold">{actionTitle(a.kind)}</h2>
@@ -218,6 +221,7 @@ export default function ApprovalsPage() {
   useEffect(() => {
     if (target && pending && held && !pending.some((a) => a.id === target) && !held.some((a) => a.id === target)) setView("history");
   }, [target, pending, held]);
+  const nav = useListNav(view === "pending" ? pending : undefined, (a) => a.id);
 
   return (
     <>
@@ -232,7 +236,7 @@ export default function ApprovalsPage() {
           ]}
         />
       </PageHeader>
-      <div className="min-h-0 flex-1 overflow-y-auto" aria-live="polite">
+      <div ref={nav.container as React.RefObject<HTMLDivElement>} className="min-h-0 flex-1 overflow-y-auto" aria-live="polite">
         {error && <Empty title="Couldn't load actions">{error.message}</Empty>}
         {view === "pending" && held && held.length > 0 && (
           <section aria-label="Held actions">
@@ -242,7 +246,7 @@ export default function ApprovalsPage() {
           </section>
         )}
         {view === "pending" && pending?.length === 0 && !held?.length && <Empty title="Nothing waiting for approval" />}
-        {view === "pending" && pending?.map((a) => <Pending key={a.id} a={a} canDecide={!!canDecide} me={me?.handle} target={target === a.id} />)}
+        {view === "pending" && pending?.map((a) => <Pending key={a.id} a={a} canDecide={!!canDecide} me={me?.handle} target={target === a.id} navProps={nav.rowProps(a)} />)}
 
         {view === "history" && (
           <div className="overflow-x-auto"><table className="w-full min-w-[40rem] text-left text-[13px]">

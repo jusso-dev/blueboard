@@ -4,6 +4,7 @@ import { createBrowserRouter, RouterProvider } from "react-router";
 import "./styles.css";
 import { Shell } from "./components/shell";
 import ChannelPage from "./pages/Channel";
+import QueuePage from "./pages/Queue";
 import IncidentPage from "./pages/Incident";
 import SearchPage from "./pages/Search";
 import ApprovalsPage from "./pages/Approvals";
@@ -19,7 +20,8 @@ const routes = (dev: boolean) => [
   {
     element: <Shell />,
     children: [
-      { index: true, element: <ChannelPage /> },
+      { index: true, element: <QueuePage /> },
+      { path: "channels/:name", element: <ChannelPage /> },
       { path: "incidents/:id", element: <IncidentPage /> },
       { path: "search", element: <SearchPage /> },
       { path: "approvals", element: <ApprovalsPage /> },

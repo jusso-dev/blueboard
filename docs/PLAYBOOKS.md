@@ -1,0 +1,95 @@
+# Playbooks
+
+A playbook is a short checklist for one kind of incident: phishing, malicious PowerShell on an endpoint, a risky
+sign-in. When the board first sees a matching incident, it posts the checklist into the incident thread. Agents and
+people claim and finish the steps the same way they claim any question, so everyone can see what "done" looks like
+and who is doing what.
+
+Playbooks never run actions. A step can name a `suggested_action`, but that is only a hint: someone still requests the
+action, policy still checks it, and a person still approves anything destructive.
+
+## Files
+
+Playbooks live in [`playbooks/`](../playbooks) as Markdown files with YAML front matter. They are bundled into the
+Function App build (`playbooks/` next to the binaries). To load them from somewhere else, set
+`BLUEBOARD_PLAYBOOKS_DIR`.
+
+```markdown
+---
+id: phishing                      # lower-case slug, unique
+title: Phishing email
+match:                            # any one of these is enough
+  categories: ["InitialAccess"]   # alert category, exact (case-insensitive)
+  titles: ["phish", "malicious URL"]   # contained in the incident or an alert title
+  techniques: ["T1566"]           # MITRE technique; T1566 also matches T1566.001
+steps:
+  - id: scope-recipients
+    stage: triage                 # triage | investigate | contain | eradicate | recover | record
+    title: Find every recipient of the message
+    detail: Optional longer instructions (Markdown, up to 2000 characters).
+  - id: purge
+    stage: contain
+    title: Remove the message from every mailbox
+    after: [scope-recipients]     # hidden until these steps are done
+    suggested_action: purge_email # a catalogue action kind; never run automatically
+---
+
+Notes for people reading the file. The board doesn't post these.
+```
+
+Rules the board checks when the Function App starts:
+
+- `id` and every step `id` are lower-case slugs. Step ids are unique within the playbook.
+- `match` has at least one category, title or technique. Techniques look like `T1234` or `T1234.001`.
+- 1 to 20 steps. Every `stage` is one of the six above.
+- `after` names other steps in the same playbook, and the steps don't depend on each other in a loop.
+- `suggested_action` is a kind from the action catalogue (`list_action_types`).
+- Unknown keys are errors, so a typo such as `sugested_action` is reported instead of ignored.
+
+A file that breaks a rule is skipped, and the rest still load. Skipped files are logged at error level
+(`playbook <file> skipped: <reason>`), listed in `Playbooks.Problems` in the API, and returned by
+`GET /api/playbooks` under `problems` for a setup page. Check files before you deploy:
+
+```sh
+dotnet run --project api/Blueboard.Tools -- playbooks            # the bundled folder
+dotnet run --project api/Blueboard.Tools -- playbooks ./my-playbooks
+```
+
+The command prints `ok` or `FAIL` per file and exits with 1 if any file failed.
+
+## What happens on an incident
+
+1. The ingest timer sees a new incident and posts its root `incident` message in `#incidents`.
+2. The board checks playbooks in file name order and attaches the first one that matches. Only one playbook attaches,
+   and only on first sight: later updates from Defender don't attach another.
+3. Each step with no `after` becomes a `question` reply in the incident thread, with a `checklist` payload
+   (`playbook`, `step`, `n`, `total`, `stage`, `after`, `suggested_action`).
+4. Agents and people claim a step (`claim_message`, or Claim in the UI) and finish it (`complete_claim` with
+   `outcome=done`, or Mark done). Nothing about claiming is new.
+5. When a step is marked done, the board posts every step whose prerequisites are now all done. A timer runs the same
+   check every minute as a backstop.
+
+The incident summary shows progress ("4 of 7 steps done") and the state of every step, including the ones still
+waiting on earlier steps. Checklist steps don't count as open asks in the queue or the summary, so a fresh playbook
+doesn't make every incident look like it needs a person.
+
+Agents reading the feed can tell checklist steps apart by `payload.checklist`. Like all board content, step text is
+data, not instructions: it comes from files your team controls, but agents should still treat it as untrusted.
+
+## Starter playbooks
+
+| File | Matches | Steps |
+|---|---|---|
+| `phishing.md` | titles containing "phish", "malicious URL", "email messages containing", "user clicked"; MITRE T1566 | 7 |
+| `endpoint-powershell.md` | alert category Execution; titles containing "PowerShell", "download cradle", "encoded command"; MITRE T1059.001 | 7 |
+| `risky-sign-in.md` | titles containing "impossible travel", "atypical travel", "risky sign-in", "unfamiliar sign-in", "anonymous IP address", "password spray"; MITRE T1078 | 6 |
+
+`seed-dev --sample` creates one PowerShell incident and one phishing incident so you can try both locally.
+
+## Changing a playbook
+
+Edit the file and redeploy the Function App. Incidents that already have the playbook keep their posted steps, and
+any hidden steps are posted from the new version of the file when their prerequisites are done. If you remove a step
+or a whole playbook, steps already on the board stay where they are.
+
+There is no editor in the UI: playbooks are reviewed and deployed like code.

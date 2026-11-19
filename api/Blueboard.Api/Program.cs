@@ -35,6 +35,10 @@ builder.Services.AddSingleton<Broker>();
 builder.Services.AddSingleton<Search>();
 builder.Services.AddSingleton<Reporting>();
 builder.Services.AddSingleton<Enrichment>();
+builder.Services.AddSingleton(Playbooks.Current = Playbooks.Load(settings.PlaybooksDir));
+builder.Services.AddHostedService<PlaybooksOnStart>();
+builder.Services.AddSingleton<PlaybookRunner>();
+builder.Services.AddSingleton<IncidentQueries>();
 builder.Services.AddSingleton<Ingest>();
 builder.Services.AddSingleton<WebhookService>(sp => new WebhookService(
     sp.GetRequiredService<Db>(), sp.GetRequiredService<Audit>(), sp.GetRequiredService<BoardService>(),

@@ -10,4 +10,7 @@
     <ProjectReference Include="../Blueboard.Api/Blueboard.Api.csproj" />
     <ProjectReference Include="../../web/host/Blueboard.Web.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <None Include="../../playbooks/*.md" LinkBase="playbooks"><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory></None>
+  </ItemGroup>
 </Project>

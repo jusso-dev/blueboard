@@ -9,5 +9,6 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="../../db/migrations/*.sql" LinkBase="migrations"><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory></None>
+    <None Include="../../playbooks/*.md" LinkBase="playbooks"><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory></None>
   </ItemGroup>
 </Project>

@@ -12,9 +12,9 @@ public sealed record IngestResult(string Since, int Fetched, int Created, int Up
 
 /// <summary>
 /// Polls Graph /security/incidents (Defender XDR + Sentinel) and announces new or changed incidents in
-/// #incidents. New incidents get a root `incident` message; meaningful changes get a `status` reply.
+/// #incidents. New incidents get a root `incident` message (and the first matching playbook); meaningful changes get a `status` reply.
 /// </summary>
-public sealed class Ingest(Db db, BoardService board, MsClient ms, SystemPrincipal system, Settings settings)
+public sealed class Ingest(Db db, BoardService board, MsClient ms, SystemPrincipal system, Settings settings, PlaybookRunner? playbooks = null)
 {
     private const string CursorKey = KvState.IngestCursor;
 
@@ -85,10 +85,12 @@ public sealed class Ingest(Db db, BoardService board, MsClient ms, SystemPrincip
                 ? string.Join("\n", al.EnumerateArray().Take(10).Select(a => $"- [{Str(a, "severity") ?? "?"}] {Str(a, "title") ?? Str(a, "id")} ({Str(a, "serviceSource") ?? "unknown source"})"))
                 : "";
             var webUrl = Str(inc, "incidentWebUrl");
-            await board.PostAsync(boardPrincipal, new PostInput("incidents",
+            var announced = await board.PostAsync(boardPrincipal, new PostInput("incidents",
                 $"**{severity.ToUpperInvariant()}** incident {graphId}: {Str(inc, "displayName")}\n\n{Summary(entities)}\n\n{alerts}"
                 + (webUrl is not null && webUrl.StartsWith("https://", StringComparison.Ordinal) ? $"\n\n[Open in Defender]({webUrl})" : ""),
                 "incident", Json.Element(new { graph_id = graphId, severity, status, alert_count = alertCount, entities }), null, incidentId.ToString()), system: true, ct);
+            // First sight: attach the first matching playbook; its steps become claimable questions in this thread.
+            if (playbooks is not null) await playbooks.AttachAsync(incidentId, inc, announced.Id, ct);
             return UpsertOutcome.Created;
         }
 

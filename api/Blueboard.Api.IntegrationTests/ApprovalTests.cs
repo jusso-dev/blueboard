@@ -1,3 +1,4 @@
+using Blueboard.Contracts;
 using Blueboard.Api.Actions;
 using Blueboard.Api.Core;
 using Blueboard.Api.Data;

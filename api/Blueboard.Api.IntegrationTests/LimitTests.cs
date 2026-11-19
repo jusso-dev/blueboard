@@ -44,7 +44,7 @@ public sealed class LimitTests(TestBoard t) : IClassFixture<TestBoard>
     {
         var app = A1.Build(t, WithAgent(new LimitSet { Hunt = new(3, 60) }), limited: true);
         var agent = await NewPrincipal("agent");
-        var tools = new BoardTools(app.Auth, app.Board, app.Broker, app.Enrich, app.Hooks, app.Policy, NullLogger<BoardTools>.Instance);
+        var tools = new BoardTools(app.Auth, app.Board, app.Broker, app.Enrich, app.Hooks, app.Policy, app.Playbooks, NullLogger<BoardTools>.Instance);
         var ctx = new ToolInvocationContext
         {
             Name = "run_hunting_query",

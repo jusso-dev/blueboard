@@ -1,6 +1,7 @@
 import { Link, Outlet, useLocation, useNavigate, useSearchParams } from "react-router";
-import { createContext, useContext, useEffect, useRef, type ReactNode } from "react";
+import { createContext, useContext, type ReactNode } from "react";
 import { cx, Kbd, Severity } from "./ui";
+import { ShortcutsProvider, useSearchShortcut, useShortcutDialogs } from "./shortcuts";
 import { signIn, signOut } from "../lib/auth";
 import { useLive, useLiveQuery, type Action, type BoardStatus, type Channel, type Incident, type Me } from "../lib/api";
 
@@ -15,14 +16,16 @@ export function Shell() {
   if (me && !me.roles.includes("poster")) return <NoRole me={me} />;
   return (
     <MeContext.Provider value={me ?? null}>
+      <ShortcutsProvider me={me ?? null}>
       <div className="grid h-dvh grid-cols-[232px_minmax(0,1fr)] max-md:grid-cols-1 max-md:grid-rows-[auto_minmax(0,1fr)]">
         <Rail me={me ?? null} />
         <MobileBar />
-        <div className="flex min-h-0 min-w-0 flex-col">
+        <main className="flex min-h-0 min-w-0 flex-col">
           <StatusBanner admin={!!me?.roles.includes("admin")} />
           <Outlet />
-        </div>
+        </main>
       </div>
+      </ShortcutsProvider>
     </MeContext.Provider>
   );
 }
@@ -78,7 +81,7 @@ function MobileBar() {
   const path = useLocation().pathname;
   const { data: pending } = useLiveQuery<Action[]>("/actions?status=open");
   const items = [
-    { href: "/", label: "Board", active: path === "/" || path.startsWith("/incidents") },
+    { href: "/", label: "Queue", active: path === "/" || path.startsWith("/incidents") },
     { href: "/search", label: "Search", active: path === "/search" },
     { href: "/approvals", label: pending?.length ? `Approvals · ${pending.length}` : "Approvals", active: path === "/approvals" },
   ];
@@ -179,24 +182,12 @@ function Rail({ me }: { me: Me | null }) {
   const live = useLive();
   const navigate = useNavigate();
   const { data: channels } = useLiveQuery<Channel[]>("/channels");
-  const { data: incidents } = useLiveQuery<Incident[]>("/incidents");
+  const { data: incidents } = useLiveQuery<Incident[]>("/incidents?limit=5");
   const { data: pending } = useLiveQuery<Action[]>("/actions?status=open");
-  const searchRef = useRef<HTMLInputElement>(null);
+  const searchRef = useSearchShortcut(); // "/" focuses it (components/shortcuts.tsx)
+  const { openHelp } = useShortcutDialogs();
 
-  // "/" focuses search from anywhere (except while typing).
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const t = e.target as HTMLElement;
-      if (e.key === "/" && !["INPUT", "TEXTAREA", "SELECT"].includes(t.tagName)) {
-        e.preventDefault();
-        searchRef.current?.focus();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
-
-  const channel = path === "/" ? params.get("channel") ?? "incidents" : null;
+  const channel = path.startsWith("/channels/") ? decodeURIComponent(path.split("/")[2] ?? "") : null;
   const incident = path.startsWith("/incidents/") ? path.split("/")[2] : null;
   const isAdmin = me?.roles.includes("admin");
 
@@ -217,7 +208,7 @@ function Rail({ me }: { me: Me | null }) {
         role="search"
         onSubmit={(e) => {
           e.preventDefault();
-          const q = searchRef.current?.value.trim();
+          const q = searchRef?.current?.value.trim();
           navigate(q ? `/search?q=${encodeURIComponent(q)}` : "/search");
         }}
       >
@@ -238,8 +229,14 @@ function Rail({ me }: { me: Me | null }) {
 
       <nav aria-label="Board" className="min-h-0 flex-1 space-y-5 overflow-y-auto px-3 pb-4">
         <div className="space-y-px">
+          <RailLink href="/" active={path === "/"}>
+            Queue
+          </RailLink>
           <RailLink href="/approvals" active={path === "/approvals"} count={pending?.length}>
             Approvals
+          </RailLink>
+          <RailLink href="/search" active={path === "/search"}>
+            Search
           </RailLink>
           <RailLink href="/policy" active={path === "/policy"}>
             Policy
@@ -263,7 +260,7 @@ function Rail({ me }: { me: Me | null }) {
           <p className="label px-2 pb-1">Channels</p>
           <div className="space-y-px">
             {channels?.map((c) => (
-              <RailLink key={c.name} href={`/?channel=${c.name}`} active={channel === c.name}>
+              <RailLink key={c.name} href={`/channels/${encodeURIComponent(c.name)}`} active={channel === c.name}>
                 <span className="text-faint">#</span> {c.name}
               </RailLink>
             ))}
@@ -271,9 +268,9 @@ function Rail({ me }: { me: Me | null }) {
         </div>
 
         <div>
-          <p className="label px-2 pb-1">Incidents</p>
+          <p className="label px-2 pb-1">Recent incidents</p>
           <div className="space-y-px">
-            {incidents?.length === 0 && <p className="px-2 text-xs text-faint">None yet. The poller posts them here.</p>}
+            {incidents?.length === 0 && <p className="px-2 text-xs text-faint">None yet. The poller posts them to the queue.</p>}
             {incidents?.map((i) => (
               <Link
                 key={i.id}
@@ -294,6 +291,10 @@ function Rail({ me }: { me: Me | null }) {
           </div>
         </div>
       </nav>
+
+      <button type="button" onClick={openHelp} className="label mx-3 mb-2 flex items-center gap-1.5 rounded-[var(--radius-control)] px-2 py-1 text-left hover:text-ink">
+        <Kbd>?</Kbd> Keyboard shortcuts
+      </button>
 
       {me && (
         <div className="flex items-end gap-2 border-t border-rule px-4 py-3">
