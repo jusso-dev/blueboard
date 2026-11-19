@@ -1,61 +1,121 @@
-// Stage 2 of 2: blueboard on Azure Container Apps. Run infra/foundation.bicep first (registry + identities).
+// blueboard on Azure: static React front end + C# Azure Functions back end.
 //
-//   board         Next.js (UI, REST, SSE, MCP, ingest poller, action broker). Easy Auth (Entra) for humans;
-//                 /api/mcp and /.well-known are excluded so agents authenticate with bearer tokens.
-//   migrate       Container Apps job that applies db/migrations.
-//   enrichment    Reference Claude agent. Talks only to the board's MCP endpoint and to Foundry.
+//   web    Azure Static Web Apps (Standard). Serves the React build, signs people in with Microsoft Entra
+//          ID (custom registration, no client secret: federated credential on a managed identity), and
+//          proxies /api/* to the linked Function App.
+//   api    Azure Functions, Flex Consumption, .NET 10 isolated. REST for the web app, the MCP endpoint for
+//          agents (/runtime/webhooks/mcp, Entra bearer tokens), timer triggers for the Defender incident
+//          poller and stuck-action recovery.
+//   data   Azure Database for PostgreSQL Flexible Server 16, Entra authentication only.
 //
-// Identities (no secrets for Microsoft APIs):
-//   id-board      Graph + Defender application permissions, Postgres Entra admin. Granted by infra/grant-permissions.sh.
-//   id-agent      Board.Post / Board.Hunt / Board.RequestActions app roles on the board API, and
-//                 "Cognitive Services User" on the Foundry resource. Nothing in Defender/Entra.
+// Identities (no stored secrets anywhere):
+//   id-api   Function App: Graph + Defender application permissions (infra/grant-permissions.sh),
+//            PostgreSQL Entra admin, host storage data roles, Application Insights publisher.
+//   id-swa   Static Web App: federated credential on the board app registration (replaces a client secret).
 
 targetScope = 'resourceGroup'
 
 param location string = resourceGroup().location
+@description('Static Web Apps is offered in a few regions only (westus2, centralus, eastus2, westeurope, eastasia). Content is served globally either way.')
+param swaLocation string = 'eastasia'
 param namePrefix string = 'blueboard'
-@description('Login server of the registry from foundation.bicep, e.g. blueboardacrxyz.azurecr.io.')
-param acrLoginServer string
-@description('Container image for the board (Dockerfile target "board"), in that registry.')
-param boardImage string
-@description('Container image for the migrate job and agent (Dockerfile target "tools").')
-param toolsImage string
-@description('Entra tenant id.')
 param tenantId string = tenant().tenantId
-@description('Application (client) id of the board API app registration (audience for agent tokens and Easy Auth).')
+@description('Client id of the board API app registration (infra/entra-app.sh).')
 param boardApiClientId string
-@description('App ID URI of the board API, e.g. api://blueboard.')
+@description('App ID URI of the board API, e.g. api://blueboard-prod.')
 param boardApiAudience string
-@description('Foundry resource name hosting the Claude deployments.')
-param foundryResource string
-@description('Resource id of the Foundry (AI Services) account in this resource group, for the agent role assignment. Empty to skip (assign Cognitive Services User yourself).')
-param foundryAccountId string = ''
-param claudeModel string = 'claude-opus-5-5'
-param claudeFallbackModel string = 'claude-opus-4-8'
-@description('Contents of policy.json (protected users/devices/indicators, auto-approve list). Mounted read-only at /etc/blueboard/policy.json. Kept out of deployment history.')
-@secure()
-param policyJson string
 @description('Leave false until policy.json is reviewed: approved actions are recorded as dry runs.')
 param brokerExecute bool = false
 param ingestEnabled bool = true
+@description('Contents of policy.json. Stored as a Function App setting, written to a private temp file at start-up. Kept out of deployment history.')
+@secure()
+param policyJson string
+@description('Maximum Function App instances (Flex Consumption).')
+param maximumInstanceCount int = 40
 
 var suffix = uniqueString(resourceGroup().id)
+var storageName = take('${replace(namePrefix, '-', '')}st${suffix}', 24)
+var deployContainer = 'app-package'
+var roles = {
+  storageBlobDataOwner: 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b'
+  storageQueueDataContributor: '974c5e8b-45b9-4653-ba55-5f855dd0fb88'
+  storageTableDataContributor: '0a9a7e1f-b9d0-4cc4-a60d-0319b160aaa3'
+  monitoringMetricsPublisher: '3913510d-42f4-4e42-8a64-420c390055eb'
+}
 
+// ── observability ────────────────────────────────────────────────────────────────────────────
 resource logs 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
   name: '${namePrefix}-logs-${suffix}'
   location: location
   properties: { sku: { name: 'PerGB2018' }, retentionInDays: 90 }
 }
 
-// Created by foundation.bicep (they need AcrPull before the apps can pull images).
-resource idBoard 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = {
-  name: '${namePrefix}-id-board'
+resource appInsights 'Microsoft.Insights/components@2020-02-02' = {
+  name: '${namePrefix}-ai-${suffix}'
+  location: location
+  kind: 'web'
+  properties: { Application_Type: 'web', WorkspaceResourceId: logs.id, DisableLocalAuth: true }
 }
 
-resource idAgent 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = {
-  name: '${namePrefix}-id-agent'
+// ── identities ───────────────────────────────────────────────────────────────────────────────
+resource idApi 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
+  name: '${namePrefix}-id-api'
+  location: location
 }
 
+resource idSwa 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
+  name: '${namePrefix}-id-swa'
+  location: location
+}
+
+// ── host storage (identity only, no shared keys) ─────────────────────────────────────────────
+resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
+  name: storageName
+  location: location
+  kind: 'StorageV2'
+  sku: { name: 'Standard_LRS' }
+  properties: {
+    allowSharedKeyAccess: false
+    allowBlobPublicAccess: false
+    minimumTlsVersion: 'TLS1_2'
+    supportsHttpsTrafficOnly: true
+    defaultToOAuthAuthentication: true
+  }
+}
+
+resource blobService 'Microsoft.Storage/storageAccounts/blobServices@2023-05-01' = {
+  parent: storage
+  name: 'default'
+}
+
+resource packageContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = {
+  parent: blobService
+  name: deployContainer
+}
+
+resource storageRoles 'Microsoft.Authorization/roleAssignments@2022-04-01' = [
+  for r in [roles.storageBlobDataOwner, roles.storageQueueDataContributor, roles.storageTableDataContributor]: {
+    name: guid(storage.id, idApi.id, r)
+    scope: storage
+    properties: {
+      principalId: idApi.properties.principalId
+      principalType: 'ServicePrincipal'
+      roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', r)
+    }
+  }
+]
+
+resource aiRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(appInsights.id, idApi.id, roles.monitoringMetricsPublisher)
+  scope: appInsights
+  properties: {
+    principalId: idApi.properties.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roles.monitoringMetricsPublisher)
+  }
+}
+
+// ── PostgreSQL (Entra auth only) ─────────────────────────────────────────────────────────────
 resource pg 'Microsoft.DBforPostgreSQL/flexibleServers@2024-08-01' = {
   name: '${namePrefix}-pg-${suffix}'
   location: location
@@ -74,94 +134,96 @@ resource pgDb 'Microsoft.DBforPostgreSQL/flexibleServers/databases@2024-08-01' =
   name: 'blueboard'
 }
 
-// Container Apps reach Postgres over the Azure backbone. For production, prefer VNet integration + private endpoint.
+// Flex Consumption egress isn't a fixed IP without VNet integration. Production: VNet + private endpoint.
 resource pgAllowAzure 'Microsoft.DBforPostgreSQL/flexibleServers/firewallRules@2024-08-01' = {
   parent: pg
   name: 'AllowAzureServices'
   properties: { startIpAddress: '0.0.0.0', endIpAddress: '0.0.0.0' }
 }
 
-// The administrator resource name must be known at deployment start, so the board identity's
-// principal id is deployed through a module (its params are evaluated after the identity exists).
 module pgAdmin 'pg-admin.bicep' = {
   name: 'pg-admin'
   params: {
     serverName: pg.name
-    principalId: idBoard.properties.principalId
-    principalName: idBoard.name
+    principalId: idApi.properties.principalId
+    principalName: idApi.name
     tenantId: tenantId
   }
   dependsOn: [pgDb]
 }
 
-resource env 'Microsoft.App/managedEnvironments@2024-03-01' = {
-  name: '${namePrefix}-env'
+// ── Function App (Flex Consumption, .NET 10 isolated) ────────────────────────────────────────
+resource plan 'Microsoft.Web/serverfarms@2024-04-01' = {
+  name: '${namePrefix}-plan'
   location: location
-  properties: {
-    appLogsConfiguration: {
-      destination: 'log-analytics'
-      logAnalyticsConfiguration: { customerId: logs.properties.customerId, sharedKey: logs.listKeys().primarySharedKey }
-    }
-  }
+  kind: 'functionapp'
+  sku: { name: 'FC1', tier: 'FlexConsumption' }
+  properties: { reserved: true }
 }
 
-var dbEnv = [
-  { name: 'PGHOST', value: pg.properties.fullyQualifiedDomainName }
-  { name: 'PGDATABASE', value: 'blueboard' }
-  { name: 'PGUSER', value: idBoard.name }
-  { name: 'PG_ENTRA_AUTH', value: 'true' }
-  { name: 'AZURE_CLIENT_ID', value: idBoard.properties.clientId }
-]
-
-resource board 'Microsoft.App/containerApps@2024-03-01' = {
-  name: '${namePrefix}-board'
+resource api 'Microsoft.Web/sites@2024-04-01' = {
+  name: '${namePrefix}-api-${suffix}'
   location: location
-  identity: { type: 'UserAssigned', userAssignedIdentities: { '${idBoard.id}': {} } }
+  kind: 'functionapp,linux'
+  identity: { type: 'UserAssigned', userAssignedIdentities: { '${idApi.id}': {} } }
   properties: {
-    managedEnvironmentId: env.id
-    configuration: {
-      ingress: { external: true, targetPort: 3000, transport: 'auto', allowInsecure: false }
-      registries: [{ server: acrLoginServer, identity: idBoard.id }]
-      secrets: [{ name: 'policy-json', value: policyJson }]
+    serverFarmId: plan.id
+    httpsOnly: true
+    publicNetworkAccess: 'Enabled'
+    siteConfig: {
+      minTlsVersion: '1.2'
+      ftpsState: 'Disabled'
+      http20Enabled: true
     }
-    template: {
-      containers: [
-        {
-          name: 'board'
-          image: boardImage
-          resources: { cpu: json('1.0'), memory: '2Gi' }
-          env: concat(dbEnv, [
-            { name: 'AZURE_TENANT_ID', value: tenantId }
-            { name: 'BOARD_API_AUDIENCE', value: boardApiAudience }
-            { name: 'EASY_AUTH', value: 'true' }
-            { name: 'INGEST_ENABLED', value: string(ingestEnabled) }
-            { name: 'BROKER_EXECUTE', value: string(brokerExecute) }
-            { name: 'BLUEBOARD_POLICY_FILE', value: '/etc/blueboard/policy.json' }
-          ])
-          volumeMounts: [{ volumeName: 'policy', mountPath: '/etc/blueboard' }]
-          probes: [
-            { type: 'Liveness', httpGet: { path: '/api/healthz', port: 3000 }, periodSeconds: 30 }
-          ]
+    functionAppConfig: {
+      deployment: {
+        storage: {
+          type: 'blobContainer'
+          value: '${storage.properties.primaryEndpoints.blob}${deployContainer}'
+          authentication: { type: 'UserAssignedIdentity', userAssignedIdentityResourceId: idApi.id }
         }
-      ]
-      volumes: [{ name: 'policy', storageType: 'Secret', secrets: [{ secretRef: 'policy-json', path: 'policy.json' }] }]
-      // SSE and the ingest poller are fine across replicas (Postgres NOTIFY fan-out + advisory lock).
-      scale: { minReplicas: 1, maxReplicas: 3 }
+      }
+      scaleAndConcurrency: { maximumInstanceCount: maximumInstanceCount, instanceMemoryMB: 2048 }
+      runtime: { name: 'dotnet-isolated', version: '10.0' }
     }
+  }
+  dependsOn: [storageRoles, packageContainer]
+}
+
+resource apiSettings 'Microsoft.Web/sites/config@2024-04-01' = {
+  parent: api
+  name: 'appsettings'
+  properties: {
+    AzureWebJobsStorage__accountName: storage.name
+    AzureWebJobsStorage__credential: 'managedidentity'
+    AzureWebJobsStorage__clientId: idApi.properties.clientId
+    APPLICATIONINSIGHTS_CONNECTION_STRING: appInsights.properties.ConnectionString
+    APPLICATIONINSIGHTS_AUTHENTICATION_STRING: 'ClientId=${idApi.properties.clientId};Authorization=AAD'
+    AZURE_CLIENT_ID: idApi.properties.clientId
+    PGHOST: pg.properties.fullyQualifiedDomainName
+    PGDATABASE: 'blueboard'
+    PGUSER: idApi.name
+    PG_ENTRA_AUTH: 'true'
+    AZURE_TENANT_ID: tenantId
+    BOARD_API_AUDIENCE: boardApiAudience
+    BOARD_API_CLIENT_ID: boardApiClientId
+    TRUST_SWA_PRINCIPAL: 'true'
+    INGEST_ENABLED: string(ingestEnabled)
+    BROKER_EXECUTE: string(brokerExecute)
+    BLUEBOARD_POLICY_JSON: policyJson
   }
 }
 
-resource boardAuth 'Microsoft.App/containerApps/authConfigs@2024-03-01' = {
-  parent: board
-  name: 'current'
+// Built-in auth on the Function App. Nothing is *required* (agents call /runtime/webhooks/mcp with bearer
+// tokens the app validates itself), but it must be on: App Service then strips client-supplied
+// x-ms-client-principal headers, so the only principal header the app sees is one the platform wrote for
+// the linked Static Web App or for a validated token. That is what makes TRUST_SWA_PRINCIPAL safe.
+resource apiAuth 'Microsoft.Web/sites/config@2024-04-01' = {
+  parent: api
+  name: 'authsettingsV2'
   properties: {
     platform: { enabled: true }
-    globalValidation: {
-      unauthenticatedClientAction: 'RedirectToLoginPage'
-      redirectToProvider: 'azureactivedirectory'
-      // Agents use bearer tokens validated by the app itself.
-      excludedPaths: ['/api/mcp', '/.well-known/oauth-protected-resource', '/api/healthz']
-    }
+    globalValidation: { requireAuthentication: false, unauthenticatedClientAction: 'AllowAnonymous' }
     identityProviders: {
       azureActiveDirectory: {
         enabled: true
@@ -176,80 +238,40 @@ resource boardAuth 'Microsoft.App/containerApps/authConfigs@2024-03-01' = {
   }
 }
 
-resource migrate 'Microsoft.App/jobs@2024-03-01' = {
-  name: '${namePrefix}-migrate'
-  location: location
-  identity: { type: 'UserAssigned', userAssignedIdentities: { '${idBoard.id}': {} } }
+// ── Static Web App (React) ───────────────────────────────────────────────────────────────────
+resource web 'Microsoft.Web/staticSites@2024-04-01' = {
+  name: '${namePrefix}-web-${suffix}'
+  location: swaLocation
+  sku: { name: 'Standard', tier: 'Standard' }
+  identity: { type: 'UserAssigned', userAssignedIdentities: { '${idSwa.id}': {} } }
   properties: {
-    environmentId: env.id
-    configuration: {
-      triggerType: 'Manual'
-      replicaTimeout: 600
-      replicaRetryLimit: 1
-      manualTriggerConfig: { parallelism: 1, replicaCompletionCount: 1 }
-      registries: [{ server: acrLoginServer, identity: idBoard.id }]
-    }
-    template: {
-      containers: [
-        {
-          name: 'migrate'
-          image: toolsImage
-          command: ['npx', 'tsx', 'scripts/migrate.ts']
-          resources: { cpu: json('0.5'), memory: '1Gi' }
-          env: dbEnv
-        }
-      ]
-    }
+    stagingEnvironmentPolicy: 'Disabled'
+    allowConfigFileUpdates: true
+    publicNetworkAccess: 'Enabled'
   }
 }
 
-resource enrichment 'Microsoft.App/containerApps@2024-03-01' = {
-  name: '${namePrefix}-agent-enrichment'
-  location: location
-  identity: { type: 'UserAssigned', userAssignedIdentities: { '${idAgent.id}': {} } }
+resource webSettings 'Microsoft.Web/staticSites/config@2024-04-01' = {
+  parent: web
+  name: 'appsettings'
   properties: {
-    managedEnvironmentId: env.id
-    configuration: {
-      registries: [{ server: acrLoginServer, identity: idAgent.id }]
-    }
-    template: {
-      containers: [
-        {
-          name: 'agent'
-          image: toolsImage
-          resources: { cpu: json('0.5'), memory: '1Gi' }
-          env: [
-            { name: 'AZURE_CLIENT_ID', value: idAgent.properties.clientId }
-            { name: 'BOARD_URL', value: 'https://${board.properties.configuration.ingress.fqdn}' }
-            { name: 'BOARD_API_AUDIENCE', value: boardApiAudience }
-            { name: 'ANTHROPIC_FOUNDRY_RESOURCE', value: foundryResource }
-            { name: 'CLAUDE_MODEL', value: claudeModel }
-            { name: 'CLAUDE_FALLBACK_MODEL', value: claudeFallbackModel }
-          ]
-        }
-      ]
-      scale: { minReplicas: 1, maxReplicas: 1 }
-    }
+    AZURE_CLIENT_ID: boardApiClientId
+    // No client secret: SWA signs in with a federated credential on idSwa (entra-app.sh adds the trust).
+    OVERRIDE_USE_MI_FIC_ASSERTION_CLIENTID: idSwa.properties.clientId
   }
 }
 
-// Cognitive Services User on the Foundry account for the agent identity.
-resource foundry 'Microsoft.CognitiveServices/accounts@2024-10-01' existing = if (!empty(foundryAccountId)) {
-  name: last(split(foundryAccountId, '/'))
-}
-resource agentFoundryRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(foundryAccountId)) {
-  name: guid(foundryAccountId, idAgent.id, 'a97b65f3-24c7-4388-baec-2e87135dc908')
-  scope: foundry
-  properties: {
-    principalId: idAgent.properties.principalId
-    principalType: 'ServicePrincipal'
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'a97b65f3-24c7-4388-baec-2e87135dc908')
-  }
+resource webBackend 'Microsoft.Web/staticSites/linkedBackends@2024-04-01' = {
+  parent: web
+  name: 'api'
+  properties: { backendResourceId: api.id, region: location }
+  dependsOn: [apiAuth, apiSettings]
 }
 
-output boardFqdn string = board.properties.configuration.ingress.fqdn
+output webHostname string = web.properties.defaultHostname
+output webName string = web.name
+output apiName string = api.name
+output apiHostname string = api.properties.defaultHostName
+output apiIdentityPrincipalId string = idApi.properties.principalId
+output swaIdentityPrincipalId string = idSwa.properties.principalId
 output pgServerName string = pg.name
-output migrateJobName string = migrate.name
-output boardUrl string = 'https://${board.properties.configuration.ingress.fqdn}'
-output boardIdentityPrincipalId string = idBoard.properties.principalId
-output agentIdentityPrincipalId string = idAgent.properties.principalId

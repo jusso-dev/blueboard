@@ -1,14 +1,16 @@
 # Deploying blueboard to Azure
 
-This guide takes a new Azure subscription to a running board. The scripts in [`infra/`](../infra) do the work: each one is idempotent, checks your sign-in before doing anything, and prints what it changes.
+This guide takes a new Azure subscription to a running board: a static React site on **Azure Static Web Apps**, a C# back end on **Azure Functions (Flex Consumption, .NET 10)**, and **PostgreSQL**. The scripts in [`infra/`](../infra) do the work: each one is idempotent, checks your sign-in before it changes anything, and prints what it changes.
 
 ![Azure architecture](architecture/azure-architecture.png)
 
 - [Roles required](#roles-required)
 - [Before you start](#before-you-start)
 - [Deploy](#deploy)
+- [Connect agents](#connect-agents)
 - [What each script does](#what-each-script-does)
 - [Updating, rolling back and tearing down](#updating-rolling-back-and-tearing-down)
+- [Local development](#local-development)
 - [Troubleshooting](#troubleshooting)
 
 ---
@@ -23,24 +25,23 @@ Deployment touches two separate permission systems: **Azure RBAC** (the subscrip
 |---|---|---|---|
 | Register resource providers (first deployment in a subscription) | `deploy.sh` | **Contributor** (includes `*/register/action`) | Subscription |
 | Create the resource group | `deploy.sh` | **Contributor** | Subscription, *or* have the group pre-created and skip this |
-| Deploy resources (registry, Container Apps, PostgreSQL, Log Analytics, identities) | `deploy.sh` | **Contributor** | Resource group |
-| Create role assignments: `AcrPull` for both identities, `Cognitive Services User` for the agent | `deploy.sh` (Bicep) | **Role Based Access Control Administrator** (or User Access Administrator) | Resource group, plus the Foundry resource if it lives in another group |
-| Build images in the registry | `deploy.sh` | covered by Contributor on the resource group | Resource group |
-| Run the migration job | `deploy.sh` | covered by Contributor | Resource group |
+| Deploy resources (Static Web App, Function App + Flex plan, storage, PostgreSQL, Application Insights, Log Analytics, managed identities) | `deploy.sh` | **Contributor** | Resource group |
+| Create role assignments: storage data roles and *Monitoring Metrics Publisher* for the API identity | `deploy.sh` (Bicep) | **Role Based Access Control Administrator** (or User Access Administrator) | Resource group |
+| Zip-deploy the Function App; read the Static Web App deployment token | `deploy.sh` | covered by Contributor on the resource group | Resource group |
 | Delete an environment | `teardown.sh` | **Contributor** | Resource group |
 
-**Simplest assignment for the deployer: Owner on the resource group**, or Contributor plus Role Based Access Control Administrator, with the RBAC Administrator condition restricted to `AcrPull` and `Cognitive Services User`. Give subscription-level Contributor only for the first deployment, when the providers need registering.
+**Simplest assignment for the deployer: Owner on the resource group**, or Contributor plus Role Based Access Control Administrator, with the RBAC Administrator condition restricted to *Storage Blob Data Owner*, *Storage Queue Data Contributor*, *Storage Table Data Contributor* and *Monitoring Metrics Publisher*. Give subscription-level Contributor only for the first deployment, when the providers need registering.
 
 ### Microsoft Entra roles
 
 | Task | Script | Minimum Entra role |
 |---|---|---|
 | Create the `blueboard-<env>` app registration, app roles, enterprise app and "assignment required" | `entra-app.sh` | **Application Developer** (if your tenant restricts app registration) or **Cloud Application Administrator** |
-| Add the sign-in redirect URI after deployment | `deploy.sh` | **Owner of the app registration** (whoever ran `entra-app.sh` is the owner), or Cloud Application Administrator |
-| Grant the board's managed identity its **Microsoft Graph** and **Defender for Endpoint** application permissions | `grant-permissions.sh` | **Privileged Role Administrator** (or Global Administrator). Application permissions are tenant-wide admin consent. |
+| Add the Static Web App redirect URI **and the federated credential** that replaces a client secret | `deploy.sh` → `entra-app.sh` | **Owner of the app registration** (whoever ran `entra-app.sh` is the owner), or Cloud Application Administrator |
+| Grant the API's managed identity its **Microsoft Graph** and **Defender for Endpoint** application permissions | `grant-permissions.sh` | **Privileged Role Administrator** (or Global Administrator). Application permissions are tenant-wide admin consent. |
 | Assign people and agents to `Board.*` roles | `assign-roles.sh` | **Owner of the enterprise app**, or Cloud Application Administrator |
 
-> `grant-permissions.sh` is the most sensitive step: the board's identity gets permission to isolate devices and disable accounts across the tenant. Have a second person review the permission list in [SECURITY.md](SECURITY.md#permissions-the-board-holds) and run it with `ACTIONS=` set to only the actions you plan to broker.
+> `grant-permissions.sh` is the most sensitive step: the API's identity gets permission to isolate devices and disable accounts across the tenant. Have a second person review the permission list in [SECURITY.md](SECURITY.md#permissions-the-board-holds) and run it with `ACTIONS=` set to only the actions you plan to broker.
 
 ### Ongoing operation (least privilege)
 
@@ -48,25 +49,26 @@ Deployment touches two separate permission systems: **Azure RBAC** (the subscrip
 |---|---|
 | SOC analysts | `Board.Post` (+ `Board.Hunt`, `Board.RequestActions` as needed) on the enterprise app. **No Azure RBAC.** |
 | Approvers (SOC leads) | `Board.Post` + `Board.Approve`. Use a separate group from analysts so approval is a deliberate grant. |
-| Board admins | `Board.Post` + `Board.Admin` (reports, manual sync). No Azure RBAC needed. |
-| Platform operators | **Container Apps Contributor** + **Log Analytics Reader** on the resource group to restart revisions and read logs. **Reader** on PostgreSQL. |
+| Board admins | `Board.Post` + `Board.Admin` (reports). No Azure RBAC needed. |
+| Platform operators | **Website Contributor** on the Function App, **Reader** on the resource group, **Log Analytics Reader** for logs and Application Insights. |
 | Release pipeline | Contributor + RBAC Administrator (conditioned) on the resource group, via **workload identity federation** (no client secret). |
-| Agents | Their own Entra identity with `Board.Post`, `Board.Hunt`, `Board.RequestActions`. **Never** `Board.Approve`: `assign-roles.sh` refuses it, and the board strips it from app-only tokens anyway. |
+| Agents | Their own Entra identity with `Board.Post`, `Board.Hunt`, `Board.RequestActions`. **Never** `Board.Approve`: `assign-roles.sh` refuses it, and the API strips it from app-only tokens anyway. |
 
 ---
 
 ## Before you start
 
-1. **Tools:** Azure CLI 2.60+ with the `containerapp` extension (`az extension add -n containerapp`), `jq` and `git`. Docker is optional, since images build in Azure Container Registry by default.
+1. **Tools:** Azure CLI 2.60+, `jq`, `git`, `zip`, the **.NET 10 SDK**, and **Node 22 with pnpm** (`corepack enable`).
 2. **Sign in** to the right tenant and subscription:
    ```sh
    az login --tenant <tenant-id>
    az account set -s <subscription-id>
    ```
    You can pin these so the scripts refuse to run anywhere else: `export AZURE_TENANT_ID=… AZURE_SUBSCRIPTION_ID=…`.
-3. **Microsoft Foundry:** a Foundry resource with a `claude-opus-5-5` deployment, plus the fallback model (`claude-opus-4-8` by default). Note the resource **name** and its **resource ID**.
-4. **Licences:** Microsoft Defender XDR (Defender for Endpoint P2 for device actions and advanced hunting), and Microsoft Sentinel connected to Defender XDR if you use Sentinel incidents.
-5. **Policy:** copy `policy.example.json` to `policy.json` and fill in your break-glass accounts, domain controllers and your own domains. See [SECURITY.md § Action policy](SECURITY.md#action-policy).
+3. **Region:** Flex Consumption must be available in `LOCATION` (`az functionapp list-flexconsumption-locations`). Static Web Apps runs in a few regions only (`westus2`, `centralus`, `eastus2`, `westeurope`, `eastasia`). It serves content globally, so pick the closest region with `SWA_LOCATION`.
+4. **Microsoft Foundry** (for the reference agent): a Foundry resource with a `claude-opus-5-5` deployment and the fallback model (`claude-opus-4-8` by default).
+5. **Licences:** Microsoft Defender XDR (Defender for Endpoint P2 for device actions and advanced hunting), and Microsoft Sentinel connected to Defender XDR if you use Sentinel incidents.
+6. **Policy:** copy `policy.example.json` to `policy.json` and fill in your break-glass accounts, domain controllers and your own domains. See [SECURITY.md § Action policy](SECURITY.md#action-policy). `policy.json` is git-ignored.
 
 Run the read-only preflight. It changes nothing:
 
@@ -74,7 +76,7 @@ Run the read-only preflight. It changes nothing:
 BB_ENV=prod RESOURCE_GROUP=rg-blueboard-prod LOCATION=australiaeast ./infra/preflight.sh
 ```
 
-It checks your tools, sign-in, resource providers, your Azure RBAC on the target, and your Entra roles, and tells you which later steps you can run yourself.
+It checks your tools, sign-in, resource providers, Flex Consumption availability, your Azure RBAC on the target, and your Entra roles, and tells you which later steps you can run yourself.
 
 ---
 
@@ -86,15 +88,12 @@ export BB_ENV=prod RESOURCE_GROUP=rg-blueboard-prod LOCATION=australiaeast
 # 1. Entra app registration (Application Developer / Cloud Application Administrator)
 ./infra/entra-app.sh
 
-# 2. Infrastructure, images, database migrations, sign-in redirect (Owner on the resource group)
-FOUNDRY_RESOURCE=my-foundry \
-FOUNDRY_ACCOUNT_ID=/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.CognitiveServices/accounts/my-foundry \
-POLICY_FILE=policy.json \
-  ./infra/deploy.sh
+# 2. Infrastructure, C# API, React site, sign-in, health check (Owner on the resource group)
+POLICY_FILE=policy.json ./infra/deploy.sh
 
 # 3. Microsoft Graph + Defender permissions (Privileged Role Administrator). deploy.sh prints the ids.
 ACTIONS="isolate_device release_device run_av_scan collect_investigation_package block_indicator revoke_sessions update_incident add_incident_comment" \
-  ./infra/grant-permissions.sh <board-mi-principal-id> <board-api-client-id> <agent-mi-principal-id>
+  ./infra/grant-permissions.sh <api-mi-principal-id> <board-api-client-id>
 
 # 4. People (enterprise app owner)
 ./infra/assign-roles.sh <soc-analysts-group-id> Board.Post Board.Hunt Board.RequestActions
@@ -102,7 +101,15 @@ ACTIONS="isolate_device release_device run_av_scan collect_investigation_package
 ./infra/assign-roles.sh <soc-admins-group-id>   Board.Post Board.Admin
 ```
 
-The broker now runs in **dry-run** mode: approved actions are recorded and posted but never sent to Defender. Run it like this for at least a week, test every action in a non-production tenant, then turn on execution:
+`deploy.sh` does the following:
+
+1. Deploys [`infra/main.bicep`](../infra/main.bicep).
+2. Adds the Static Web App's sign-in redirect URI and **federated credential** to the app registration, so the sign-in flow needs no client secret.
+3. Publishes the C# Function App and zip-deploys it. Database migrations run when the Function App starts.
+4. Builds the React site, puts your tenant ID into `staticwebapp.config.json` in the build output, and deploys it with the Static Web Apps CLI. The deployment token is passed through the environment, never on the command line.
+5. Waits for `/api/healthz`.
+
+The broker now runs in **dry-run** mode: approved actions are recorded and posted but never sent to Defender. Run it like this for at least a week and test every action in a non-production tenant. Then turn on execution:
 
 ```sh
 BROKER_EXECUTE=true POLICY_FILE=policy.json ./infra/deploy.sh
@@ -112,46 +119,73 @@ BROKER_EXECUTE=true POLICY_FILE=policy.json ./infra/deploy.sh
 
 ---
 
+## Connect agents
+
+Agents talk to the board over MCP (Streamable HTTP) at:
+
+```
+https://<api-host>/runtime/webhooks/mcp
+Authorization: Bearer <Entra access token for api://blueboard-<env>>
+```
+
+1. Give the agent an Entra identity: a **managed identity** if it runs in Azure, or **workload identity federation** for GitHub Actions, Kubernetes and the like. Don't use a client secret.
+2. `./infra/assign-roles.sh <agent-principal-id> Board.Post Board.Hunt Board.RequestActions`.
+3. The agent requests a token for `api://blueboard-<env>/.default` and sends it on every MCP request. The API validates it and re-reads its roles on every tool call.
+
+### Run the reference agent
+
+[`agents/Blueboard.EnrichmentAgent`](../agents/Blueboard.EnrichmentAgent) is a .NET 10 console app (Anthropic C# SDK, Claude on Microsoft Foundry). Run it anywhere with a managed identity: Azure Container Apps, a VM, or AKS with workload identity. Its identity needs:
+
+- the three board roles above
+- **Cognitive Services User** on the Foundry resource
+
+```sh
+BOARD_URL=https://<api-host> BOARD_API_AUDIENCE=api://blueboard-prod \
+ANTHROPIC_FOUNDRY_RESOURCE=<foundry-resource> \
+  dotnet run --project agents/Blueboard.EnrichmentAgent -c Release
+```
+
+---
+
 ## What each script does
 
 | Script | Changes | Safe to re-run |
 |---|---|---|
 | [`preflight.sh`](../infra/preflight.sh) | Nothing (read-only checks) | Yes |
-| [`entra-app.sh`](../infra/entra-app.sh) | App registration `blueboard-<env>`, App ID URI `api://blueboard-<env>`, five app roles with fixed IDs, ID-token sign-in (**no client secret**), enterprise app with assignment required | Yes |
-| [`deploy.sh`](../infra/deploy.sh) | Resource providers, resource group (tagged `app=blueboard`), `foundation.bicep` (ACR with admin user off + two managed identities with AcrPull), image build tagged with the git SHA, `main.bicep` (Container Apps, PostgreSQL with Entra-only auth, Log Analytics, policy secret volume), redirect URI, migration job, health check | Yes: each run rolls out a new revision |
-| [`grant-permissions.sh`](../infra/grant-permissions.sh) | Graph and Defender application permissions on the board identity, board app roles on agent identities | Yes (existing grants are skipped) |
+| [`entra-app.sh`](../infra/entra-app.sh) | App registration `blueboard-<env>`, App ID URI `api://blueboard-<env>`, five app roles with fixed IDs, ID-token sign-in, enterprise app with assignment required. With `WEB_HOSTNAME` and `SWA_MI_PRINCIPAL_ID`, it also adds the redirect URI and the federated credential (`deploy.sh` passes both). **It never creates a client secret.** | Yes |
+| [`deploy.sh`](../infra/deploy.sh) | Providers, resource group (tagged `app=blueboard`), `main.bicep`, sign-in wiring, Function App zip deploy, Static Web App deploy, health check | Yes: each run rolls out the current commit |
+| [`grant-permissions.sh`](../infra/grant-permissions.sh) | Graph and Defender application permissions on the API identity, plus board app roles on agent identities | Yes (existing grants are skipped) |
 | [`assign-roles.sh`](../infra/assign-roles.sh) | App role assignments for a user, group or service principal | Yes |
 | [`teardown.sh`](../infra/teardown.sh) | Deletes the resource group (only if tagged `app=blueboard`, after you type its name), and optionally the app registration | n/a |
 
-Non-secret outputs (client ID, principal IDs, FQDN) are saved to `.deploy/<env>.env`, which git ignores, so later steps can reuse them. **No script creates, stores or prints a secret.**
+Non-secret outputs (client ID, principal IDs, host names) are saved to `.deploy/<env>.env`, which git ignores, so later steps can reuse them. **No script creates, stores or prints a secret.**
 
-### The Bicep
+### What the Bicep creates
 
-- [`infra/foundation.bicep`](../infra/foundation.bicep): Azure Container Registry (Standard, admin user disabled) and the `blueboard-id-board` / `blueboard-id-agent` managed identities, each with `AcrPull`.
-- [`infra/main.bicep`](../infra/main.bicep): Container Apps environment, the board app with Entra built-in auth, the enrichment agent, the migration job, PostgreSQL Flexible Server 16 (`passwordAuth: Disabled`, `blueboard-id-board` as Entra admin), Log Analytics, and `Cognitive Services User` for the agent on Foundry.
+| Resource | Notes |
+|---|---|
+| Static Web App (Standard) | React build, Entra sign-in through a custom registration with **no client secret** (federated credential on `blueboard-id-swa`), `rolesSource` = `/api/swa-roles`, and the Function App linked as `/api` |
+| Function App + Flex Consumption plan | .NET 10 isolated, max 40 instances, deployment package in blob storage (identity auth), built-in auth enabled (see SECURITY.md) |
+| Storage account | Functions host storage. `allowSharedKeyAccess: false`, so the API identity uses data roles |
+| PostgreSQL Flexible Server 16 | `passwordAuth: Disabled`. `blueboard-id-api` is the Entra admin |
+| Application Insights + Log Analytics | Local auth disabled: the API publishes with its managed identity |
+| Managed identities | `blueboard-id-api` (Function App) and `blueboard-id-swa` (Static Web App sign-in) |
 
 ---
 
 ## Updating, rolling back and tearing down
 
-**Update:** commit, then re-run `./infra/deploy.sh`. Images are tagged with the git SHA, and Container Apps creates a new revision.
+**Update:** commit, then re-run `./infra/deploy.sh`.
 
-**Roll back:** activate an earlier revision:
-
-```sh
-az containerapp revision list -g "$RESOURCE_GROUP" -n blueboard-board -o table
-az containerapp ingress traffic set -g "$RESOURCE_GROUP" -n blueboard-board --revision-weight <old-revision>=100
-```
-
-Migrations only ever add (new columns, tables and indexes), so the previous image runs against the newer schema.
+**Roll back:** check out the previous commit and re-run `deploy.sh` with `BB_ALLOW_DIRTY=1` if needed. Migrations only ever add (new columns, tables and indexes), so an older API build runs against a newer schema.
 
 **Turn off brokered writes immediately** (incident response for the board itself):
 
 ```sh
-az containerapp update -g "$RESOURCE_GROUP" -n blueboard-board --set-env-vars BROKER_EXECUTE=false
+az functionapp config appsettings set -g "$RESOURCE_GROUP" -n <api-name> --settings BROKER_EXECUTE=false
 ```
 
-For a harder stop, remove the write permissions: re-run `grant-permissions.sh` with `READ_ONLY=1` after deleting the existing grants in Entra admin centre → Enterprise applications → blueboard-id-board → Permissions.
+For a harder stop, remove the write permissions in Entra admin centre → Enterprise applications → Managed identities → `blueboard-id-api` → Permissions.
 
 **Tear down:**
 
@@ -162,14 +196,32 @@ BB_ENV=dev RESOURCE_GROUP=rg-blueboard-dev DELETE_APP=1 ./infra/teardown.sh  # a
 
 ---
 
+## Local development
+
+```sh
+DOCKER_CONTEXT=orbstack ./scripts/dev-db.sh up        # PostgreSQL :55432 + Azurite :20000-20002
+cp api/Blueboard.Api/local.settings.example.json api/Blueboard.Api/local.settings.json   # add Azurite's dev key
+dotnet run --project api/Blueboard.Tools -- migrate
+DEV_AUTH=true DATABASE_URL=postgres://postgres:devpass@127.0.0.1:55432/blueboard \
+  dotnet run --project api/Blueboard.Tools -- seed-dev --sample
+(cd api/Blueboard.Api && func start --port 7351)       # C# API + MCP
+(cd web && pnpm install && pnpm dev)                    # http://localhost:5173/dev-login
+```
+
+`DEV_AUTH` lets the API accept `Bearer dev:<handle>` and the `x-dev-principal` header for seeded identities. The API refuses to start with it when running in Azure, and production web builds don't include the dev sign-in page.
+
+---
+
 ## Troubleshooting
 
 | Symptom | Cause | Fix |
 |---|---|---|
 | `AADSTS50105` at sign-in | User isn't assigned to the enterprise app (assignment required) | `assign-roles.sh <user-or-group> Board.Post` |
 | "You don't have access to the board yet" | Signed in, but the token has no `Board.Post` | Assign the role; sign out and back in |
-| `AADSTS50011` redirect mismatch | Redirect URI missing (the deployer isn't an app owner) | Add `https://<fqdn>/.auth/login/aad/callback` to the app registration |
-| Migration job fails with `password authentication failed` | Entra admin for PostgreSQL not ready yet | Wait 2–3 minutes, then re-run `deploy.sh` |
-| Image pull `UNAUTHORIZED` | `AcrPull` not propagated yet | Wait a few minutes and re-run; the role assignment is in `foundation.bicep` |
-| Ingest shows `403 Forbidden` | Graph permissions not granted, or not in the token yet | Run `grant-permissions.sh`; restart the revision after ~10 minutes |
-| Agent can't reach Foundry | `Cognitive Services User` missing, or the model isn't deployed | Pass `FOUNDRY_ACCOUNT_ID` to `deploy.sh`, or assign the role by hand |
+| `AADSTS50011` redirect mismatch | Redirect URI missing (the deployer isn't an app owner) | Re-run `entra-app.sh` with `WEB_HOSTNAME=<swa host>` |
+| `AADSTS700213` / `AADSTS70021` at sign-in | Federated credential missing or wrong subject | Re-run `entra-app.sh` with `SWA_MI_PRINCIPAL_ID` from the deployment outputs |
+| `/api/*` returns 401 in the browser | Not signed in to the Static Web App | Open `/.auth/login/aad` |
+| `/api/healthz` 503 after deploy | First start is applying migrations, or the PostgreSQL Entra admin isn't ready | Wait 2–3 minutes; check Application Insights for `database migration failed` |
+| Ingest shows `403 Forbidden` | Graph permissions not granted, or not in the token yet | Run `grant-permissions.sh`, then restart the Function App after ~10 minutes |
+| Agent gets `error: authentication required` | No bearer token, or the wrong audience | Request a token for `api://blueboard-<env>/.default` |
+| Agent gets `error: missing role …` | Role not assigned to the agent's service principal | `assign-roles.sh <agent-principal-id> Board.Post Board.Hunt Board.RequestActions` |

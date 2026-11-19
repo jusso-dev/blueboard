@@ -30,6 +30,10 @@ ICONS = {
     "foundry": "ai + machine learning/035746832-icon-service-AI-Foundry.svg",
     "rg": "general/10007-icon-service-Resource-Groups.svg",
     "acr": "containers/10105-icon-service-Container-Registries.svg",
+    "swa": "web/01007-icon-service-Static-Apps.svg",
+    "func": "compute/10029-icon-service-Function-Apps.svg",
+    "storage": "storage/10086-icon-service-Storage-Accounts.svg",
+    "appi": "monitor/00012-icon-service-Application-Insights.svg",
     "browser": "general/10783-icon-service-Browser.svg",
 }
 
@@ -142,45 +146,46 @@ def build(icon_dir: Path) -> str:
       - flows carry a number only; the legend explains them
     """
     d = Diagram(icon_dir)
-    W, H = 1800, 1100
+    W, H = 1800, 1170
 
-    d.note("<b style='font-size:20px'>blueboard on Azure</b><br>Shared SOC board for AI agents and analysts · Microsoft Defender XDR + Microsoft Sentinel", 30, 18, 1000, 50, size=12, color=INK)
+    d.note("<b style='font-size:20px'>blueboard on Azure</b><br>Static React front end · C# Azure Functions back end · Microsoft Defender XDR + Microsoft Sentinel", 30, 18, 1100, 50, size=12, color=INK)
 
     # ── Microsoft Entra ID (top band, no lines touch it) ──────────────────
     d.group("Microsoft Entra ID (tenant)", 290, 88, 1480, 140, stroke="#7C3AED", fill="#F7F3FE")
-    d.card("appreg", "App registration", "blueboard API · api://blueboard<br>app roles: Board.Post · Hunt · RequestActions ·<br>Approve · Admin", 310, 122, 340, 88)
+    d.card("appreg", "App registration", "api://blueboard-&lt;env&gt; · 5 app roles<br>no client secret: federated credential<br>trusts the Static Web App identity", 310, 122, 340, 88)
     d.card("entapp", "Enterprise application", "assignment required: only assigned<br>users and agents get a token", 670, 122, 330, 88)
-    d.card("mi", "Managed identity · blueboard-id-board", "Graph + Defender application permissions<br>Postgres Entra admin", 1020, 122, 360, 88)
-    d.card("mi", "Managed identity · blueboard-id-agent", "board app roles (never Board.Approve)<br>Cognitive Services User on Foundry", 1395, 122, 355, 88)
+    d.card("mi", "Managed identity · blueboard-id-api", "Graph + Defender application permissions<br>PostgreSQL Entra admin · storage data roles", 1020, 122, 360, 88)
+    d.card("mi", "Managed identity · blueboard-id-swa", "federated credential on the app registration<br>(Static Web App sign-in, no secret)", 1395, 122, 355, 88)
 
     # ── Users and agents (left) ───────────────────────────────────────────
-    d.group("Users and agents", 30, 270, 200, 340, stroke="#9CA3AF", fill="#F9FAFB")
+    d.group("Users and agents", 30, 270, 200, 460, stroke="#9CA3AF", fill="#F9FAFB")
     analysts = d.card("users", "SOC analysts", "browser · Entra sign-in<br>Board.* app roles", 42, 345, 176, 80)
     ext = d.card(None, "External agents", "any MCP client<br>app-only Entra token<br>never Board.Approve", 42, 485, 176, 80)
+    ref = d.card(None, "Reference agent", "C# · Anthropic SDK<br>Claude on Foundry<br>runs anywhere with an<br>Entra workload identity", 42, 605, 176, 100)
 
     # ── Azure resource group ──────────────────────────────────────────────
-    d.group("Azure resource group", 290, 252, 860, 800, stroke=BLUE, fill="#F3F8FD", icon="rg")
-    d.group("Container Apps environment · blueboard-env", 310, 296, 560, 474, stroke=BLUE, fill="#FFFFFF", icon="aca_env", font=12)
+    d.group("Azure resource group", 290, 252, 860, 840, stroke=BLUE, fill="#F3F8FD", icon="rg")
 
-    board = d.card(
-        "aca",
-        "Container App · blueboard-board",
-        "1–3 replicas · HTTPS ingress · built-in auth (Entra)<br>"
-        "Next.js: UI · REST · SSE · MCP endpoint /api/mcp<br>"
+    web = d.card("swa", "Static Web App · blueboard-web", "React (Vite) static build · Standard plan<br>built-in Entra sign-in · rolesSource /api/swa-roles<br>proxies /api/* to the linked Function App<br>CSP, HSTS, frame-ancestors none", 320, 300, 520, 96, stroke=BLUE)
+
+    api = d.card(
+        "func",
+        "Function App · blueboard-api (Flex Consumption)",
+        ".NET 10 isolated · scales to zero · max 40 instances<br>"
+        "<b>HTTP</b> /api/*: REST for the web app (Board.Post on every route)<br>"
+        "<b>MCP</b> /runtime/webhooks/mcp: 14 tools, Entra bearer per call<br>"
         "<b>Action broker</b>: policy → human approval → execute<br>"
         "<b>Enrichment</b>: advanced hunting + entity lookups (read-only)<br>"
-        "<b>Leader loop</b>: incident poller · stuck-action recovery<br>"
-        "built-in auth excludes /api/mcp (agents bring bearer tokens)<br>"
-        "identity: blueboard-id-board",
-        340, 345, 490, 240, stroke=BLUE, top=True,
+        "<b>Timers</b>: incident poller (1 min) · stuck-action recovery<br>"
+        "built-in auth on: strips forged principal headers<br>"
+        "migrations applied at start-up · identity: blueboard-id-api",
+        320, 470, 520, 230, stroke=BLUE, top=True,
     )
-    migrate = d.card("aca", "Container Apps job", "blueboard-migrate<br>applies db/migrations<br>identity: blueboard-id-board", 340, 665, 220, 84)
-    agent = d.card("aca", "Container App", "blueboard-agent-enrichment<br>reference Claude agent · no ingress<br>identity: blueboard-id-agent", 610, 665, 220, 84)
 
-    pg = d.card("postgres", "Azure Database for PostgreSQL", "Flexible Server 16 · B1ms<br>Entra auth only · LISTEN/NOTIFY<br>full-text search (GIN)", 455, 830, 290, 84)
-    law = d.card("law", "Log Analytics workspace", "container logs · 90-day retention", 790, 830, 330, 84)
-    acr = d.card("acr", "Azure Container Registry", "images tagged with the git SHA<br>admin user off · pulled with AcrPull (MI)", 455, 950, 290, 74)
-    d.note("Postgres firewall: AllowAzureServices (MVP).<br>Production: VNet + private endpoint.", 790, 950, 330, 40, size=10)
+    storage = d.card("storage", "Storage account", "Functions host + deployment package<br>shared keys disabled · identity only", 320, 780, 250, 84)
+    appi = d.card("appi", "Application Insights", "Entra auth only (no ingestion key)<br>→ Log Analytics workspace", 590, 780, 250, 84)
+    pg = d.card("postgres", "Azure Database for PostgreSQL", "Flexible Server 16 · B1ms · Entra auth only<br>full-text search (GIN) · advisory locks", 320, 900, 520, 84)
+    d.note("Postgres firewall: AllowAzureServices (MVP). Production: VNet integration + private endpoint (docs/SECURITY.md).", 320, 1000, 800, 30, size=10)
 
     # ── Microsoft security (right) ────────────────────────────────────────
     d.group("Microsoft security", 1200, 270, 570, 340, stroke="#6B7280", fill="#F9FAFB")
@@ -189,38 +194,38 @@ def build(icon_dir: Path) -> str:
     xdr = d.card(None, "Microsoft Defender XDR", "incidents · alerts · advanced hunting", 1520, 345, 230, 80)
     sentinel = d.card("sentinel", "Microsoft Sentinel", "unified with Defender XDR<br>incidents", 1520, 485, 230, 80)
 
-    d.group("Microsoft Foundry", 1200, 630, 570, 140, stroke="#6B7280", fill="#F9FAFB")
-    foundry = d.card("foundry", "Microsoft Foundry", "Claude Opus 5.5 + fallback deployment<br>Messages API · Entra auth", 1220, 665, 310, 84)
+    d.group("Microsoft Foundry", 1200, 940, 570, 140, stroke="#6B7280", fill="#F9FAFB")
+    foundry = d.card("foundry", "Microsoft Foundry", "Claude Opus 5.5 + fallback deployment<br>Messages API · Entra auth", 1220, 975, 310, 84)
 
-    # ── Flows: straight runs through empty space, numbered ───────────────
-    d.edge(analysts, board, "1", color=BLUE, exit=(1, 0.5), entry=(0, 40 / 240), at=-0.45)
-    d.edge(ext, board, "2", color=BLUE, exit=(1, 0.5), entry=(0, 180 / 240), at=-0.45)
-    d.edge(agent, board, "3", color=BLUE, exit=(0.5, 0), entry=(380 / 490, 1))
-    d.edge(board, pg, "4", color=INK, exit=(245 / 490, 1), entry=(130 / 290, 0), at=-0.2)
-    d.edge(board, graph, "5", color=READ, exit=(1, 40 / 240), entry=(0, 0.5), at=0.2)
-    d.edge(board, mdeapi, "6", color=SEC, exit=(1, 180 / 240), entry=(0, 0.5), width=2.5, at=0.2)
-    d.edge(agent, foundry, "7", color=INK, exit=(1, 0.5), entry=(0, 0.5), at=0.2)
-    d.edge(migrate, pg, "", color=MUTED, dashed=True, exit=(60 / 220, 1), entry=(0, 0.5), points=[(400, 872)])
+    # ── Flows ─────────────────────────────────────────────────────────────
+    d.edge(analysts, web, "1", color=BLUE, exit=(1, 0.5), entry=(0, 0.5), points=[(260, 385), (260, 348)], at=-0.6)
+    d.edge(web, api, "2", color=BLUE, exit=(0.5, 1), entry=(0.5, 0))
+    d.edge(ext, api, "3", color=BLUE, exit=(1, 0.5), entry=(0, 55 / 230), at=-0.5)
+    d.edge(ref, api, "3", color=BLUE, exit=(1, 0.5), entry=(0, 185 / 230), at=-0.5)
+    d.edge(api, graph, "5", color=READ, exit=(1, 15 / 230), entry=(0, 0.5), points=[(1180, 485), (1180, 385)], at=0.1)
+    d.edge(api, mdeapi, "6", color=SEC, exit=(1, 75 / 230), entry=(0, 0.5), width=2.5, at=0.3)
+    d.edge(ref, foundry, "7", color=INK, exit=(0.5, 1), entry=(0, 0.5), points=[(130, 1117), (1170, 1117), (1170, 1017)], at=-0.2)
+    d.edge(api, pg, "4", color=INK, exit=(0.5, 1), entry=(0.5, 0), at=-0.75)
     d.edge(graph, xdr, "", color="#6B7280", both=True, exit=(1, 0.5), entry=(0, 0.5))
     d.edge(xdr, sentinel, "", color="#6B7280", both=True, exit=(0.5, 1), entry=(0.5, 0))
     d.edge(mdeapi, sentinel, "", color="#6B7280", exit=(1, 0.5), entry=(0, 0.5))
 
     # ── Legend ────────────────────────────────────────────────────────────
-    d.group("Flows", 1200, 800, 570, 242, stroke="#D1D5DB", fill="#FFFFFF", dashed=False, font=12)
+    d.group("Flows", 1200, 630, 570, 290, stroke="#D1D5DB", fill="#FFFFFF", dashed=False, font=12)
     d.note(
-        f"<font color='{BLUE}'><b>1</b></font>&nbsp; Analysts → board: HTTPS, Entra sign-in (built-in auth)<br>"
-        f"<font color='{BLUE}'><b>2</b></font>&nbsp; External agents → MCP /api/mcp with an Entra bearer token<br>"
-        f"<font color='{BLUE}'><b>3</b></font>&nbsp; Reference agent → MCP with its managed-identity token<br>"
-        f"<b>4</b>&nbsp; Board → PostgreSQL: TLS, Entra token as the password<br>"
+        f"<font color='{BLUE}'><b>1</b></font>&nbsp; Analysts → Static Web App: HTTPS, Entra sign-in (built-in auth)<br>"
+        f"<font color='{BLUE}'><b>2</b></font>&nbsp; Static Web App → Function App /api/*: linked backend,<br>&nbsp;&nbsp;&nbsp;&nbsp;signed-in principal forwarded by the platform<br>"
+        f"<font color='{BLUE}'><b>3</b></font>&nbsp; Agents → MCP /runtime/webhooks/mcp with an Entra bearer token,<br>&nbsp;&nbsp;&nbsp;&nbsp;validated and role-checked on every tool call<br>"
+        f"<b>4</b>&nbsp; Function App → PostgreSQL: TLS, Entra token as the password<br>"
         f"<font color='{READ}'><b>5</b></font>&nbsp; Read: incident poller, advanced hunting, entity lookups<br>"
         f"<font color='{SEC}'><b>6</b></font>&nbsp; Write: containment only after policy + human approval<br>"
-        f"<b>7</b>&nbsp; Agent → Foundry Messages API with an Entra token<br>"
-        f"<font color='{MUTED}'>┅</font>&nbsp; migrations job → PostgreSQL. Container logs stream to Log Analytics;<br>&nbsp;&nbsp;&nbsp;&nbsp;all three containers pull from the registry with their managed identity.<br>"
-        "<br>Agents hold <b>no</b> Microsoft security permissions, and no hop uses a secret.",
+        f"<b>7</b>&nbsp; Reference agent → Foundry Messages API with an Entra token<br>"
+        "The Function App reaches storage and Application Insights with its<br>managed identity; no shared keys or connection secrets.<br>"
+        "<br>Agents hold <b>no</b> Microsoft security permissions. No hop uses a stored secret.",
         1215,
-        830,
+        660,
         545,
-        205,
+        255,
         size=11,
         color=INK,
     )
@@ -228,9 +233,9 @@ def build(icon_dir: Path) -> str:
         "Azure icons © Microsoft, used unmodified under the Azure architecture icon terms. "
         "Microsoft Graph, Defender XDR and the Defender for Endpoint API have no Azure architecture icon, so they are drawn as plain cards.",
         30,
-        H - 38,
+        H - 30,
         1100,
-        30,
+        24,
         size=9,
     )
     return d.xml(W, H)

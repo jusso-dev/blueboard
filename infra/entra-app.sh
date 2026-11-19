@@ -2,14 +2,17 @@
 # Creates (or updates) the blueboard API app registration in Microsoft Entra ID. Idempotent.
 #
 #   BB_ENV=prod ./infra/entra-app.sh                   # create / update the registration
-#   BB_ENV=prod BOARD_FQDN=<fqdn> ./infra/entra-app.sh # also add the sign-in redirect URI (deploy.sh does this)
+#   BB_ENV=prod WEB_HOSTNAME=<swa-host> SWA_MI_PRINCIPAL_ID=<id> ./infra/entra-app.sh
+#       also adds the Static Web App sign-in redirect URI and the federated credential that lets the
+#       Static Web App sign people in without a client secret (deploy.sh does this for you)
 #
 # Needs: Application Administrator, Cloud Application Administrator or Application Developer.
 #
 # What it sets up:
 #   - single-tenant app "blueboard-<env>" with App ID URI api://blueboard-<env>
 #   - the five app roles from infra/board-api-app-roles.json (Board.Post … Board.Admin)
-#   - ID tokens for Container Apps built-in sign-in (no client secret is created)
+#   - ID tokens for Static Web Apps sign-in. No client secret is ever created: the Static Web App
+#     authenticates as this app through a federated credential on its user-assigned managed identity
 #   - an enterprise application with "assignment required", so only users, groups and agents you
 #     assign a role to can get a token at all
 source "$(dirname "$0")/lib.sh"
@@ -37,10 +40,25 @@ az ad app update --id "$app_id" --app-roles @"$BB_ROOT/infra/board-api-app-roles
 # v2 access tokens (the board validates the v2 issuer first).
 az ad app update --id "$app_id" --set api.requestedAccessTokenVersion=2
 
-if [[ -n "${BOARD_FQDN:-}" ]]; then
-  log "redirect URI https://$BOARD_FQDN/.auth/login/aad/callback"
-  az ad app update --id "$app_id" --web-redirect-uris "https://$BOARD_FQDN/.auth/login/aad/callback" \
-    --web-home-page-url "https://$BOARD_FQDN"
+if [[ -n "${WEB_HOSTNAME:-}" ]]; then
+  log "redirect URI https://$WEB_HOSTNAME/.auth/login/aad/callback"
+  az ad app update --id "$app_id" --web-redirect-uris "https://$WEB_HOSTNAME/.auth/login/aad/callback" \
+    --web-home-page-url "https://$WEB_HOSTNAME"
+fi
+
+if [[ -n "${SWA_MI_PRINCIPAL_ID:-}" ]]; then
+  # The Static Web App exchanges its managed identity token for this app's token: no client secret.
+  fic_name="swa-${BB_ENV}"
+  have="$(az ad app federated-credential list --id "$app_id" --query "[?name=='$fic_name'] | length(@)" -o tsv)"
+  if [[ "$have" == "0" ]]; then
+    log "federated credential $fic_name (subject $SWA_MI_PRINCIPAL_ID)"
+    az ad app federated-credential create --id "$app_id" --parameters "$(jq -n \
+      --arg name "$fic_name" --arg tenant "$AZURE_TENANT_ID" --arg subject "$SWA_MI_PRINCIPAL_ID" \
+      '{name: $name, issuer: "https://login.microsoftonline.com/\($tenant)/v2.0", subject: $subject,
+        description: "Static Web App sign-in without a client secret", audiences: ["api://AzureADTokenExchange"]}')" -o none
+  else
+    log "federated credential $fic_name exists"
+  fi
 fi
 
 sp_id="$(az ad sp list --filter "appId eq '$app_id'" --query '[0].id' -o tsv)"

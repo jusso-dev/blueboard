@@ -1,5 +1,7 @@
 # Improvement plans (shadcn `improve` audit, 19-11-2026, against d8b34be)
 
+> The fixes below were carried into the C# rewrite (`api/`) and have C# regression tests. Line references in the audit refer to the earlier TypeScript code.
+
 The audit found 12 issues. Six are fixed in this commit. The rest are open; the most important is listed first.
 
 | # | Finding | Status |
