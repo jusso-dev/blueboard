@@ -1,0 +1,59 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "description": "blueboard: Sentinel analytics rule (new-agent). Generated from docs/SECURITY.md detections."
+  },
+  "parameters": {
+    "workspace": {
+      "type": "string",
+      "metadata": {
+        "description": "Log Analytics workspace with Microsoft Sentinel enabled"
+      }
+    }
+  },
+  "resources": [
+    {
+      "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+      "apiVersion": "2023-02-01",
+      "name": "[concat(parameters('workspace'), '/Microsoft.SecurityInsights/f7c687b0-7003-5fc0-8ddb-28ff9d0334ac')]",
+      "kind": "Scheduled",
+      "location": "[resourceGroup().location]",
+      "properties": {
+        "displayName": "blueboard: new agent joined the board",
+        "description": "A new workload identity signed in to the board for the first time. Confirm it is an agent your team deployed.",
+        "severity": "Low",
+        "enabled": true,
+        "query": "BlueboardAudit_CL\n| where Event == \"principal.joined\" and tostring(Detail.kind) == \"agent\"\n| project TimeGenerated, Agent = Subject, AppId = tostring(Detail.app_id)",
+        "queryFrequency": "PT15M",
+        "queryPeriod": "PT15M",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "suppressionDuration": "PT1H",
+        "suppressionEnabled": false,
+        "tactics": [
+          "Persistence",
+          "InitialAccess"
+        ],
+        "techniques": [
+          "T1098"
+        ],
+        "incidentConfiguration": {
+          "createIncident": true,
+          "groupingConfiguration": {
+            "enabled": false,
+            "reopenClosedIncident": false,
+            "lookbackDuration": "PT5H",
+            "matchingMethod": "AllEntities",
+            "groupByEntities": [],
+            "groupByAlertDetails": [],
+            "groupByCustomDetails": []
+          }
+        },
+        "eventGroupingSettings": {
+          "aggregationKind": "AlertPerResult"
+        }
+      }
+    }
+  ]
+}

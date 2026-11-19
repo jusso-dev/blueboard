@@ -1,0 +1,70 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "description": "blueboard: Sentinel analytics rule (approval-burst). Generated from docs/SECURITY.md detections."
+  },
+  "parameters": {
+    "workspace": {
+      "type": "string",
+      "metadata": {
+        "description": "Log Analytics workspace with Microsoft Sentinel enabled"
+      }
+    }
+  },
+  "resources": [
+    {
+      "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+      "apiVersion": "2023-02-01",
+      "name": "[concat(parameters('workspace'), '/Microsoft.SecurityInsights/1d0b329b-afcd-511e-8836-c3e7fc7d13ab')]",
+      "kind": "Scheduled",
+      "location": "[resourceGroup().location]",
+      "properties": {
+        "displayName": "blueboard: one approver approved many actions quickly",
+        "description": "One person approved more than the threshold number of brokered actions within 10 minutes. Could be rubber-stamping a flood of requests (prompt injection, compromised agent) or a compromised approver account.",
+        "severity": "Medium",
+        "enabled": true,
+        "query": "let threshold = 5;\nBlueboardAudit_CL\n| where Event == \"action.approved\"\n| summarize Approvals = count(), Actions = make_set(Subject, 50) by Actor, bin(TimeGenerated, 10m)\n| where Approvals > threshold",
+        "queryFrequency": "PT10M",
+        "queryPeriod": "PT10M",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "suppressionDuration": "PT1H",
+        "suppressionEnabled": false,
+        "tactics": [
+          "Impact",
+          "PrivilegeEscalation"
+        ],
+        "techniques": [
+          "T1078"
+        ],
+        "incidentConfiguration": {
+          "createIncident": true,
+          "groupingConfiguration": {
+            "enabled": false,
+            "reopenClosedIncident": false,
+            "lookbackDuration": "PT5H",
+            "matchingMethod": "AllEntities",
+            "groupByEntities": [],
+            "groupByAlertDetails": [],
+            "groupByCustomDetails": []
+          }
+        },
+        "eventGroupingSettings": {
+          "aggregationKind": "AlertPerResult"
+        },
+        "entityMappings": [
+          {
+            "entityType": "Account",
+            "fieldMappings": [
+              {
+                "identifier": "Name",
+                "columnName": "Actor"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -5,6 +5,8 @@
 #   ./infra/grant-permissions.sh <board-mi-principal-id> <board-api-app-client-id> [<agent-principal-id> ...]
 #   READ_ONLY=1 ./infra/grant-permissions.sh ...      # read permissions only: no brokered actions possible
 #   ACTIONS="isolate_device run_av_scan" ./infra/grant-permissions.sh ...   # only the writes you will broker
+#   NOTIFY_MAIL=1 ./infra/grant-permissions.sh ...    # also Mail.Send for approver email (scope it with an
+#                                                       # application access policy: docs/OPERATIONS.md)
 #
 # Needs: Privileged Role Administrator (or Global Administrator) in Entra. Application permissions
 # are tenant-wide: review docs/SECURITY.md § Permissions before running.
@@ -42,7 +44,7 @@ grant() { # <resource-app-id> <permission>
   assign "$BOARD_MI" "$sp" "$role" "$2"
 }
 
-# Write permission needed per brokered action (keep in sync with src/lib/actions/catalog.ts).
+# Write permission needed per brokered action (keep in sync with api/Blueboard.Api/Ops/Permissions.cs; a unit test checks).
 # Plain function instead of an associative array so this runs on macOS's bash 3.2.
 perm_for() {
   case "$1" in
@@ -79,6 +81,12 @@ else
     # shellcheck disable=SC2086
     grant $perm
   done
+fi
+
+if [[ "${NOTIFY_MAIL:-}" == "1" ]]; then
+  log "Mail.Send for approver email: limit it to the notification mailbox with an application access policy"
+  grant "$GRAPH_APP" Mail.Send
+  warn "Mail.Send is tenant-wide until you run New-ApplicationAccessPolicy (docs/OPERATIONS.md § Email)"
 fi
 
 if [[ $# -gt 0 ]]; then
