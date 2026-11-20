@@ -2,15 +2,95 @@ name: ci
 on:
   push: { branches: [main] }
   pull_request:
+
+permissions:
+  contents: read
+
 jobs:
-  check:
+  api:
+    name: C# API + agent
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env: { POSTGRES_PASSWORD: ci-only-password }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      BLUEBOARD_TEST_DATABASE_URL: postgres://postgres:ci-only-password@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with: { dotnet-version: "10.0.x" }
+      - name: Build (warnings are errors)
+        working-directory: api
+        run: dotnet build Blueboard.slnx -c Release
+      - name: Unit and integration tests (integration tests use the Postgres service)
+        working-directory: api
+        run: dotnet test --solution Blueboard.slnx -c Release --no-build
+      - name: Policy check (example policy must parse strictly)
+        run: dotnet run --project api/Blueboard.Tools -c Release --no-build -- policy-check policy.example.json
+      - name: Build agents (reference agent, template, SDK) and the demo mock API
+        run: |
+          dotnet build agents/Blueboard.EnrichmentAgent -c Release
+          dotnet build agents/Blueboard.AgentTemplate -c Release
+          dotnet build dev/mock-msapi -c Release
+      - name: Agent SDK tests
+        run: dotnet test --project agents/Blueboard.Agent.Sdk.Tests -c Release
+
+  demo-smoke:
+    # The one-command local demo (issue #1): build the compose stack, wait for health, then check over MCP
+    # (Bearer dev:enrichment-agent) that the three mock incidents were enriched and their actions are pending.
+    name: Local demo smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Start the demo
+        run: ./scripts/demo.sh up
+      - name: Check incidents, agent output and pending actions over MCP
+        run: ./scripts/demo-smoke.sh http://localhost:7370
+      - name: Logs on failure
+        if: failure()
+        run: docker compose -f docker-compose.demo.yml logs --no-color --tail 200
+      - name: Tear down
+        if: always()
+        run: ./scripts/demo.sh down
+
+  web:
+    name: React web
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: web } }
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
+        with: { package_json_file: web/package.json }
+      - uses: actions/setup-dotnet@v4
+        with: { dotnet-version: "10.0.x" }
       - uses: actions/setup-node@v4
-        with: { node-version: 22, cache: pnpm }
+        with: { node-version: 22, cache: pnpm, cache-dependency-path: web/pnpm-lock.yaml }
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm build
+      - name: Build the web host
+        run: dotnet build host -c Release
+
+  infra:
+    name: Bicep + scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Bicep build + lint
+        run: |
+          az bicep install
+          az bicep build --file infra/main.bicep --stdout > /dev/null
+          az bicep lint --file infra/main.bicep
+          for f in infra/network.bicep infra/private-endpoint.bicep infra/audit-export.bicep; do az bicep lint --file "$f"; done
+      - name: Sentinel rule templates are valid JSON
+        run: for f in infra/sentinel/*.json; do jq -e '.resources[0].properties.query' "$f" > /dev/null; done
+      - name: shellcheck
+        run: shellcheck -x -e SC1091 -s bash infra/*.sh infra/tests/*.sh scripts/*.sh
+      - name: up.sh (stubbed steps; resume, hand-off, no secrets in state)
+        run: ./infra/tests/up-test.sh

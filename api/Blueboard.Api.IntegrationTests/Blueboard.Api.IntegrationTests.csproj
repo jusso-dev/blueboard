@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Integration tests against a real PostgreSQL. Set BLUEBOARD_TEST_DATABASE_URL (a server where the user may create
+       databases); each test class gets its own fresh database. Without it every test is skipped, so unit runs stay fast. -->
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" Version="4.0.3" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Blueboard.Api/Blueboard.Api.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="../../db/migrations/*.sql" LinkBase="migrations"><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory></None>
+    <None Include="../../playbooks/*.md" LinkBase="playbooks"><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory></None>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="../Blueboard.Api.Tests/Fixtures/ti/**/*" LinkBase="Fixtures/ti" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

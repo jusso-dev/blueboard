@@ -1,0 +1,81 @@
+{
+ "_note": "Hand-built from Microsoft's published schema (checked 19-11-2026); not recorded from a tenant. Columns: learn.microsoft.com/azure/azure-monitor/reference/tables/threatintelindicators",
+ "schema": [
+  {
+   "Name": "Id",
+   "Type": "String"
+  },
+  {
+   "Name": "ObservableKey",
+   "Type": "String"
+  },
+  {
+   "Name": "ObservableValue",
+   "Type": "String"
+  },
+  {
+   "Name": "Confidence",
+   "Type": "Int32"
+  },
+  {
+   "Name": "SourceSystem",
+   "Type": "String"
+  },
+  {
+   "Name": "ValidUntil",
+   "Type": "DateTime"
+  },
+  {
+   "Name": "Modified",
+   "Type": "DateTime"
+  },
+  {
+   "Name": "Tags",
+   "Type": "String"
+  },
+  {
+   "Name": "Name",
+   "Type": "String"
+  },
+  {
+   "Name": "Description",
+   "Type": "String"
+  },
+  {
+   "Name": "Labels",
+   "Type": "Object"
+  }
+ ],
+ "results": [
+  {
+   "Id": "indicator--3b1f6a2e-8d4c-4f0a-9b7e-2c5d1e6f7a80",
+   "ObservableKey": "url:value",
+   "ObservableValue": "https://cdn-update-check.example.net/payload.ps1",
+   "Confidence": 85,
+   "SourceSystem": "Premium Microsoft Defender Threat Intelligence",
+   "ValidUntil": "2027-01-31T00:00:00Z",
+   "Modified": "2026-11-12T03:10:00Z",
+   "Tags": "[\"phishing\",\"loader\"]",
+   "Name": "Phishing payload host",
+   "Description": "URL serving a PowerShell loader in a phishing campaign.",
+   "Labels": [
+    "phishing"
+   ]
+  },
+  {
+   "Id": "indicator--9c2d7e41-5a6b-4c8d-8e1f-0a2b3c4d5e6f",
+   "ObservableKey": "ipv4-addr:value",
+   "ObservableValue": "203.0.113.45",
+   "Confidence": 60,
+   "SourceSystem": "SOC watchlist (TAXII)",
+   "ValidUntil": "2026-12-31T00:00:00Z",
+   "Modified": "2026-11-10T00:00:00Z",
+   "Tags": "[\"c2\"]",
+   "Name": "C2 address",
+   "Description": "Command and control address shared by a partner CERT.",
+   "Labels": [
+    "c2"
+   ]
+  }
+ ]
+}

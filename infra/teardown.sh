@@ -2,17 +2,19 @@
 # Removes a blueboard environment. Destructive: deletes the resource group (database included)
 # and, with DELETE_APP=1, the Entra app registration. Asks twice unless BB_YES=1.
 #
-#   BB_ENV=dev RESOURCE_GROUP=rg-blueboard-dev ./infra/teardown.sh
-#   BB_ENV=dev RESOURCE_GROUP=rg-blueboard-dev DELETE_APP=1 ./infra/teardown.sh
+#   BB_ENV=dev ./infra/teardown.sh                  # resource group from infra/out/dev/state.json
+#   BB_ENV=dev DELETE_APP=1 ./infra/teardown.sh     # and the app registration
+#
+# RESOURCE_GROUP defaults to the one recorded by up.sh / deploy.sh.
 #
 # The Graph / Defender permissions granted to the board's managed identity go away with the identity.
 source "$(dirname "$0")/lib.sh"
 
 : "${BB_ENV:?set BB_ENV}"
-: "${RESOURCE_GROUP:?set RESOURCE_GROUP}"
-require az
-check_az_context
+require az jq
 state_load
+: "${RESOURCE_GROUP:?set RESOURCE_GROUP (nothing recorded in infra/out/$BB_ENV/state.json)}"
+check_az_context
 
 [[ "$(az group exists -n "$RESOURCE_GROUP")" == "true" ]] || die "resource group $RESOURCE_GROUP does not exist"
 tag="$(az group show -n "$RESOURCE_GROUP" --query "tags.app" -o tsv)"
@@ -33,4 +35,15 @@ if [[ "${DELETE_APP:-}" == "1" && -n "${BOARD_API_CLIENT_ID:-}" ]]; then
   az ad app delete --id "$BOARD_API_CLIENT_ID"
   log "deleted app registration"
 fi
-rm -f "$(state_file)"
+# Keep the state for the record, but mark everything undone so up.sh starts again from scratch.
+state="$(state_file)"
+if [[ -f "$state" ]]; then
+  mv "$state" "$state.deleted-$(date -u +%Y%m%dT%H%M%SZ)"
+  log "state moved aside: $state.deleted-*"
+fi
+# The production Key Vault has purge protection and a name fixed by the resource group, so it stays soft-deleted
+# (and its name taken) for 90 days.
+if [[ "${BB_PROFILE:-}" == "production" ]]; then
+  warn "the production Key Vault is soft-deleted with purge protection: its name stays taken for 90 days, so deploying
+  into $RESOURCE_GROUP again fails until then. Redeploy with a new RESOURCE_GROUP (e.g. RESOURCE_GROUP=$RESOURCE_GROUP-2)."
+fi

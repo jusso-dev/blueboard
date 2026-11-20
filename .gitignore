@@ -1,11 +1,32 @@
-node_modules
-.next
-out
-*.tsbuildinfo
-next-env.d.ts
+# .NET
+api/**/bin/
+api/**/obj/
+agents/**/bin/
+agents/**/obj/
+dev/**/bin/
+dev/**/obj/
+api/Blueboard.Api/local.settings.json
+.agent-state/
+
+# web
+web/node_modules/
+web/dist/
+
+# deploy state (ids and names only, no secrets)
+.deploy/
+infra/out/
+
+# local
 .env*
 !.env.example
-.agent-state
 *.log
 .DS_Store
-.deploy/
+policy.json
+tsconfig.tsbuildinfo
+
+# web host
+web/host/bin/
+web/host/obj/
+
+# agent worktrees
+.claude/

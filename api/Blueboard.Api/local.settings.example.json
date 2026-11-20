@@ -1,0 +1,17 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=<azurite-well-known-dev-key>;BlobEndpoint=http://127.0.0.1:20000/devstoreaccount1;QueueEndpoint=http://127.0.0.1:20001/devstoreaccount1;TableEndpoint=http://127.0.0.1:20002/devstoreaccount1;",
+    "FUNCTIONS_WORKER_RUNTIME": "dotnet-isolated",
+    "DATABASE_URL": "postgres://postgres:devpass@127.0.0.1:55432/blueboard",
+    "DEV_AUTH": "true",
+    "INGEST_ENABLED": "false",
+    "BROKER_EXECUTE": "false",
+    "BLUEBOARD_POLICY_FILE": "../../policy.example.json"
+  },
+  "Host": {
+    "CORS": "http://localhost:5173",
+    "CORSCredentials": true
+  },
+  "_comment": "Copy to local.settings.json. Replace <azurite-well-known-dev-key> with Azurite's published development account key (https://learn.microsoft.com/azure/storage/common/storage-use-azurite#http-connection-strings)."
+}

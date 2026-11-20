@@ -1,6 +1,12 @@
-node_modules
-.next
+**/bin/
+**/obj/
+**/node_modules/
+web/dist/
+.git/
+.deploy/
+.agent-state/
+**/local.settings.json
+**/*.log
 .env*
-.agent-state
-*.log
-.git
+!.env.example
+docs/screenshots/

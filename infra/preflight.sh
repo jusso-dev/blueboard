@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Read-only checks before a deployment. Changes nothing.
 #
-#   BB_ENV=prod RESOURCE_GROUP=rg-blueboard LOCATION=australiaeast ./infra/preflight.sh
+#   BB_ENV=prod RESOURCE_GROUP=rg-blueboard ./infra/preflight.sh     # LOCATION defaults to australiaeast
 #
 # Checks: tools, az sign-in, subscription/tenant, resource providers, your Azure RBAC on the
 # subscription or resource group, and whether you can create app registrations in Entra.
@@ -9,7 +9,7 @@ source "$(dirname "$0")/lib.sh"
 
 : "${BB_ENV:?set BB_ENV (e.g. prod)}"
 : "${RESOURCE_GROUP:?set RESOURCE_GROUP}"
-: "${LOCATION:?set LOCATION (e.g. australiaeast)}"
+LOCATION="${LOCATION:-australiaeast}"
 
 require az jq
 check_az_context
@@ -22,12 +22,27 @@ bad() {
 }
 note() { printf '  \033[33m!\033[0m %s\n' "$*"; }
 
-log "Azure CLI extensions"
-if az extension show -n containerapp >/dev/null 2>&1; then ok "containerapp extension"; else bad "az extension add -n containerapp"; fi
+log "Region"
+case "$LOCATION" in
+  australiaeast | australiasoutheast) ok "$LOCATION (every resource is created here)" ;;
+  *) bad "LOCATION must be australiaeast or australiasoutheast: blueboard keeps its data in Australia" ;;
+esac
+
+log "Tools"
 if az bicep version >/dev/null 2>&1; then ok "bicep"; else bad "az bicep install"; fi
+if dotnet --list-sdks 2>/dev/null | grep -q "^10\."; then ok ".NET 10 SDK"; else bad "install the .NET 10 SDK"; fi
+if command -v pnpm >/dev/null 2>&1; then ok "pnpm"; else bad "install pnpm (corepack enable)"; fi
+if command -v zip >/dev/null 2>&1; then ok "zip"; else bad "install zip"; fi
+if [[ "$(az functionapp list-flexconsumption-locations --query "[?name=='$LOCATION'] | length(@)" -o tsv 2>/dev/null)" == "1" ]]; then
+  ok "Flex Consumption is available in $LOCATION"
+else
+  bad "Flex Consumption isn't available in $LOCATION (az functionapp list-flexconsumption-locations)"
+fi
 
 log "Resource providers"
-for ns in Microsoft.App Microsoft.ContainerRegistry Microsoft.DBforPostgreSQL Microsoft.OperationalInsights Microsoft.ManagedIdentity Microsoft.CognitiveServices; do
+providers="Microsoft.Web Microsoft.Storage Microsoft.DBforPostgreSQL Microsoft.OperationalInsights Microsoft.Insights Microsoft.ManagedIdentity"
+[[ "${BB_PROFILE:-mvp}" == "production" ]] && providers="$providers Microsoft.Network Microsoft.KeyVault Microsoft.App"
+for ns in $providers; do
   state="$(az provider show -n "$ns" --query registrationState -o tsv 2>/dev/null || echo Unknown)"
   if [[ "$state" == "Registered" ]]; then ok "$ns"; else note "$ns is $state: deploy.sh will register it (needs */register/action)"; fi
 done
@@ -43,7 +58,7 @@ else
     --query "[?scope=='$sub_scope' || scope=='$rg_scope'].roleDefinitionName" -o tsv 2>/dev/null | sort -u)"
   while IFS= read -r r; do [[ -n "$r" ]] && printf '    %s\n' "$r"; done <<<"$roles"
   if grep -qxE "Owner|User Access Administrator|Role Based Access Control Administrator" <<<"$roles"; then
-    ok "can create role assignments (AcrPull, Cognitive Services User)"
+    ok "can create role assignments (storage data roles, monitoring publisher)"
   else
     bad "need Owner, or Contributor + Role Based Access Control Administrator, on the resource group"
   fi
@@ -70,9 +85,6 @@ else
     bad "need Application Administrator, Cloud Application Administrator or Application Developer for entra-app.sh"
   fi
 fi
-
-log "Docker"
-if docker info >/dev/null 2>&1; then ok "docker daemon reachable ($(docker context show))"; else note "docker not running: deploy.sh builds in ACR by default (BB_BUILD=acr)"; fi
 
 echo
 if [[ $fail -eq 0 ]]; then log "preflight passed"; else die "preflight found problems (see ✗ above)"; fi

@@ -1,0 +1,23 @@
+{
+  "_comment": "Entity lookups for the demo mock API. Fictional contoso data only; no real people, devices or secrets.",
+  "users": {
+    "ana.lopez@contoso.com": { "id": "0b6c2f1e-1001-4a7b-9c3d-000000000001", "displayName": "Ana Lopez", "userPrincipalName": "ana.lopez@contoso.com", "accountEnabled": true, "jobTitle": "Payroll Officer", "department": "Finance", "userType": "Member" },
+    "sam.patel@contoso.com": { "id": "0b6c2f1e-1002-4a7b-9c3d-000000000002", "displayName": "Sam Patel", "userPrincipalName": "sam.patel@contoso.com", "accountEnabled": true, "jobTitle": "Accountant", "department": "Finance", "userType": "Member" },
+    "j.chen@contoso.com": { "id": "0b6c2f1e-1003-4a7b-9c3d-000000000003", "displayName": "Jordan Chen", "userPrincipalName": "j.chen@contoso.com", "accountEnabled": true, "jobTitle": "Sales Director", "department": "Sales", "userType": "Member" }
+  },
+  "machines": {
+    "7c3f9e2a1b8d4c6e0f5a2b9d8c7e6f1a3b4c5d6e": { "id": "7c3f9e2a1b8d4c6e0f5a2b9d8c7e6f1a3b4c5d6e", "computerDnsName": "ws-0142.contoso.com", "osPlatform": "Windows11", "osVersion": "10.0.26100", "healthStatus": "Active", "riskScore": "High", "exposureLevel": "High", "isolationState": "NotIsolated", "lastSeen": "2026-11-19T00:00:00Z", "lastIpAddress": "10.20.1.42", "machineTags": ["finance"], "onboardingStatus": "Onboarded" }
+  },
+  "files": {
+    "4f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b4a3f2e1d0c9b8a7f6e5d4c3b": { "sha256": "4f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b4a3f2e1d0c9b8a7f6e5d4c3b", "fileType": "PowerShell", "isPeFile": false, "globalPrevalence": 3, "globalFirstObserved": "2026-11-18T22:10:00Z", "determinationType": "Unknown" }
+  },
+  "ips": {
+    "203.0.113.77": { "ipAddress": "203.0.113.77", "orgPrevalence": 1, "orgFirstSeen": "2026-11-19T00:00:00Z", "communicationCount": 4 },
+    "203.0.113.200": { "ipAddress": "203.0.113.200", "orgPrevalence": 1, "orgFirstSeen": "2026-11-19T00:00:00Z", "communicationCount": 1 },
+    "198.51.100.23": { "ipAddress": "198.51.100.23", "orgPrevalence": 412, "orgFirstSeen": "2025-02-01T00:00:00Z", "communicationCount": 9000 }
+  },
+  "domains": {
+    "contoso-payroll-update.example": { "host": "contoso-payroll-update.example", "orgPrevalence": 1, "orgFirstSeen": "2026-11-19T00:00:00Z" },
+    "cdn-update-check.example": { "host": "cdn-update-check.example", "orgPrevalence": 1, "orgFirstSeen": "2026-11-19T00:00:00Z" }
+  }
+}

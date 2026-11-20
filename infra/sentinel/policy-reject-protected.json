@@ -1,0 +1,70 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "description": "blueboard: Sentinel analytics rule (policy-reject-protected). Generated from docs/SECURITY.md detections."
+  },
+  "parameters": {
+    "workspace": {
+      "type": "string",
+      "metadata": {
+        "description": "Log Analytics workspace with Microsoft Sentinel enabled"
+      }
+    }
+  },
+  "resources": [
+    {
+      "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+      "apiVersion": "2023-02-01",
+      "name": "[concat(parameters('workspace'), '/Microsoft.SecurityInsights/af2c2d1f-3c20-570b-af7f-9cf7a5474468')]",
+      "kind": "Scheduled",
+      "location": "[resourceGroup().location]",
+      "properties": {
+        "displayName": "blueboard: action rejected for a protected user, device or indicator",
+        "description": "Someone (or an agent following injected instructions) asked the board to act on a protected asset. The policy refused it; find out why it was asked.",
+        "severity": "High",
+        "enabled": true,
+        "query": "BlueboardAudit_CL\n| where Event == \"action.requested\"\n| extend Outcome = tostring(Detail.outcome), Notes = tostring(Detail.notes), Kind = tostring(Detail.kind)\n| where Outcome == \"Reject\" and Notes has_any (\"protected user\", \"protected device\", \"protected indicator\")\n| project TimeGenerated, Actor, ActorKind, Kind, Subject, Notes",
+        "queryFrequency": "PT5M",
+        "queryPeriod": "PT5M",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "suppressionDuration": "PT1H",
+        "suppressionEnabled": false,
+        "tactics": [
+          "Impact",
+          "DefenseEvasion"
+        ],
+        "techniques": [
+          "T1489"
+        ],
+        "incidentConfiguration": {
+          "createIncident": true,
+          "groupingConfiguration": {
+            "enabled": false,
+            "reopenClosedIncident": false,
+            "lookbackDuration": "PT5H",
+            "matchingMethod": "AllEntities",
+            "groupByEntities": [],
+            "groupByAlertDetails": [],
+            "groupByCustomDetails": []
+          }
+        },
+        "eventGroupingSettings": {
+          "aggregationKind": "AlertPerResult"
+        },
+        "entityMappings": [
+          {
+            "entityType": "Account",
+            "fieldMappings": [
+              {
+                "identifier": "Name",
+                "columnName": "Actor"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -1,164 +1,231 @@
 #!/usr/bin/env bash
 # End-to-end deployment of blueboard to Azure. Idempotent: re-run it to roll out a new version.
 #
-#   BB_ENV=prod RESOURCE_GROUP=rg-blueboard-prod LOCATION=australiaeast \
-#   FOUNDRY_RESOURCE=my-foundry FOUNDRY_ACCOUNT_ID=/subscriptions/.../accounts/my-foundry \
-#     ./infra/deploy.sh
+#   BB_ENV=prod RESOURCE_GROUP=rg-blueboard-prod POLICY_FILE=policy.json ./infra/deploy.sh
 #
 # Optional:
-#   IMAGE_TAG=<tag>        defaults to the git short SHA (refuses a dirty tree unless BB_ALLOW_DIRTY=1)
-#   BB_BUILD=acr|docker    build in Azure Container Registry (default) or with local docker + push
-#   INGEST_ENABLED=true    poll Defender for incidents (default true)
-#   BROKER_EXECUTE=false   leave false until policy.json is reviewed (see docs/SECURITY.md)
-#   POLICY_FILE=policy.json  your reviewed policy (default: policy.example.json); mounted read-only
-#   BB_YES=1               skip confirmation prompts (CI)
+#   LOCATION=australiaeast  australiaeast (default) or australiasoutheast: every resource goes there
+#   BB_PROFILE=mvp          mvp (default) or production: private networking, Key Vault, high-availability
+#                           PostgreSQL, always-ready API instance, audit log to Sentinel (docs/OPERATIONS.md)
+#   WEB_SKU=B1              App Service plan for the web front end (production always uses P0v3)
+#   INGEST_ENABLED=true     poll Defender for incidents (default true)
+#   BROKER_EXECUTE=false    leave false until policy.json is reviewed (see docs/SECURITY.md)
+#   POLICY_FILE=…           your reviewed policy (default: policy.example.json)
+#   TI_PWNWATCH_ENABLED, TI_KEV_ENABLED, TI_EPSS_ENABLED, TI_NVD_ENABLED, TI_OSV_ENABLED,
+#   TI_SENTINEL_ENABLED, TI_EXPOSURE_ENABLED, TI_MSTI_ENABLED=false   threat intel sources (docs/THREAT_INTEL.md)
+#   NVD_API_KEY=…           optional, raises the NVD rate limit
+#   SENTINEL_WORKSPACE_ID=… resource id of the Sentinel workspace for publish_ti_indicator
+#   ASSIGN_SENTINEL_CONTRIBUTOR=false   give the board Microsoft Sentinel Contributor on that workspace
+#   BB_ALLOW_DIRTY=1        deploy from a working tree with uncommitted changes
+#   BB_YES=1                skip confirmation prompts (CI)
+#   Approver notifications (docs/OPERATIONS.md), all optional. URLs and the HMAC key are passed as secure
+#   parameters, never written to state or printed:
+#   NOTIFY_TEAMS_WEBHOOK_URL, NOTIFY_WEBHOOK_URL, NOTIFY_WEBHOOK_SECRET, NOTIFY_ALLOWED_HOSTS,
+#   NOTIFY_MAIL_FROM, NOTIFY_MAIL_TO, NOTIFY_REMIND_MINUTES (default 15), BOARD_WEB_URL (custom domain)
+#   EXTRA_CORS_ORIGINS=…    more web origins for the API's CORS list, space or comma separated (a custom domain:
+#                           https://board.example.com). The default web host is always allowed
+#   Agent webhooks (docs/AGENTS.md), off unless both are set:
+#   WEBHOOK_ALLOWED_HOSTS   exact host names agents may subscribe, comma separated
+#   WEBHOOK_SIGNING_KEY     base64 of 32+ random bytes (secure parameter; Key Vault in production)
+#
+# The non-secret settings above are remembered in infra/out/<env>/state.json, so a bare re-run deploys the same
+# configuration (set one empty, e.g. NOTIFY_MAIL_TO=, to clear it). Not remembered: BROKER_EXECUTE (dry run unless
+# you pass it, so a redeploy never undoes an emergency BROKER_EXECUTE=false), BB_ALLOW_DIRTY, BB_YES, and the secure
+# values, which you pass on every run: if one was passed last time and not this time, deploy.sh warns that this
+# deploy clears it.
 #
 # Steps (each is safe to repeat):
-#   1. preflight context    6. Entra redirect URI for the board's FQDN
-#   2. resource providers   7. run the migration job and wait for it
-#   3. foundation.bicep     8. health check
-#   4. build + push images  9. print the admin steps that need Entra privileges (grant-permissions.sh)
-#   5. main.bicep
+#   1. checks            5. sign-in: the web app's redirect URI on the app registration
+#   2. providers + RG    6. build + deploy the C# Function App (migrations run at start-up)
+#   3. main.bicep        7. build the React site + its ASP.NET Core host, deploy to the Web App
+#   4. outputs           8. health and setup checks, then print the admin-only steps
 #
-# Needs (see docs/DEPLOYMENT.md § Roles): Owner on the resource group (or Contributor + RBAC
-# Administrator), and an app registration from infra/entra-app.sh.
+# Needs (docs/DEPLOYMENT.md § Roles): Owner on the resource group (or Contributor + RBAC Administrator),
+# owner of the app registration from infra/entra-app.sh, .NET 10 SDK, Node 22 + pnpm.
 source "$(dirname "$0")/lib.sh"
 
 : "${BB_ENV:?set BB_ENV (e.g. prod)}"
+# Saved settings first (the environment wins), so the defaults below apply only to settings never given.
+state_load
 : "${RESOURCE_GROUP:?set RESOURCE_GROUP}"
-: "${LOCATION:?set LOCATION}"
-: "${FOUNDRY_RESOURCE:?set FOUNDRY_RESOURCE (Foundry resource name hosting the Claude deployments)}"
-FOUNDRY_ACCOUNT_ID="${FOUNDRY_ACCOUNT_ID:-}"
+LOCATION="${LOCATION:-australiaeast}"
+case "$LOCATION" in australiaeast | australiasoutheast) ;; *) die "LOCATION must be australiaeast or australiasoutheast (blueboard stays in Australia)" ;; esac
+WEB_SKU="${WEB_SKU:-B1}"
+BB_PROFILE="${BB_PROFILE:-mvp}"
+case "$BB_PROFILE" in mvp | production) ;; *) die "BB_PROFILE must be mvp or production" ;; esac
 INGEST_ENABLED="${INGEST_ENABLED:-true}"
 BROKER_EXECUTE="${BROKER_EXECUTE:-false}"
-BB_BUILD="${BB_BUILD:-acr}"
 PREFIX="${PREFIX:-blueboard}"
+TI_PARAMS=()
+for f in PWNWATCH KEV EPSS NVD OSV SENTINEL EXPOSURE MSTI; do
+  v="TI_${f}_ENABLED"
+  name="ti$(printf '%s' "$f" | cut -c1)$(printf '%s' "$f" | cut -c2- | tr '[:upper:]' '[:lower:]')Enabled"
+  TI_PARAMS+=("$name=${!v:-false}")
+done
+TI_PARAMS+=("sentinelWorkspaceResourceId=${SENTINEL_WORKSPACE_ID:-}" "assignSentinelContributor=${ASSIGN_SENTINEL_CONTRIBUTOR:-false}")
 POLICY_FILE="${POLICY_FILE:-$BB_ROOT/policy.example.json}"
-[[ -f "$POLICY_FILE" ]] || die "POLICY_FILE $POLICY_FILE not found"
-jq -e '.protected_users and .protected_devices' "$POLICY_FILE" >/dev/null || die "$POLICY_FILE is not a valid blueboard policy"
+CORS_JSON="$(jq -cn --arg o "${EXTRA_CORS_ORIGINS:-}" '[$o | splits("[ ,]+") | select(length > 0)]')"
 
-require az jq git
+require az jq git dotnet pnpm zip curl
 check_az_context
-state_load
 : "${BOARD_API_CLIENT_ID:?run BB_ENV=$BB_ENV ./infra/entra-app.sh first}"
 : "${BOARD_API_AUDIENCE:?run BB_ENV=$BB_ENV ./infra/entra-app.sh first}"
 
-cd "$BB_ROOT" || die "cannot cd to $BB_ROOT"
-if [[ -z "${IMAGE_TAG:-}" ]]; then
-  if [[ -n "$(git status --porcelain)" && "${BB_ALLOW_DIRTY:-}" != "1" ]]; then
-    die "working tree has uncommitted changes: commit first, or set IMAGE_TAG / BB_ALLOW_DIRTY=1"
-  fi
-  IMAGE_TAG="$(git rev-parse --short HEAD)"
-fi
-
+[[ -f "$POLICY_FILE" ]] || die "POLICY_FILE $POLICY_FILE not found"
+# Saved as an absolute path, so a re-run from another folder finds the same file.
+POLICY_FILE="$(cd "$(dirname "$POLICY_FILE")" && pwd)/$(basename "$POLICY_FILE")"
+jq -e '.protected_users and .protected_devices' "$POLICY_FILE" >/dev/null || die "$POLICY_FILE is not a valid blueboard policy"
+# Same strict parser as the Function App: an unknown key would stop it at start-up, so catch it before deploying.
+dotnet run --project "$BB_ROOT/api/Blueboard.Tools" -c Release -- policy-check "$POLICY_FILE" >/dev/null \
+  || die "$POLICY_FILE failed the policy check (run: dotnet run --project api/Blueboard.Tools -- policy-check $POLICY_FILE)"
 if [[ "$BROKER_EXECUTE" == "true" && "$POLICY_FILE" == *policy.example.json ]]; then
   die "BROKER_EXECUTE=true needs your own POLICY_FILE (the example lists contoso.com placeholders)"
 fi
+
+cd "$BB_ROOT" || die "cannot cd to $BB_ROOT"
+if [[ -n "$(git status --porcelain)" && "${BB_ALLOW_DIRTY:-}" != "1" ]]; then
+  die "working tree has uncommitted changes: commit first, or set BB_ALLOW_DIRTY=1"
+fi
+VERSION="$(git rev-parse --short HEAD)"
+
 if [[ "$BROKER_EXECUTE" == "true" ]]; then
   warn "BROKER_EXECUTE=true: approved actions will isolate devices, disable users and block indicators in your tenant."
   confirm "Have you reviewed policy.json and tested every action in a non-production tenant?"
 fi
+# Secure settings are never stored. state.json records only short labels for the ones passed last time, so a re-run
+# without one warns before this deployment clears it.
+secure_label() {
+  case "$1" in
+    NOTIFY_TEAMS_WEBHOOK_URL) echo teams ;; NOTIFY_WEBHOOK_URL) echo webhook ;; NOTIFY_WEBHOOK_SECRET) echo hmac ;;
+    NVD_API_KEY) echo nvd ;; WEBHOOK_SIGNING_KEY) echo signing ;;
+  esac
+}
+passed=""
+for v in NOTIFY_TEAMS_WEBHOOK_URL NOTIFY_WEBHOOK_URL NOTIFY_WEBHOOK_SECRET NVD_API_KEY WEBHOOK_SIGNING_KEY; do
+  if [[ -n "${!v:-}" ]]; then
+    passed="$passed $(secure_label "$v")"
+  elif [[ " ${SECURE_SETTINGS_PASSED:-} " == *" $(secure_label "$v") "* ]]; then
+    warn "$v was set on the last deploy but not now: this deploy clears it. Pass it again (it is never stored) to keep it."
+  fi
+done
 
-echo
-log "deploying blueboard $IMAGE_TAG → $RESOURCE_GROUP ($LOCATION) · env $BB_ENV · broker execute: $BROKER_EXECUTE"
+log "deploying blueboard $VERSION → $RESOURCE_GROUP ($LOCATION) · env $BB_ENV · profile $BB_PROFILE · broker execute: $BROKER_EXECUTE"
 confirm "Continue?"
 
-# 2. providers ----------------------------------------------------------------------------------
-for ns in Microsoft.App Microsoft.ContainerRegistry Microsoft.DBforPostgreSQL Microsoft.OperationalInsights Microsoft.ManagedIdentity Microsoft.CognitiveServices; do
+# 2. providers + resource group ----------------------------------------------------------------
+providers="Microsoft.Web Microsoft.Storage Microsoft.DBforPostgreSQL Microsoft.OperationalInsights Microsoft.Insights Microsoft.ManagedIdentity"
+[[ "$BB_PROFILE" == "production" ]] && providers="$providers Microsoft.Network Microsoft.KeyVault Microsoft.App"
+for ns in $providers; do
   [[ "$(az provider show -n "$ns" --query registrationState -o tsv)" == "Registered" ]] || {
     log "registering $ns"
     az provider register -n "$ns" --wait
   }
 done
-
-# 3. foundation ---------------------------------------------------------------------------------
 az group create -n "$RESOURCE_GROUP" -l "$LOCATION" --tags app=blueboard env="$BB_ENV" -o none
-log "foundation (registry + managed identities)"
-found="$(az deployment group create -g "$RESOURCE_GROUP" -n "blueboard-foundation" \
-  -f infra/foundation.bicep -p location="$LOCATION" namePrefix="$PREFIX" --query properties.outputs -o json)"
-ACR_NAME="$(jq -r .acrName.value <<<"$found")"
-ACR_SERVER="$(jq -r .acrLoginServer.value <<<"$found")"
-BOARD_MI="$(jq -r .boardIdentityPrincipalId.value <<<"$found")"
-AGENT_MI="$(jq -r .agentIdentityPrincipalId.value <<<"$found")"
-state_set ACR_NAME "$ACR_NAME"
-state_set BOARD_MI_PRINCIPAL_ID "$BOARD_MI"
-state_set AGENT_MI_PRINCIPAL_ID "$AGENT_MI"
 
-# 4. images -------------------------------------------------------------------------------------
-BOARD_IMAGE="$ACR_SERVER/blueboard-board:$IMAGE_TAG"
-TOOLS_IMAGE="$ACR_SERVER/blueboard-tools:$IMAGE_TAG"
-if [[ "$BB_BUILD" == "acr" ]]; then
-  log "building images in ACR (no local docker needed)"
-  az acr build -r "$ACR_NAME" -t "blueboard-board:$IMAGE_TAG" --target board --platform linux/amd64 . -o none
-  az acr build -r "$ACR_NAME" -t "blueboard-tools:$IMAGE_TAG" --target tools --platform linux/amd64 . -o none
-else
-  require docker
-  log "building images locally (docker context: $(docker context show)) and pushing"
-  az acr login -n "$ACR_NAME"
-  docker build --platform linux/amd64 --target board -t "$BOARD_IMAGE" .
-  docker build --platform linux/amd64 --target tools -t "$TOOLS_IMAGE" .
-  docker push "$BOARD_IMAGE"
-  docker push "$TOOLS_IMAGE"
-fi
-
-# 5. apps ---------------------------------------------------------------------------------------
-log "main deployment (Container Apps, PostgreSQL, Log Analytics)"
-main="$(az deployment group create -g "$RESOURCE_GROUP" -n "blueboard-main" -f infra/main.bicep \
-  -p location="$LOCATION" namePrefix="$PREFIX" acrLoginServer="$ACR_SERVER" \
-  boardImage="$BOARD_IMAGE" toolsImage="$TOOLS_IMAGE" \
+# 3. infrastructure -----------------------------------------------------------------------------
+log "infrastructure ($BB_PROFILE profile: Web App, Function App, PostgreSQL, storage, monitoring) in $LOCATION"
+# Secure values go in a private parameters file (mode 600, deleted on exit) so they never appear in the process list.
+params="$(mktemp)"
+trap 'rm -f "$params"' EXIT
+chmod 600 "$params"
+jq -n --rawfile policy "$POLICY_FILE" \
+  --arg teams "${NOTIFY_TEAMS_WEBHOOK_URL:-}" --arg hook "${NOTIFY_WEBHOOK_URL:-}" --arg hmac "${NOTIFY_WEBHOOK_SECRET:-}" \
+  --arg nvd "${NVD_API_KEY:-}" --arg signing "${WEBHOOK_SIGNING_KEY:-}" --argjson cors "$CORS_JSON" \
+  '{"$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#", contentVersion: "1.0.0.0",
+    parameters: {policyJson: {value: $policy}, notifyTeamsWebhookUrl: {value: $teams}, notifyWebhookUrl: {value: $hook},
+                 notifyWebhookSecret: {value: $hmac}, nvdApiKey: {value: $nvd}, webhookSigningKey: {value: $signing},
+                 extraCorsOrigins: {value: $cors}}}' >"$params"
+out="$(az deployment group create -g "$RESOURCE_GROUP" -n "blueboard-main" -f infra/main.bicep \
+  -p @"$params" \
+  -p location="$LOCATION" webSkuName="$WEB_SKU" namePrefix="$PREFIX" profile="$BB_PROFILE" \
   boardApiClientId="$BOARD_API_CLIENT_ID" boardApiAudience="$BOARD_API_AUDIENCE" \
-  foundryResource="$FOUNDRY_RESOURCE" foundryAccountId="$FOUNDRY_ACCOUNT_ID" \
-  ingestEnabled="$INGEST_ENABLED" brokerExecute="$BROKER_EXECUTE" policyJson=@"$POLICY_FILE" \
+  ingestEnabled="$INGEST_ENABLED" brokerExecute="$BROKER_EXECUTE" \
+  notifyAllowedHosts="${NOTIFY_ALLOWED_HOSTS:-}" notifyMailFrom="${NOTIFY_MAIL_FROM:-}" notifyMailTo="${NOTIFY_MAIL_TO:-}" \
+  notifyRemindMinutes="${NOTIFY_REMIND_MINUTES:-15}" webBaseUrl="${BOARD_WEB_URL:-}" \
+  webhookAllowedHosts="${WEBHOOK_ALLOWED_HOSTS:-}" \
+  "${TI_PARAMS[@]}" \
   --query properties.outputs -o json)"
-BOARD_FQDN="$(jq -r .boardFqdn.value <<<"$main")"
-JOB="$(jq -r .migrateJobName.value <<<"$main")"
-state_set BOARD_FQDN "$BOARD_FQDN"
+rm -f "$params"
 
-# 6. sign-in redirect ---------------------------------------------------------------------------
-log "sign-in redirect for https://$BOARD_FQDN"
-az ad app update --id "$BOARD_API_CLIENT_ID" --web-redirect-uris "https://$BOARD_FQDN/.auth/login/aad/callback" \
-  --web-home-page-url "https://$BOARD_FQDN" ||
-  warn "could not update the app registration (needs app owner / Application Administrator): add the redirect URI by hand"
-
-# 7. migrations ---------------------------------------------------------------------------------
-log "running database migrations ($JOB)"
-exec_name="$(az containerapp job start -g "$RESOURCE_GROUP" -n "$JOB" --query name -o tsv)"
-for _ in $(seq 1 60); do
-  status="$(az containerapp job execution show -g "$RESOURCE_GROUP" -n "$JOB" --job-execution-name "$exec_name" \
-    --query properties.status -o tsv 2>/dev/null || echo Unknown)"
-  case "$status" in
-    Succeeded) log "migrations applied" && break ;;
-    Failed | Stopped | Degraded) die "migration job $exec_name: $status (see Log Analytics: ContainerAppConsoleLogs_CL)" ;;
-  esac
-  sleep 10
+# 4. outputs ------------------------------------------------------------------------------------
+WEB_NAME="$(jq -r .webName.value <<<"$out")"
+WEB_HOST="$(jq -r .webHostname.value <<<"$out")"
+API_NAME="$(jq -r .apiName.value <<<"$out")"
+API_HOST="$(jq -r .apiHostname.value <<<"$out")"
+API_MI="$(jq -r .apiIdentityPrincipalId.value <<<"$out")"
+state_set WEB_HOST "$WEB_HOST"
+state_set API_HOST "$API_HOST"
+state_set API_MI_PRINCIPAL_ID "$API_MI"
+state_set WEB_NAME "$WEB_NAME"
+state_set API_NAME "$API_NAME"
+state_set RESOURCE_GROUP "$RESOURCE_GROUP"
+state_set BB_PROFILE "$BB_PROFILE"
+# The non-secret settings this deploy used, so a bare re-run deploys the same configuration.
+for v in LOCATION WEB_SKU PREFIX INGEST_ENABLED POLICY_FILE SENTINEL_WORKSPACE_ID ASSIGN_SENTINEL_CONTRIBUTOR \
+  NOTIFY_ALLOWED_HOSTS NOTIFY_MAIL_FROM NOTIFY_MAIL_TO NOTIFY_REMIND_MINUTES BOARD_WEB_URL EXTRA_CORS_ORIGINS \
+  WEBHOOK_ALLOWED_HOSTS TI_PWNWATCH_ENABLED TI_KEV_ENABLED TI_EPSS_ENABLED TI_NVD_ENABLED TI_OSV_ENABLED \
+  TI_SENTINEL_ENABLED TI_EXPOSURE_ENABLED TI_MSTI_ENABLED; do
+  state_set "$v" "${!v:-}"
 done
-[[ "$status" == "Succeeded" ]] || die "migration job did not finish in 10 minutes"
+state_set SECURE_SETTINGS_PASSED "${passed# }"
 
-# 8. health -------------------------------------------------------------------------------------
+# 5. sign-in --------------------------------------------------------------------------------------
+log "sign-in: single-page app redirect URI for https://$WEB_HOST"
+WEB_HOSTNAME="$WEB_HOST" "$BB_ROOT/infra/entra-app.sh" >/dev/null ||
+  warn "could not update the app registration (needs app owner or Cloud Application Administrator): run BB_ENV=$BB_ENV WEB_HOSTNAME=$WEB_HOST ./infra/entra-app.sh"
+
+# 6. Function App ---------------------------------------------------------------------------------
+log "building the C# Function App"
+build="$(mktemp -d)"
+trap 'rm -rf "$build" "$params"' EXIT
+dotnet publish api/Blueboard.Api -c Release -o "$build/api" --nologo -v q
+(cd "$build/api" && zip -qr "$build/api.zip" .)
+log "deploying $API_NAME"
+az functionapp deploy -g "$RESOURCE_GROUP" -n "$API_NAME" --src-path "$build/api.zip" --type zip -o none
+
+# 7. Web App -------------------------------------------------------------------------------------
+log "building the React site and its host"
+(cd web && pnpm install --frozen-lockfile --silent && pnpm build)
+dotnet publish web/host -c Release -o "$build/web" --nologo -v q
+(cd "$build/web" && zip -qr "$build/web.zip" .)
+log "deploying $WEB_NAME"
+az webapp deploy -g "$RESOURCE_GROUP" -n "$WEB_NAME" --src-path "$build/web.zip" --type zip -o none
+
+# 8. health ---------------------------------------------------------------------------------------
 log "health check"
+ok=""
 for _ in $(seq 1 30); do
-  if curl -fsS "https://$BOARD_FQDN/api/healthz" >/dev/null 2>&1; then ok=1 && break; fi
+  if curl -fsS "https://$API_HOST/api/healthz" >/dev/null 2>&1; then ok=1 && break; fi
   sleep 10
 done
-[[ "${ok:-}" == "1" ]] || die "https://$BOARD_FQDN/api/healthz did not respond"
+[[ "$ok" == "1" ]] || die "https://$API_HOST/api/healthz did not respond (see Application Insights)"
+curl -fsS "https://$WEB_HOST/healthz" >/dev/null || die "https://$WEB_HOST/healthz did not respond"
 
-# 9. hand-off -----------------------------------------------------------------------------------
+# The setup checklist runs inside the Function App with its own identity; the CLI can't use that identity from
+# here, so this calls the deployed /api/setup with your token (Board.Admin). Same checks as `blueboard doctor`.
+log "setup checks (https://$WEB_HOST/setup)"
+run_setup_checks "$API_HOST" "$BOARD_API_AUDIENCE"
+
 cat <<EOF
 
-blueboard $IMAGE_TAG is running at https://$BOARD_FQDN
+blueboard $VERSION is live.
+  Web (analysts)   https://$WEB_HOST
+  MCP (agents)     https://$API_HOST/runtime/webhooks/mcp   (Entra bearer token for $BOARD_API_AUDIENCE)
 
 Remaining one-time steps (need Entra admin roles, see docs/DEPLOYMENT.md):
 
-  1. Microsoft Graph + Defender permissions for the board (Privileged Role Administrator):
-       ./infra/grant-permissions.sh $BOARD_MI $BOARD_API_CLIENT_ID $AGENT_MI
+  1. Microsoft Graph + Defender permissions for the API (Privileged Role Administrator):
+       READ_ONLY=1 ./infra/grant-permissions.sh $API_MI $BOARD_API_CLIENT_ID
+     (./infra/up.sh does this, or writes infra/out/$BB_ENV/handoff.md for the person who can)
 
-  2. Assign people to blueboard roles (Application Administrator or enterprise app owner):
+  2. Assign people to blueboard roles (Cloud Application Administrator or enterprise app owner):
        BB_ENV=$BB_ENV ./infra/assign-roles.sh <analysts-group-id>  Board.Post Board.Hunt Board.RequestActions
        BB_ENV=$BB_ENV ./infra/assign-roles.sh <approvers-group-id> Board.Post Board.Approve
        BB_ENV=$BB_ENV ./infra/assign-roles.sh <admins-group-id>    Board.Post Board.Admin
 
-  3. Foundry: deploy $FOUNDRY_RESOURCE models claude-opus-5-5 and the fallback model.
-     ${FOUNDRY_ACCOUNT_ID:+(Cognitive Services User for the agent identity was assigned by Bicep.)}${FOUNDRY_ACCOUNT_ID:-Assign "Cognitive Services User" on the Foundry resource to principal $AGENT_MI.}
+  3. Agents: give each agent identity Board.Post, Board.Hunt, Board.RequestActions
+     (./infra/assign-roles.sh <agent-principal-id> ...) and point it at the MCP URL above.
 
-  4. Review docs/SECURITY.md, then mount policy.json and redeploy with BROKER_EXECUTE=true.
+  4. Review docs/SECURITY.md, then redeploy with your POLICY_FILE and BROKER_EXECUTE=true.
 EOF

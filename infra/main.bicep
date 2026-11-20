@@ -1,72 +1,202 @@
-// Stage 2 of 2: blueboard on Azure Container Apps. Run infra/foundation.bicep first (registry + identities).
+// blueboard on Azure, in Australia: React front end on App Service + C# Azure Functions back end.
 //
-//   board         Next.js (UI, REST, SSE, MCP, ingest poller, action broker). Easy Auth (Entra) for humans;
-//                 /api/mcp and /.well-known are excluded so agents authenticate with bearer tokens.
-//   migrate       Container Apps job that applies db/migrations.
-//   enrichment    Reference Claude agent. Talks only to the board's MCP endpoint and to Foundry.
+//   web    App Service Web App (Linux, .NET 10). A small ASP.NET Core host serves the React build with strict
+//          security headers. It has no identity, no secrets and no data access: the browser signs in with
+//          Microsoft Entra ID (MSAL, auth code + PKCE) and calls the Function App directly with an access token.
+//   api    Azure Functions, Flex Consumption, .NET 10 isolated. REST for the web app (CORS: the web origin only),
+//          the MCP endpoint for agents (/runtime/webhooks/mcp), timer triggers for the Defender incident poller
+//          and stuck-action recovery. Every request carries an Entra bearer token, validated in code.
+//   data   Azure Database for PostgreSQL Flexible Server 16, Entra authentication only.
 //
-// Identities (no secrets for Microsoft APIs):
-//   id-board      Graph + Defender application permissions, Postgres Entra admin. Granted by infra/grant-permissions.sh.
-//   id-agent      Board.Post / Board.Hunt / Board.RequestActions app roles on the board API, and
-//                 "Cognitive Services User" on the Foundry resource. Nothing in Defender/Entra.
+// Every resource is created in one Australian region (location), so board data, logs and the deployment
+// package stay in Australia. Microsoft Graph and Defender are tenant services (their data location is set
+// by your Microsoft 365 / Defender tenant), and Claude on Microsoft Foundry is not offered in an Australian
+// region yet: see docs/architecture.md § Data residency.
+//
+// Profiles (param profile):
+//   mvp         the default. Public endpoints with Entra auth everywhere, Burstable PostgreSQL. Output unchanged.
+//   production  VNet + Function App VNet integration, private endpoints for PostgreSQL, storage and Key Vault (no
+//               public PostgreSQL endpoint, no AllowAzureServices rule), policy.json and notification secrets in Key
+//               Vault (RBAC mode) as Key Vault references, PostgreSQL General Purpose with HA (zone-redundant in
+//               Australia East, same-zone in Australia Southeast, which has no availability zones), one
+//               always-ready http instance, P0v3 for the web app, and audit_log shipped to the BlueboardAudit_CL
+//               table through a Data Collection Endpoint and Rule (see docs/OPERATIONS.md).
+//
+// Identities (no stored secrets anywhere):
+//   id-api   Function App: Graph + Defender application permissions (infra/grant-permissions.sh),
+//            PostgreSQL Entra admin, host storage data roles, Application Insights publisher.
 
 targetScope = 'resourceGroup'
 
-param location string = resourceGroup().location
+@description('Australian region for every resource. Flex Consumption is offered in Australia East and Australia Southeast.')
+@allowed(['australiaeast', 'australiasoutheast'])
+param location string = 'australiaeast'
 param namePrefix string = 'blueboard'
-@description('Login server of the registry from foundation.bicep, e.g. blueboardacrxyz.azurecr.io.')
-param acrLoginServer string
-@description('Container image for the board (Dockerfile target "board"), in that registry.')
-param boardImage string
-@description('Container image for the migrate job and agent (Dockerfile target "tools").')
-param toolsImage string
-@description('Entra tenant id.')
 param tenantId string = tenant().tenantId
-@description('Application (client) id of the board API app registration (audience for agent tokens and Easy Auth).')
+@description('Client id of the board app registration (infra/entra-app.sh). Also the web app\'s MSAL client id.')
 param boardApiClientId string
-@description('App ID URI of the board API, e.g. api://blueboard.')
+@description('App ID URI of the board API, e.g. api://blueboard-prod.')
 param boardApiAudience string
-@description('Foundry resource name hosting the Claude deployments.')
-param foundryResource string
-@description('Resource id of the Foundry (AI Services) account in this resource group, for the agent role assignment. Empty to skip (assign Cognitive Services User yourself).')
-param foundryAccountId string = ''
-param claudeModel string = 'claude-opus-5-5'
-param claudeFallbackModel string = 'claude-opus-4-8'
-@description('Contents of policy.json (protected users/devices/indicators, auto-approve list). Mounted read-only at /etc/blueboard/policy.json. Kept out of deployment history.')
-@secure()
-param policyJson string
 @description('Leave false until policy.json is reviewed: approved actions are recorded as dry runs.')
 param brokerExecute bool = false
 param ingestEnabled bool = true
+@description('Contents of policy.json. Stored as a Function App setting, written to a private temp file at start-up. Kept out of deployment history.')
+@secure()
+param policyJson string
+@description('Maximum Function App instances (Flex Consumption).')
+param maximumInstanceCount int = 40
+@description('App Service plan for the web front end. B1 is enough for a SOC; P0v3 adds zone support and more headroom. The production profile always uses P0v3.')
+param webSkuName string = 'B1'
+@description('mvp (default): public endpoints with Entra auth. production: private networking, Key Vault, high-availability PostgreSQL, audit export to Sentinel.')
+@allowed(['mvp', 'production'])
+param profile string = 'mvp'
+@description('Public URL of the web app for deep links in notifications. Empty: the deployed web app\'s default host name.')
+param webBaseUrl string = ''
 
+// Approver notifications (docs/OPERATIONS.md). Secure: never in deployment history. In the production profile they are
+// stored in Key Vault and the Function App reads them through Key Vault references.
+@secure()
+@description('Teams incoming webhook or Workflows URL. Empty: no Teams notifications.')
+param notifyTeamsWebhookUrl string = ''
+@secure()
+@description('Generic HTTPS webhook URL. Empty: no webhook notifications.')
+param notifyWebhookUrl string = ''
+@secure()
+@description('HMAC-SHA256 key for X-Blueboard-Signature (at least 32 characters). Required with notifyWebhookUrl.')
+param notifyWebhookSecret string = ''
+@description('Exact host names the Teams and webhook URLs may use, comma separated (https only).')
+param notifyAllowedHosts string = ''
+@description('Shared mailbox approver email is sent from (needs Mail.Send: NOTIFY_MAIL=1 ./infra/grant-permissions.sh). Empty: no email.')
+param notifyMailFrom string = ''
+@description('Approver addresses, comma separated.')
+param notifyMailTo string = ''
+param notifyRemindMinutes int = 15
+
+// Agent webhooks (docs/AGENTS.md): off unless both are set. The signing key is a Key Vault reference in production.
+@description('Exact host names agents may subscribe webhooks on, comma separated. Empty: webhooks off.')
+param webhookAllowedHosts string = ''
+@secure()
+@description('Base64 of at least 32 random bytes; signs webhook deliveries (HMAC-SHA256). Empty: webhooks off.')
+param webhookSigningKey string = ''
+@description('More browser origins allowed to call the API, e.g. [\'https://board.example.com\'] for a custom domain. The web app\'s default host is always allowed.')
+param extraCorsOrigins array = []
+
+// Threat intel and CVE sources (docs/THREAT_INTEL.md, docs/ti/sources.md). All off by default.
+@description('Outside feeds: pwn.watch, CISA KEV (scheduled); FIRST EPSS, NVD, OSV (on demand). Outbound https to each host only.')
+param tiPwnwatchEnabled bool = false
+param tiKevEnabled bool = false
+param tiEpssEnabled bool = false
+param tiNvdEnabled bool = false
+param tiOsvEnabled bool = false
+@description('Tenant intel through the board identity: Sentinel TI and Defender exposure use advanced hunting (ThreatHunting.Read.All, already granted).')
+param tiSentinelEnabled bool = false
+param tiExposureEnabled bool = false
+@description('Microsoft Threat Intelligence (Graph). Grant ThreatIntelligence.Read.All first: TI_MSTI=1 ./infra/grant-permissions.sh.')
+param tiMstiEnabled bool = false
+@description('Optional NVD API key (raises the rate limit from 5 to 50 requests per 30 seconds). Not a Microsoft credential.')
+@secure()
+param nvdApiKey string = ''
+@description('publish_ti_indicator: resource id of the Log Analytics workspace that has Microsoft Sentinel. Empty: the action dry-runs with no workspace and fails if executed.')
+param sentinelWorkspaceResourceId string = ''
+@description('publish_ti_indicator: assign Microsoft Sentinel Contributor on that workspace to the board identity. Needs Owner or User Access Administrator on the workspace.')
+param assignSentinelContributor bool = false
+
+var isProd = profile == 'production'
+// Australia East has availability zones; Australia Southeast doesn't, so HA there is same-zone.
+var hasZones = location == 'australiaeast'
 var suffix = uniqueString(resourceGroup().id)
+var storageName = take('${replace(namePrefix, '-', '')}st${suffix}', 24)
+var deployContainer = 'app-package'
+var roles = {
+  storageBlobDataOwner: 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b'
+  storageQueueDataContributor: '974c5e8b-45b9-4653-ba55-5f855dd0fb88'
+  storageTableDataContributor: '0a9a7e1f-b9d0-4cc4-a60d-0319b160aaa3'
+  monitoringMetricsPublisher: '3913510d-42f4-4e42-8a64-420c390055eb'
+  keyVaultSecretsUser: '4633458b-17de-408a-b874-0445c86b69e6'
+  sentinelContributor: 'ab8e14d6-4a74-4f29-9ba8-549422addade'
+}
+// /subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.OperationalInsights/workspaces/{name}; a placeholder when unset (never deployed).
+var sentinelWorkspaceParts = split(empty(sentinelWorkspaceResourceId) ? '/subscriptions/none/resourceGroups/none/providers/x/workspaces/none' : sentinelWorkspaceResourceId, '/')
 
+// ── observability ────────────────────────────────────────────────────────────────────────────
 resource logs 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
   name: '${namePrefix}-logs-${suffix}'
   location: location
   properties: { sku: { name: 'PerGB2018' }, retentionInDays: 90 }
 }
 
-// Created by foundation.bicep (they need AcrPull before the apps can pull images).
-resource idBoard 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = {
-  name: '${namePrefix}-id-board'
+resource appInsights 'Microsoft.Insights/components@2020-02-02' = {
+  name: '${namePrefix}-ai-${suffix}'
+  location: location
+  kind: 'web'
+  properties: { Application_Type: 'web', WorkspaceResourceId: logs.id, DisableLocalAuth: true }
 }
 
-resource idAgent 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = {
-  name: '${namePrefix}-id-agent'
+// ── identities ───────────────────────────────────────────────────────────────────────────────
+resource idApi 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
+  name: '${namePrefix}-id-api'
+  location: location
 }
 
+// ── host storage (identity only, no shared keys) ─────────────────────────────────────────────
+resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
+  name: storageName
+  location: location
+  kind: 'StorageV2'
+  sku: { name: 'Standard_LRS' }
+  properties: union({
+    allowSharedKeyAccess: false
+    allowBlobPublicAccess: false
+    minimumTlsVersion: 'TLS1_2'
+    supportsHttpsTrafficOnly: true
+    defaultToOAuthAuthentication: true
+  }, isProd ? { publicNetworkAccess: 'Disabled', networkAcls: { defaultAction: 'Deny', bypass: 'None' } } : {})
+}
+
+resource blobService 'Microsoft.Storage/storageAccounts/blobServices@2023-05-01' = {
+  parent: storage
+  name: 'default'
+}
+
+resource packageContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = {
+  parent: blobService
+  name: deployContainer
+}
+
+resource storageRoles 'Microsoft.Authorization/roleAssignments@2022-04-01' = [
+  for r in [roles.storageBlobDataOwner, roles.storageQueueDataContributor, roles.storageTableDataContributor]: {
+    name: guid(storage.id, idApi.id, r)
+    scope: storage
+    properties: {
+      principalId: idApi.properties.principalId
+      principalType: 'ServicePrincipal'
+      roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', r)
+    }
+  }
+]
+
+resource aiRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(appInsights.id, idApi.id, roles.monitoringMetricsPublisher)
+  scope: appInsights
+  properties: {
+    principalId: idApi.properties.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roles.monitoringMetricsPublisher)
+  }
+}
+
+// ── PostgreSQL (Entra auth only) ─────────────────────────────────────────────────────────────
 resource pg 'Microsoft.DBforPostgreSQL/flexibleServers@2024-08-01' = {
   name: '${namePrefix}-pg-${suffix}'
   location: location
-  sku: { name: 'Standard_B1ms', tier: 'Burstable' }
-  properties: {
+  sku: isProd ? { name: 'Standard_D2ds_v5', tier: 'GeneralPurpose' } : { name: 'Standard_B1ms', tier: 'Burstable' }
+  properties: union({
     version: '16'
     storage: { storageSizeGB: 32 }
     authConfig: { activeDirectoryAuth: 'Enabled', passwordAuth: 'Disabled', tenantId: tenantId }
     backup: { backupRetentionDays: 14, geoRedundantBackup: 'Disabled' }
-    highAvailability: { mode: 'Disabled' }
-  }
+    highAvailability: isProd ? { mode: hasZones ? 'ZoneRedundant' : 'SameZone' } : { mode: 'Disabled' }
+  }, isProd ? { network: { publicNetworkAccess: 'Disabled' } } : {})
 }
 
 resource pgDb 'Microsoft.DBforPostgreSQL/flexibleServers/databases@2024-08-01' = {
@@ -74,182 +204,344 @@ resource pgDb 'Microsoft.DBforPostgreSQL/flexibleServers/databases@2024-08-01' =
   name: 'blueboard'
 }
 
-// Container Apps reach Postgres over the Azure backbone. For production, prefer VNet integration + private endpoint.
-resource pgAllowAzure 'Microsoft.DBforPostgreSQL/flexibleServers/firewallRules@2024-08-01' = {
+// Flex Consumption egress isn't a fixed IP without VNet integration. The production profile uses a private endpoint instead.
+resource pgAllowAzure 'Microsoft.DBforPostgreSQL/flexibleServers/firewallRules@2024-08-01' = if (!isProd) {
   parent: pg
   name: 'AllowAzureServices'
   properties: { startIpAddress: '0.0.0.0', endIpAddress: '0.0.0.0' }
 }
 
-// The administrator resource name must be known at deployment start, so the board identity's
-// principal id is deployed through a module (its params are evaluated after the identity exists).
 module pgAdmin 'pg-admin.bicep' = {
   name: 'pg-admin'
   params: {
     serverName: pg.name
-    principalId: idBoard.properties.principalId
-    principalName: idBoard.name
+    principalId: idApi.properties.principalId
+    principalName: idApi.name
     tenantId: tenantId
   }
   dependsOn: [pgDb]
 }
 
-resource env 'Microsoft.App/managedEnvironments@2024-03-01' = {
-  name: '${namePrefix}-env'
+// ── Function App (Flex Consumption, .NET 10 isolated) ────────────────────────────────────────
+resource plan 'Microsoft.Web/serverfarms@2024-04-01' = {
+  name: '${namePrefix}-plan'
   location: location
+  kind: 'functionapp'
+  sku: { name: 'FC1', tier: 'FlexConsumption' }
+  properties: { reserved: true }
+}
+
+resource api 'Microsoft.Web/sites@2024-04-01' = {
+  name: '${namePrefix}-api-${suffix}'
+  location: location
+  kind: 'functionapp,linux'
+  identity: { type: 'UserAssigned', userAssignedIdentities: { '${idApi.id}': {} } }
+  properties: union({
+    serverFarmId: plan.id
+    httpsOnly: true
+    publicNetworkAccess: 'Enabled'
+    siteConfig: union({
+      minTlsVersion: '1.2'
+      ftpsState: 'Disabled'
+      http20Enabled: true
+      // The browser calls the API cross-origin with a bearer token (no cookies), so only the web origin is allowed.
+      cors: { allowedOrigins: union(['https://${web.properties.defaultHostName}'], extraCorsOrigins), supportCredentials: false }
+    }, isProd ? { vnetRouteAllEnabled: true } : {})
+    functionAppConfig: {
+      deployment: {
+        storage: {
+          type: 'blobContainer'
+          value: '${storage.properties.primaryEndpoints.blob}${deployContainer}'
+          authentication: { type: 'UserAssignedIdentity', userAssignedIdentityResourceId: idApi.id }
+        }
+      }
+      scaleAndConcurrency: union({ maximumInstanceCount: maximumInstanceCount, instanceMemoryMB: 2048 },
+        isProd ? { alwaysReady: [{ name: 'http', instanceCount: 1 }] } : {})
+      runtime: { name: 'dotnet-isolated', version: '10.0' }
+    }
+  }, isProd ? { keyVaultReferenceIdentity: idApi.id, virtualNetworkSubnetId: network!.outputs.functionsSubnetId } : {})
+  dependsOn: [storageRoles, packageContainer, storagePrivate]
+}
+
+// Notification settings: plain app settings in mvp (secure params, never logged), Key Vault references in production.
+var notifySecretSettings = isProd
+  ? {
+      NOTIFY_TEAMS_WEBHOOK_URL: empty(notifyTeamsWebhookUrl) ? '' : '@Microsoft.KeyVault(VaultName=${vaultName};SecretName=notify-teams-webhook-url)'
+      NOTIFY_WEBHOOK_URL: empty(notifyWebhookUrl) ? '' : '@Microsoft.KeyVault(VaultName=${vaultName};SecretName=notify-webhook-url)'
+      NOTIFY_WEBHOOK_SECRET: empty(notifyWebhookSecret) ? '' : '@Microsoft.KeyVault(VaultName=${vaultName};SecretName=notify-webhook-secret)'
+    }
+  : {
+      NOTIFY_TEAMS_WEBHOOK_URL: notifyTeamsWebhookUrl
+      NOTIFY_WEBHOOK_URL: notifyWebhookUrl
+      NOTIFY_WEBHOOK_SECRET: notifyWebhookSecret
+    }
+// Threat intel (docs/THREAT_INTEL.md). The NVD key is not a Microsoft credential, but it is still kept out of
+// deployment history (secure param) and, in production, in Key Vault.
+var tiSettings = {
+  TI_PWNWATCH_ENABLED: string(tiPwnwatchEnabled)
+  TI_KEV_ENABLED: string(tiKevEnabled)
+  TI_EPSS_ENABLED: string(tiEpssEnabled)
+  TI_NVD_ENABLED: string(tiNvdEnabled)
+  TI_OSV_ENABLED: string(tiOsvEnabled)
+  TI_SENTINEL_ENABLED: string(tiSentinelEnabled)
+  TI_EXPOSURE_ENABLED: string(tiExposureEnabled)
+  TI_MSTI_ENABLED: string(tiMstiEnabled)
+  NVD_API_KEY: isProd && !empty(nvdApiKey) ? '@Microsoft.KeyVault(VaultName=${vaultName};SecretName=nvd-api-key)' : nvdApiKey
+  SENTINEL_WORKSPACE_ID: empty(sentinelWorkspaceResourceId) ? '' : sentinelWorkspace!.properties.customerId
+}
+var notifySettings = union(notifySecretSettings, {
+  NOTIFY_ALLOWED_HOSTS: notifyAllowedHosts
+  NOTIFY_MAIL_FROM: notifyMailFrom
+  NOTIFY_MAIL_TO: notifyMailTo
+  NOTIFY_REMIND_MINUTES: string(notifyRemindMinutes)
+  BOARD_WEB_URL: empty(webBaseUrl) ? 'https://${web.properties.defaultHostName}' : webBaseUrl
+  WEBHOOK_ALLOWED_HOSTS: webhookAllowedHosts
+  WEBHOOK_SIGNING_KEY: isProd && !empty(webhookSigningKey) ? '@Microsoft.KeyVault(VaultName=${vaultName};SecretName=webhook-signing-key)' : webhookSigningKey
+})
+var productionSettings = isProd
+  ? {
+      // Read through a Key Vault reference with the Function App's identity (keyVaultReferenceIdentity below).
+      BLUEBOARD_POLICY_JSON: '@Microsoft.KeyVault(VaultName=${vaultName};SecretName=policy-json)'
+      AUDIT_DCE_ENDPOINT: auditExport!.outputs.ingestionEndpoint
+      AUDIT_DCR_ID: auditExport!.outputs.dcrImmutableId
+      AUDIT_STREAM: 'Custom-BlueboardAudit_CL'
+    }
+  : {
+      BLUEBOARD_POLICY_JSON: policyJson
+    }
+
+resource apiSettings 'Microsoft.Web/sites/config@2024-04-01' = {
+  parent: api
+  name: 'appsettings'
+  properties: union({
+    AzureWebJobsStorage__accountName: storage.name
+    AzureWebJobsStorage__credential: 'managedidentity'
+    AzureWebJobsStorage__clientId: idApi.properties.clientId
+    APPLICATIONINSIGHTS_CONNECTION_STRING: appInsights.properties.ConnectionString
+    APPLICATIONINSIGHTS_AUTHENTICATION_STRING: 'ClientId=${idApi.properties.clientId};Authorization=AAD'
+    AZURE_CLIENT_ID: idApi.properties.clientId
+    PGHOST: pg.properties.fullyQualifiedDomainName
+    PGDATABASE: 'blueboard'
+    PGUSER: idApi.name
+    PG_ENTRA_AUTH: 'true'
+    AZURE_TENANT_ID: tenantId
+    BOARD_API_AUDIENCE: boardApiAudience
+    BOARD_API_CLIENT_ID: boardApiClientId
+    INGEST_ENABLED: string(ingestEnabled)
+    BROKER_EXECUTE: string(brokerExecute)
+  }, productionSettings, notifySettings, tiSettings)
+  dependsOn: isProd ? [kvSecretsRole, kvPolicySecret] : []
+}
+
+// publish_ti_indicator (optional): the upload API needs Microsoft Sentinel Contributor on the workspace.
+// The workspace may live in another resource group, so the assignment is a module scoped there.
+resource sentinelWorkspace 'Microsoft.OperationalInsights/workspaces@2023-09-01' existing = if (!empty(sentinelWorkspaceResourceId)) {
+  name: last(sentinelWorkspaceParts)
+  scope: resourceGroup(sentinelWorkspaceParts[2], sentinelWorkspaceParts[4])
+}
+
+module sentinelRole 'sentinel-role.bicep' = if (assignSentinelContributor && !empty(sentinelWorkspaceResourceId)) {
+  name: 'blueboard-sentinel-contributor'
+  scope: resourceGroup(sentinelWorkspaceParts[2], sentinelWorkspaceParts[4])
+  params: {
+    workspaceName: last(sentinelWorkspaceParts)
+    principalId: idApi.properties.principalId
+    roleDefinitionId: roles.sentinelContributor
+  }
+}
+
+// Publishing with FTP or basic auth is off: deployments use Entra (az functionapp deploy / az webapp deploy).
+resource apiFtp 'Microsoft.Web/sites/basicPublishingCredentialsPolicies@2024-04-01' = {
+  parent: api
+  name: 'ftp'
+  properties: { allow: false }
+}
+
+resource apiScm 'Microsoft.Web/sites/basicPublishingCredentialsPolicies@2024-04-01' = {
+  parent: api
+  name: 'scm'
+  properties: { allow: false }
+}
+
+// ── Web App (React, served by web/host) ──────────────────────────────────────────────────────
+resource webPlan 'Microsoft.Web/serverfarms@2024-04-01' = {
+  name: '${namePrefix}-web-plan'
+  location: location
+  kind: 'linux'
+  sku: { name: isProd ? 'P0v3' : webSkuName }
+  properties: { reserved: true }
+}
+
+resource web 'Microsoft.Web/sites@2024-04-01' = {
+  name: '${namePrefix}-web-${suffix}'
+  location: location
+  kind: 'app,linux'
   properties: {
-    appLogsConfiguration: {
-      destination: 'log-analytics'
-      logAnalyticsConfiguration: { customerId: logs.properties.customerId, sharedKey: logs.listKeys().primarySharedKey }
+    serverFarmId: webPlan.id
+    httpsOnly: true
+    publicNetworkAccess: 'Enabled'
+    clientAffinityEnabled: false
+    siteConfig: {
+      linuxFxVersion: 'DOTNETCORE|10.0'
+      minTlsVersion: '1.2'
+      ftpsState: 'Disabled'
+      http20Enabled: true
+      alwaysOn: true
+      healthCheckPath: '/healthz'
     }
   }
 }
 
-var dbEnv = [
-  { name: 'PGHOST', value: pg.properties.fullyQualifiedDomainName }
-  { name: 'PGDATABASE', value: 'blueboard' }
-  { name: 'PGUSER', value: idBoard.name }
-  { name: 'PG_ENTRA_AUTH', value: 'true' }
-  { name: 'AZURE_CLIENT_ID', value: idBoard.properties.clientId }
+resource webSettings 'Microsoft.Web/sites/config@2024-04-01' = {
+  parent: web
+  name: 'appsettings'
+  properties: {
+    // Public values only: the SPA reads them from /config.json to sign in and find the API.
+    BLUEBOARD_TENANT_ID: tenantId
+    BLUEBOARD_CLIENT_ID: boardApiClientId
+    BLUEBOARD_API_URL: 'https://${api.properties.defaultHostName}'
+    BLUEBOARD_API_SCOPE: '${boardApiAudience}/Board.Access'
+    BLUEBOARD_AUTHORITY_HOST: environment().authentication.loginEndpoint
+  }
+}
+
+resource webFtp 'Microsoft.Web/sites/basicPublishingCredentialsPolicies@2024-04-01' = {
+  parent: web
+  name: 'ftp'
+  properties: { allow: false }
+}
+
+resource webScm 'Microsoft.Web/sites/basicPublishingCredentialsPolicies@2024-04-01' = {
+  parent: web
+  name: 'scm'
+  properties: { allow: false }
+}
+
+// ── production profile ───────────────────────────────────────────────────────────────────────
+var vaultName = take('${replace(namePrefix, '-', '')}kv${suffix}', 24)
+
+module network 'network.bicep' = if (isProd) {
+  name: 'network'
+  params: { location: location, namePrefix: namePrefix, zoneRedundant: hasZones }
+}
+
+// Key Vault in RBAC mode, private only: policy.json, the notification secrets and the webhook signing key.
+// The name is fixed per resource group and purge protection is on, so after a teardown the deleted vault keeps the
+// name for 90 days: redeploy the production profile into a new resource group name (infra/teardown.sh says so).
+resource kv 'Microsoft.KeyVault/vaults@2023-07-01' = if (isProd) {
+  name: vaultName
+  location: location
+  properties: {
+    tenantId: tenantId
+    sku: { family: 'A', name: 'standard' }
+    enableRbacAuthorization: true
+    enableSoftDelete: true
+    softDeleteRetentionInDays: 90
+    enablePurgeProtection: true
+    publicNetworkAccess: 'Disabled'
+    networkAcls: { defaultAction: 'Deny', bypass: 'None' }
+  }
+}
+
+resource kvPolicySecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = if (isProd) {
+  parent: kv
+  name: 'policy-json'
+  properties: { value: policyJson, contentType: 'application/json' }
+}
+
+resource kvTeamsSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = if (isProd && !empty(notifyTeamsWebhookUrl)) {
+  parent: kv
+  name: 'notify-teams-webhook-url'
+  properties: { value: notifyTeamsWebhookUrl }
+}
+
+resource kvWebhookSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = if (isProd && !empty(notifyWebhookUrl)) {
+  parent: kv
+  name: 'notify-webhook-url'
+  properties: { value: notifyWebhookUrl }
+}
+
+resource kvWebhookHmac 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = if (isProd && !empty(notifyWebhookSecret)) {
+  parent: kv
+  name: 'notify-webhook-secret'
+  properties: { value: notifyWebhookSecret }
+}
+
+resource kvNvdSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = if (isProd && !empty(nvdApiKey)) {
+  parent: kv
+  name: 'nvd-api-key'
+  properties: { value: nvdApiKey }
+}
+
+resource kvSigningKeySecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = if (isProd && !empty(webhookSigningKey)) {
+  parent: kv
+  name: 'webhook-signing-key'
+  properties: { value: webhookSigningKey }
+}
+
+resource kvSecretsRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (isProd) {
+  name: guid(resourceGroup().id, vaultName, idApi.id, roles.keyVaultSecretsUser)
+  scope: kv
+  properties: {
+    principalId: idApi.properties.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roles.keyVaultSecretsUser)
+  }
+}
+
+// Private endpoints: PostgreSQL, storage (blob, queue, table) and Key Vault, each with its private DNS zone.
+module pgPrivate 'private-endpoint.bicep' = if (isProd) {
+  name: 'pe-pg'
+  params: {
+    location: location
+    name: '${namePrefix}-pe-pg'
+    subnetId: network!.outputs.endpointsSubnetId
+    targetId: pg.id
+    groupId: 'postgresqlServer'
+    dnsZoneId: network!.outputs.dnsZoneIds.postgres
+  }
+}
+
+module storagePrivate 'private-endpoint.bicep' = [
+  for g in (isProd ? ['blob', 'queue', 'table'] : []): {
+    name: 'pe-st-${g}'
+    params: {
+      location: location
+      name: '${namePrefix}-pe-st-${g}'
+      subnetId: network!.outputs.endpointsSubnetId
+      targetId: storage.id
+      groupId: g
+      dnsZoneId: network!.outputs.dnsZoneIds[g]
+    }
+  }
 ]
 
-resource board 'Microsoft.App/containerApps@2024-03-01' = {
-  name: '${namePrefix}-board'
-  location: location
-  identity: { type: 'UserAssigned', userAssignedIdentities: { '${idBoard.id}': {} } }
-  properties: {
-    managedEnvironmentId: env.id
-    configuration: {
-      ingress: { external: true, targetPort: 3000, transport: 'auto', allowInsecure: false }
-      registries: [{ server: acrLoginServer, identity: idBoard.id }]
-      secrets: [{ name: 'policy-json', value: policyJson }]
-    }
-    template: {
-      containers: [
-        {
-          name: 'board'
-          image: boardImage
-          resources: { cpu: json('1.0'), memory: '2Gi' }
-          env: concat(dbEnv, [
-            { name: 'AZURE_TENANT_ID', value: tenantId }
-            { name: 'BOARD_API_AUDIENCE', value: boardApiAudience }
-            { name: 'EASY_AUTH', value: 'true' }
-            { name: 'INGEST_ENABLED', value: string(ingestEnabled) }
-            { name: 'BROKER_EXECUTE', value: string(brokerExecute) }
-            { name: 'BLUEBOARD_POLICY_FILE', value: '/etc/blueboard/policy.json' }
-          ])
-          volumeMounts: [{ volumeName: 'policy', mountPath: '/etc/blueboard' }]
-          probes: [
-            { type: 'Liveness', httpGet: { path: '/api/healthz', port: 3000 }, periodSeconds: 30 }
-          ]
-        }
-      ]
-      volumes: [{ name: 'policy', storageType: 'Secret', secrets: [{ secretRef: 'policy-json', path: 'policy.json' }] }]
-      // SSE and the ingest poller are fine across replicas (Postgres NOTIFY fan-out + advisory lock).
-      scale: { minReplicas: 1, maxReplicas: 3 }
-    }
+module kvPrivate 'private-endpoint.bicep' = if (isProd) {
+  name: 'pe-kv'
+  params: {
+    location: location
+    name: '${namePrefix}-pe-kv'
+    subnetId: network!.outputs.endpointsSubnetId
+    targetId: kv.id
+    groupId: 'vault'
+    dnsZoneId: network!.outputs.dnsZoneIds.vault
   }
 }
 
-resource boardAuth 'Microsoft.App/containerApps/authConfigs@2024-03-01' = {
-  parent: board
-  name: 'current'
-  properties: {
-    platform: { enabled: true }
-    globalValidation: {
-      unauthenticatedClientAction: 'RedirectToLoginPage'
-      redirectToProvider: 'azureactivedirectory'
-      // Agents use bearer tokens validated by the app itself.
-      excludedPaths: ['/api/mcp', '/.well-known/oauth-protected-resource', '/api/healthz']
-    }
-    identityProviders: {
-      azureActiveDirectory: {
-        enabled: true
-        registration: {
-          clientId: boardApiClientId
-          openIdIssuer: '${environment().authentication.loginEndpoint}${tenantId}/v2.0'
-        }
-        validation: { allowedAudiences: [boardApiAudience, boardApiClientId] }
-      }
-    }
-    login: { tokenStore: { enabled: false } }
+// Audit export: custom table, Data Collection Endpoint + Rule, and Monitoring Metrics Publisher on the rule.
+module auditExport 'audit-export.bicep' = if (isProd) {
+  name: 'audit-export'
+  params: {
+    location: location
+    namePrefix: namePrefix
+    workspaceName: logs.name
+    principalId: idApi.properties.principalId
   }
 }
 
-resource migrate 'Microsoft.App/jobs@2024-03-01' = {
-  name: '${namePrefix}-migrate'
-  location: location
-  identity: { type: 'UserAssigned', userAssignedIdentities: { '${idBoard.id}': {} } }
-  properties: {
-    environmentId: env.id
-    configuration: {
-      triggerType: 'Manual'
-      replicaTimeout: 600
-      replicaRetryLimit: 1
-      manualTriggerConfig: { parallelism: 1, replicaCompletionCount: 1 }
-      registries: [{ server: acrLoginServer, identity: idBoard.id }]
-    }
-    template: {
-      containers: [
-        {
-          name: 'migrate'
-          image: toolsImage
-          command: ['npx', 'tsx', 'scripts/migrate.ts']
-          resources: { cpu: json('0.5'), memory: '1Gi' }
-          env: dbEnv
-        }
-      ]
-    }
-  }
-}
-
-resource enrichment 'Microsoft.App/containerApps@2024-03-01' = {
-  name: '${namePrefix}-agent-enrichment'
-  location: location
-  identity: { type: 'UserAssigned', userAssignedIdentities: { '${idAgent.id}': {} } }
-  properties: {
-    managedEnvironmentId: env.id
-    configuration: {
-      registries: [{ server: acrLoginServer, identity: idAgent.id }]
-    }
-    template: {
-      containers: [
-        {
-          name: 'agent'
-          image: toolsImage
-          resources: { cpu: json('0.5'), memory: '1Gi' }
-          env: [
-            { name: 'AZURE_CLIENT_ID', value: idAgent.properties.clientId }
-            { name: 'BOARD_URL', value: 'https://${board.properties.configuration.ingress.fqdn}' }
-            { name: 'BOARD_API_AUDIENCE', value: boardApiAudience }
-            { name: 'ANTHROPIC_FOUNDRY_RESOURCE', value: foundryResource }
-            { name: 'CLAUDE_MODEL', value: claudeModel }
-            { name: 'CLAUDE_FALLBACK_MODEL', value: claudeFallbackModel }
-          ]
-        }
-      ]
-      scale: { minReplicas: 1, maxReplicas: 1 }
-    }
-  }
-}
-
-// Cognitive Services User on the Foundry account for the agent identity.
-resource foundry 'Microsoft.CognitiveServices/accounts@2024-10-01' existing = if (!empty(foundryAccountId)) {
-  name: last(split(foundryAccountId, '/'))
-}
-resource agentFoundryRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(foundryAccountId)) {
-  name: guid(foundryAccountId, idAgent.id, 'a97b65f3-24c7-4388-baec-2e87135dc908')
-  scope: foundry
-  properties: {
-    principalId: idAgent.properties.principalId
-    principalType: 'ServicePrincipal'
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'a97b65f3-24c7-4388-baec-2e87135dc908')
-  }
-}
-
-output boardFqdn string = board.properties.configuration.ingress.fqdn
+output webHostname string = web.properties.defaultHostName
+output webName string = web.name
+output apiName string = api.name
+output apiHostname string = api.properties.defaultHostName
+output apiIdentityPrincipalId string = idApi.properties.principalId
 output pgServerName string = pg.name
-output migrateJobName string = migrate.name
-output boardUrl string = 'https://${board.properties.configuration.ingress.fqdn}'
-output boardIdentityPrincipalId string = idBoard.properties.principalId
-output agentIdentityPrincipalId string = idAgent.properties.principalId

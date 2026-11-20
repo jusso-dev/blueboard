@@ -1,0 +1,37 @@
+{
+  "_minutesAgo": 42,
+  "id": "1001",
+  "displayName": "Phishing email with a credential-harvesting link delivered to ana.lopez@contoso.com",
+  "severity": "high",
+  "status": "active",
+  "classification": null,
+  "determination": null,
+  "assignedTo": null,
+  "alerts": [
+    {
+      "id": "da1001-1",
+      "title": "Email messages containing malicious URL removed after delivery",
+      "severity": "high",
+      "category": "InitialAccess",
+      "serviceSource": "microsoftDefenderForOffice365",
+      "detectionSource": "microsoftDefenderForOffice365",
+      "mitreTechniques": ["T1566.002"],
+      "description": "A message with a link to a page imitating the Contoso payroll portal was delivered, then flagged by URL detonation.",
+      "evidence": [
+        {
+          "@odata.type": "#microsoft.graph.security.analyzedMessageEvidence",
+          "networkMessageId": "6f2a1c9e-0b7d-4e3a-9c5f-1001a0000001",
+          "recipientEmailAddress": "ana.lopez@contoso.com",
+          "subject": "Action required: confirm your payroll details",
+          "p1Sender": { "emailAddress": "payroll-notice@contoso-payroll-update.example" },
+          "urls": ["https://contoso-payroll-update.example/login"]
+        },
+        {
+          "@odata.type": "#microsoft.graph.security.userEvidence",
+          "userAccount": { "userPrincipalName": "ana.lopez@contoso.com", "azureAdUserId": "0b6c2f1e-1001-4a7b-9c3d-000000000001", "displayName": "Ana Lopez" }
+        },
+        { "@odata.type": "#microsoft.graph.security.urlEvidence", "url": "https://contoso-payroll-update.example/login" }
+      ]
+    }
+  ]
+}
