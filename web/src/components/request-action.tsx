@@ -109,7 +109,7 @@ function RequestActionPanel({ targets, incident, onClose }: { targets: [ActionTa
       refreshAll();
       onClose();
       // Show the request where approvers see it: its thread in #containment.
-      navigate(`/?channel=containment${a.request_message_id ? `#m-${a.request_message_id}` : ""}`);
+      navigate(`/channels/containment${a.request_message_id ? `#m-${a.request_message_id}` : ""}`);
     } catch (e) {
       const ae = e as ApiError;
       setErr(ae.status === 429 && ae.retryAfter ? `${ae.message} (try again in ${ae.retryAfter}s)` : ae.message);

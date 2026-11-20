@@ -115,11 +115,11 @@ The trusted computing base is the Function App's code, its managed identity (`bl
 | Webhook egress guard (allowlist, public addresses only, re-checked at connect) and HMAC-SHA256 signatures | `Webhooks/OutboundGuard.cs`, `Webhooks/WebhookService.cs`, `Blueboard.Contracts/WebhookSignature.cs` |
 | Untrusted-content handling in the agent prompt | `agents/Blueboard.EnrichmentAgent/ClaudeAgent.cs`, `skills/blueboard/SKILL.md` |
 
-Regression tests: `api/Blueboard.Api.Tests` (policy, aliases, parameter validation, token guard, role mapping, scope check, forged-header refusal, CSV, percentile) and `web/src/__tests__` (markdown). CI runs them on every push.
+Regression tests: `api/Blueboard.Api.Tests` (policy, aliases, parameter validation, token guard, role mapping, scope check, forged-header refusal, CSV, percentile) and `web/src/__tests__` (actions, auth, keys, live, markdown, queue). CI runs them on every push.
 
 ## Permissions the board holds
 
-`grant-permissions.sh` grants these **application** permissions to `blueboard-id-api` (the Function App's identity). They're tenant-wide. Grant only the write permissions for actions you will broker (`ACTIONS=…`), or none (`READ_ONLY=1`).
+`grant-permissions.sh` grants these **application** permissions to `blueboard-id-api` (the Function App's identity). They're tenant-wide. Grant only the write permissions for actions you will broker (`ACTIONS=…`), or none (the default, also `READ_ONLY=1`). `ACTIONS=all` grants every write.
 
 | API | Permission | Used by | Type |
 |---|---|---|---|
@@ -234,13 +234,19 @@ If you suspect the board, an agent, or an approver account is compromised:
    ```sh
    az functionapp config appsettings set -g <rg> -n <api-name> --settings BROKER_EXECUTE=false
    ```
-2. **Cut the agent off:** disable its principal on **Admin → Participants** (its next call is refused), then disable its service principal in Entra (Enterprise applications → the agent → Properties → *Enabled for users to sign-in* = No), or remove its `Board.*` role assignments. The board re-reads roles on every request, so this takes effect at once for new tokens.
+2. **Cut the agent off:** disable its principal on **Admin → Participants** (its next call is refused), then disable its service principal in Entra (Enterprise applications → the agent → Properties → *Enabled for users to sign-in* = No), or remove its `Board.*` role assignments. The board reads roles from the token on every request, so a role removal applies once the agent's current token expires (about an hour); disabling the participant on the board applies at once.
 3. **Remove write permissions** from `blueboard-id-api` (Entra → Enterprise applications → Managed identities → blueboard-id-api → Permissions → revoke the write permissions). Existing tokens expire within about an hour; restart the Function App to drop cached tokens immediately.
 4. **Review:** `select * from actions where created_at > now() - interval '24 hours' order by created_at;` and `audit_log` for the same window. Check Defender's Action center for anything the board ran.
 5. **Reverse** any harmful actions in Defender or Entra: release isolation, re-enable accounts, delete the custom indicators.
 6. **Rotate:** no application secrets or deployment tokens exist. If an agent used a federated credential, delete and recreate that federation. To end every browser session, revoke the users' sessions in Entra (refresh tokens stop working at once; access tokens expire within about an hour).
 
 ## Known limitations
+
+Residual risks in the current design:
+
+- **The board identity is the PostgreSQL Entra admin.** `blueboard-id-api` runs migrations and serves requests with the same identity, so anyone who controls it (a code bug in the API, or a stolen token for it) could rewrite or delete `audit_log` rows. With the production profile's audit export on, the copy in Sentinel (`BlueboardAudit_CL`) is the tamper-evident record: compare it with the table when you investigate.
+- **Microsoft Sentinel Contributor is workspace-wide.** With `assignSentinelContributor` the board identity can change analytics rules, incidents and other content in the whole Sentinel workspace, not only upload indicators. Assign it only if you use `publish_ti_indicator`, ideally on a workspace used for threat intel.
+- **Protected users and devices listed by name need the incident evidence to resolve.** If a request names a device by its Defender id (or a user by object id) and that id isn't in the linked incident's evidence, the board can't map it to the host name or UPN in the protected list. The request is not rejected: it waits for a person with a note saying the list was checked by id only. List protected devices and users by id as well as by name.
 
 These are tracked in [`plans/README.md`](../plans/README.md):
 

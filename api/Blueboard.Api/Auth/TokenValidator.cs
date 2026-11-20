@@ -50,11 +50,17 @@ public sealed class TokenValidator
         var id = FromClaims(claims);
         // Delegated (browser) tokens must carry the board's own scope, not just any scope for this audience.
         if (id.Kind == "human" && !HasScope(claims, BoardScope)) throw BoardException.Unauthorized($"token lacks the {BoardScope} scope");
+        // ...and must be issued to the board's own web app, so another client a person consented to can't act as them.
+        if (id.Kind == "human" && !IsFromClient(id.AppId, _settings.ApiClientId)) throw BoardException.Unauthorized("delegated token was not issued to the board web app");
         return id;
     }
 
     /// <summary>The delegated scope the web app requests (exposed by infra/entra-app.sh).</summary>
     public const string BoardScope = "Board.Access";
+
+    /// <summary>True when the token's azp/appid is the board app, or when no client id is configured (local dev).</summary>
+    internal static bool IsFromClient(string? tokenClientId, string? boardClientId) =>
+        boardClientId is null || string.Equals(tokenClientId, boardClientId, StringComparison.OrdinalIgnoreCase);
 
     internal static bool HasScope(ClaimsIdentity claims, string scope) =>
         (claims.FindFirst("scp")?.Value ?? claims.FindFirst("http://schemas.microsoft.com/identity/claims/scope")?.Value ?? "")

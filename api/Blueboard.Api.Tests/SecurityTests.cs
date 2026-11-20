@@ -57,6 +57,15 @@ public class SecurityTests
     public void Other_scopes_are_not_the_board_scope() =>
         Assert.False(TokenValidator.HasScope(new ClaimsIdentity([new("scp", "Board.AccessX user_impersonation")]), TokenValidator.BoardScope));
 
+    [Theory]
+    [InlineData("board-app", "board-app", true)]
+    [InlineData("BOARD-APP", "board-app", true)]
+    [InlineData("other-app", "board-app", false)]
+    [InlineData(null, "board-app", false)]
+    [InlineData("anything", null, true)]
+    public void Delegated_tokens_must_come_from_the_board_app(string? tokenClient, string? boardClient, bool ok) =>
+        Assert.Equal(ok, TokenValidator.IsFromClient(tokenClient, boardClient));
+
     [Fact]
     public async Task Platform_principal_header_is_never_trusted()
     {

@@ -227,8 +227,13 @@ public sealed class IntelTests(TestBoard t) : IClassFixture<TestBoard>
         var rejected = await broker.RequestAsync(agent, new ActionRequest("publish_ti_indicator", prm, "bad.example served the payload in the incident evidence", TestBoard.IncidentGraphId), Ct);
         Assert.Equal("rejected", rejected.Status);
 
-        await t.Board.PostAsync(agent, new PostInput("incidents", "confirmed", "ioc",
-            JsonSerializer.SerializeToElement(new { indicators = new[] { new { kind = "domain", value = "BAD.example", verdict = "malicious" } } }), null, TestBoard.IncidentGraphId), ct: Ct);
+        // The requester's own ioc doesn't count as confirmation: someone else must have marked it malicious.
+        var ioc = JsonSerializer.SerializeToElement(new { indicators = new[] { new { kind = "domain", value = "BAD.example", verdict = "malicious" } } });
+        await t.Board.PostAsync(agent, new PostInput("incidents", "confirmed", "ioc", ioc, null, TestBoard.IncidentGraphId), ct: Ct);
+        var self = await broker.RequestAsync(agent, new ActionRequest("publish_ti_indicator", prm, "bad.example served the payload in the incident evidence", TestBoard.IncidentGraphId), Ct);
+        Assert.Equal("rejected", self.Status);
+
+        await t.Board.PostAsync(await t.As("analyst"), new PostInput("incidents", "confirmed", "ioc", ioc, null, TestBoard.IncidentGraphId), ct: Ct);
         var pending = await broker.RequestAsync(agent, new ActionRequest("publish_ti_indicator", prm, "bad.example served the payload in the incident evidence", TestBoard.IncidentGraphId), Ct);
         Assert.Equal("pending_approval", pending.Status);
         await broker.DecideAsync(await t.As("analyst"), pending.Id, "approve", null, Ct);

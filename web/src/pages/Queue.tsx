@@ -1,4 +1,4 @@
-import { Link, Navigate, useNavigate, useSearchParams } from "react-router";
+import { Link, Navigate, useLocation, useNavigate, useSearchParams } from "react-router";
 import { useMemo, type RefObject } from "react";
 import { PageHeader } from "../components/shell";
 import { useListNav, type NavRowProps } from "../components/shortcuts";
@@ -10,14 +10,15 @@ import { cx, Empty, Severity, Tag, Time } from "../components/ui";
 export default function QueuePage() {
   const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
+  const { hash } = useLocation();
   const { data, error } = useLiveQuery<QueueRow[]>("/incidents?view=queue");
   const chips = chipsFrom(params);
   const rows = useMemo(() => (data ? filterQueue(data, chips) : undefined), [data, chips.join(",")]); // eslint-disable-line react-hooks/exhaustive-deps
   const nav = useListNav(rows, (r) => r.id, { onOpen: (r) => navigate(`/incidents/${r.id}`) });
 
-  // Old links (/?channel=triage) land on the channel.
+  // Old links (/?channel=triage) land on the channel, keeping any #m-<id> so the feed opens that message.
   const legacy = params.get("channel");
-  if (legacy) return <Navigate to={`/channels/${encodeURIComponent(legacy)}`} replace />;
+  if (legacy) return <Navigate to={`/channels/${encodeURIComponent(legacy)}${hash}`} replace />;
 
   const toggle = (c: Chip) => {
     const next = new URLSearchParams(params);

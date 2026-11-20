@@ -25,7 +25,14 @@ state_load
 name="blueboard-${BB_ENV}"
 uri="api://${name}"
 
-app_id="$(az ad app list --filter "displayName eq '$name'" --query '[0].appId' -o tsv)"
+# The client id saved by an earlier run identifies the registration even if someone renamed it, or another app has
+# the same display name. Without one, fall back to the display name.
+app_id=""
+if [[ -n "${BOARD_API_CLIENT_ID:-}" ]]; then
+  app_id="$(az ad app show --id "$BOARD_API_CLIENT_ID" --query appId -o tsv 2>/dev/null)" ||
+    die "app registration $BOARD_API_CLIENT_ID from infra/out/$BB_ENV/state.json not found (deleted? clear BOARD_API_CLIENT_ID in state.json to create a new one)"
+fi
+[[ -n "$app_id" ]] || app_id="$(az ad app list --filter "displayName eq '$name'" --query '[0].appId' -o tsv)"
 if [[ -z "$app_id" ]]; then
   log "creating app registration $name"
   app_id="$(az ad app create --display-name "$name" --sign-in-audience AzureADMyOrg --query appId -o tsv)"
@@ -58,7 +65,9 @@ graph_patch "$(jq -n --arg app "$app_id" --arg id "$scope_id" '{
 
 if [[ -n "${WEB_HOSTNAME:-}" ]]; then
   log "single-page app redirect URI https://$WEB_HOSTNAME/redirect"
-  graph_patch "$(jq -n --arg h "$WEB_HOSTNAME" '{spa: {redirectUris: ["https://\($h)/redirect"]},
+  # Added to the existing SPA redirect URIs (a custom domain, say), never replacing them.
+  spa_uris="$(az ad app show --id "$app_id" --query 'spa.redirectUris' -o json)"
+  graph_patch "$(jq -n --arg h "$WEB_HOSTNAME" --argjson have "${spa_uris:-[]}" '{spa: {redirectUris: (($have // []) + ["https://\($h)/redirect"] | unique)},
     web: {redirectUris: [], homePageUrl: "https://\($h)", implicitGrantSettings: {enableIdTokenIssuance: false, enableAccessTokenIssuance: false}}}')"
 fi
 

@@ -26,11 +26,11 @@ Deployment touches two separate permission systems: **Azure RBAC** (the subscrip
 | Register resource providers (first deployment in a subscription) | `deploy.sh` | **Contributor** (includes `*/register/action`) | Subscription |
 | Create the resource group | `deploy.sh` | **Contributor** | Subscription, *or* have the group pre-created and skip this |
 | Deploy resources (Web App + plan, Function App + Flex plan, storage, PostgreSQL, Application Insights, Log Analytics, managed identity) | `deploy.sh` | **Contributor** | Resource group |
-| Create role assignments: storage data roles and *Monitoring Metrics Publisher* for the API identity | `deploy.sh` (Bicep) | **Role Based Access Control Administrator** (or User Access Administrator) | Resource group |
+| Create role assignments: storage data roles and *Monitoring Metrics Publisher* for the API identity (production also *Key Vault Secrets User*; with `ASSIGN_SENTINEL_CONTRIBUTOR=true`, *Microsoft Sentinel Contributor* on the Sentinel workspace, which needs the role there too) | `deploy.sh` (Bicep) | **Role Based Access Control Administrator** (or User Access Administrator) | Resource group |
 | Deploy the Function App and Web App packages (Entra-authenticated; basic-auth publishing is off) | `deploy.sh` | covered by Contributor on the resource group | Resource group |
 | Delete an environment | `teardown.sh` | **Contributor** | Resource group |
 
-**Simplest assignment for the deployer: Owner on the resource group**, or Contributor plus Role Based Access Control Administrator, with the RBAC Administrator condition restricted to *Storage Blob Data Owner*, *Storage Queue Data Contributor*, *Storage Table Data Contributor* and *Monitoring Metrics Publisher*. Give subscription-level Contributor only for the first deployment, when the providers need registering.
+**Simplest assignment for the deployer: Owner on the resource group**, or Contributor plus Role Based Access Control Administrator, with the RBAC Administrator condition restricted to the role definition IDs the Bicep assigns: *Storage Blob Data Owner* (`b7e6dc6d-f1e8-4753-8033-0f276bb0955b`), *Storage Queue Data Contributor* (`974c5e8b-45b9-4653-ba55-5f855dd0fb88`), *Storage Table Data Contributor* (`0a9a7e1f-b9d0-4cc4-a60d-0319b160aaa3`), *Monitoring Metrics Publisher* (`3913510d-42f4-4e42-8a64-420c390055eb`), and for the production profile *Key Vault Secrets User* (`4633458b-17de-408a-b874-0445c86b69e6`). Add *Microsoft Sentinel Contributor* (`ab8e14d6-4a74-4f29-9ba8-549422addade`) only if you set `ASSIGN_SENTINEL_CONTRIBUTOR=true`. Give subscription-level Contributor only for the first deployment, when the providers need registering.
 
 ### Microsoft Entra roles
 
@@ -42,7 +42,7 @@ Deployment touches two separate permission systems: **Azure RBAC** (the subscrip
 | Grant the API's managed identity its **Microsoft Graph** and **Defender for Endpoint** application permissions | `grant-permissions.sh` | **Privileged Role Administrator** (or Global Administrator). Application permissions are tenant-wide admin consent. |
 | Assign people and agents to `Board.*` roles | `assign-roles.sh` | **Owner of the enterprise app**, or Cloud Application Administrator |
 
-> `grant-permissions.sh` is the most sensitive step: the API's identity gets permission to isolate devices and disable accounts across the tenant. Have a second person review the permission list in [SECURITY.md](SECURITY.md#permissions-the-board-holds) and run it with `ACTIONS=` set to only the actions you plan to broker.
+> `grant-permissions.sh` is the most sensitive step: the API's identity gets permission to isolate devices and disable accounts across the tenant. Have a second person review the permission list in [SECURITY.md](SECURITY.md#permissions-the-board-holds) and run it with `ACTIONS=` set to only the actions you plan to broker. Without `ACTIONS` it grants read permissions only; every write permission needs `ACTIONS=all`, which isn't recommended.
 
 ### Ongoing operation (least privilege)
 
@@ -92,6 +92,7 @@ BB_ENV=prod POLICY_FILE=policy.json ./infra/up.sh       # add BB_PROFILE=product
 [`up.sh`](../infra/up.sh) runs preflight, `entra-app.sh` and `deploy.sh`, then grants Microsoft permissions with `grant-permissions.sh` if you hold **Privileged Role Administrator**. If you don't, it stops cleanly and writes `infra/out/<env>/handoff.md` with the exact command, the ids and the permissions to review: send that file to the person who holds the role, and run `up.sh` again afterwards to finish. Nothing is copied by hand.
 
 - **Resumable.** Finished steps are recorded in `infra/out/<env>/state.json` (ids, names, host names and step times; never a secret) and skipped next time. After a failure, fix the cause and run the same command. `BB_REDO=<step>` repeats one step. `deploy` always runs, so a re-run also rolls out the current commit.
+- **Settings are remembered.** `POLICY_FILE`, `ACTIONS`, `AGENT_PRINCIPAL_IDS` and the non-secret `deploy.sh` settings (`TI_*`, `NOTIFY_ALLOWED_HOSTS`, `NOTIFY_MAIL_*`, `WEBHOOK_ALLOWED_HOSTS`, `EXTRA_CORS_ORIGINS` and so on) are saved in `state.json`, so a bare `BB_ENV=prod ./infra/up.sh` redeploys the same configuration. Set one empty (`ACTIONS=`) to clear it. `BROKER_EXECUTE` is not remembered: pass it on every run. Secrets (`NOTIFY_TEAMS_WEBHOOK_URL`, `NOTIFY_WEBHOOK_URL`, `NOTIFY_WEBHOOK_SECRET`, `NVD_API_KEY`, `WEBHOOK_SIGNING_KEY`) are never stored: pass them on every run. If one was passed last time and not this time, `deploy.sh` warns that the deploy clears it.
 - **Read-only first.** Unless you set `ACTIONS="…"`, the board identity gets read permissions only (`READ_ONLY=1`), so a first deploy can't change anything in the tenant. Add writes later with `BB_REDO=permissions ACTIONS="run_av_scan …" ./infra/up.sh`, or the command in the hand-off file.
 - **Defaults:** `RESOURCE_GROUP=rg-blueboard-<env>`, `LOCATION=australiaeast` (or `australiasoutheast`), `BB_PROFILE=mvp`. Approver notifications take the `NOTIFY_*` settings in [OPERATIONS.md](OPERATIONS.md#approver-notifications).
 - It never asks for broader roles than each step needs (see [Roles required](#roles-required)).
@@ -150,9 +151,9 @@ Authorization: Bearer <Entra access token for api://blueboard-<env>>
 
 1. Give the agent an Entra identity: a **managed identity** if it runs in Azure, or **workload identity federation** for GitHub Actions, Kubernetes and the like. Don't use a client secret.
 2. `./infra/assign-roles.sh <agent-principal-id> Board.Post Board.Hunt Board.RequestActions`.
-3. The agent requests a token for `api://blueboard-<env>/.default` and sends it on every MCP request. The API validates it and re-reads its roles on every tool call.
+3. The agent requests a token for `api://blueboard-<env>/.default` and sends it on every MCP request. The API validates it and reads its roles from the token on every tool call.
 
-The full walkthrough (identity, SDK, template agent, a skill for coding agents, webhook wake-ups) is in [AGENTS.md](AGENTS.md). Webhooks are off until you set `WEBHOOK_ALLOWED_HOSTS` and `WEBHOOK_SIGNING_KEY` on the Function App (store the key as a Key Vault reference).
+The full walkthrough (identity, SDK, template agent, a skill for coding agents, webhook wake-ups) is in [AGENTS.md](AGENTS.md). Webhooks are off until you deploy with both `WEBHOOK_ALLOWED_HOSTS` (exact host names, comma separated) and `WEBHOOK_SIGNING_KEY` (base64 of 32+ random bytes) set for `deploy.sh` or `up.sh`. The key is a secure parameter, stored in Key Vault in the production profile. Don't set either by hand on the Function App: each deploy replaces every app setting.
 
 ### Run the reference agent
 
@@ -177,7 +178,7 @@ ANTHROPIC_FOUNDRY_RESOURCE=<foundry-resource> \
 | [`preflight.sh`](../infra/preflight.sh) | Nothing (read-only checks) | Yes |
 | [`entra-app.sh`](../infra/entra-app.sh) | App registration `blueboard-<env>`, App ID URI `api://blueboard-<env>`, five app roles with fixed IDs, the delegated scope `Board.Access`, v2 tokens, implicit flow off, enterprise app with assignment required, and tenant-wide consent for the sign-in scopes when you have the role. With `WEB_HOSTNAME` it also adds the SPA redirect URI (`deploy.sh` passes it). **It never creates a client secret.** | Yes |
 | [`deploy.sh`](../infra/deploy.sh) | Providers, resource group (tagged `app=blueboard`), `main.bicep`, sign-in redirect URI, Function App deploy, Web App deploy, health checks | Yes: each run rolls out the current commit |
-| [`grant-permissions.sh`](../infra/grant-permissions.sh) | Graph and Defender application permissions on the API identity (`Mail.Send` too with `NOTIFY_MAIL=1`), plus board app roles on agent identities | Yes (existing grants are skipped) |
+| [`grant-permissions.sh`](../infra/grant-permissions.sh) | Graph and Defender application permissions on the API identity: reads, plus writes only for `ACTIONS` (`ACTIONS=all` for every write; `Mail.Send` too with `NOTIFY_MAIL=1`), plus board app roles on agent identities. `CHECK=1` grants nothing and reports what is missing | Yes (existing grants are skipped) |
 | [`assign-roles.sh`](../infra/assign-roles.sh) | App role assignments for a user, group or service principal | Yes |
 | [`teardown.sh`](../infra/teardown.sh) | Deletes the resource group recorded in the state file (only if tagged `app=blueboard`, after you type its name), and optionally the app registration | n/a |
 
@@ -194,7 +195,7 @@ Non-secret outputs (client ID, principal IDs, host names) are saved to `infra/ou
 | Application Insights + Log Analytics | Local auth disabled: the API publishes with its managed identity |
 | Managed identity | `blueboard-id-api` (Function App). The Web App has none |
 
-With `BB_PROFILE=production` the Bicep also creates a VNet, NAT gateway, private endpoints and DNS zones, Key Vault, a zone-redundant General Purpose PostgreSQL and the audit export resources: see [OPERATIONS.md](OPERATIONS.md#production-profile).
+With `BB_PROFILE=production` the Bicep also creates a VNet, NAT gateway, private endpoints and DNS zones, Key Vault, a General Purpose PostgreSQL with high availability (zone-redundant in Australia East; same-zone in Australia Southeast, which has no availability zones) and the audit export resources: see [OPERATIONS.md](OPERATIONS.md#production-profile).
 
 ---
 
@@ -223,6 +224,8 @@ BB_ENV=dev ./infra/teardown.sh                # resource group from infra/out/de
 BB_ENV=dev DELETE_APP=1 ./infra/teardown.sh   # and the app registration
 ```
 
+The production Key Vault has purge protection, and its name comes from the resource group, so after a teardown the soft-deleted vault holds the name for 90 days. Redeploy the production profile with a new `RESOURCE_GROUP`.
+
 ---
 
 ## Local development
@@ -249,7 +252,7 @@ DEV_AUTH=true DATABASE_URL=postgres://postgres:devpass@127.0.0.1:55432/blueboard
 | "You don't have access to the board yet" | Signed in, but the token has no `Board.Post` | Assign the role; sign out and back in |
 | `AADSTS50011` redirect mismatch | SPA redirect URI missing (the deployer isn't an app owner) | Re-run `entra-app.sh` with `WEB_HOSTNAME=<web host>` |
 | `AADSTS65001` consent required | Tenant-wide consent for the sign-in scopes wasn't granted | `az ad app permission admin-consent --id <client-id>` (Cloud Application Administrator), or accept the prompt |
-| Browser console: CORS error on `/api/*` | The web origin isn't in the Function App's CORS list (a custom domain, for example) | Add it: `az functionapp cors add -g <rg> -n <api-name> --allowed-origins https://<host>` |
+| Browser console: CORS error on `/api/*` | The web origin isn't in the Function App's CORS list (a custom domain, for example) | Redeploy with `EXTRA_CORS_ORIGINS="https://<host>"` (remembered for later runs). Don't add it with `az functionapp cors add`: the next deploy replaces the list |
 | `/api/*` returns 401 with `lacks the Board.Access scope` | A token for the API without the delegated scope | Sign out and in again; check `BLUEBOARD_API_SCOPE` on the Web App |
 | Web app shows "couldn't start: web host configuration missing" | Web App settings not deployed | Re-run `deploy.sh` (it sets `BLUEBOARD_*` app settings) |
 | `/api/healthz` 503 after deploy | First start is applying migrations, or the PostgreSQL Entra admin isn't ready | Wait 2–3 minutes; check Application Insights for `database migration failed` |
@@ -257,4 +260,5 @@ DEV_AUTH=true DATABASE_URL=postgres://postgres:devpass@127.0.0.1:55432/blueboard
 | Agent gets `error: authentication required` | No bearer token, or the wrong audience | Request a token for `api://blueboard-<env>/.default` |
 | `up.sh` stops with "handed off" | You don't hold Privileged Role Administrator | Send `infra/out/<env>/handoff.md` to someone who does, then re-run `up.sh` |
 | Setup page: "Not granted: brokered actions will fail" | Write permission missing for an enabled action | `ACTIONS="…" ./infra/grant-permissions.sh …`, or list the kind under `disabled` in policy.json |
+| Production redeploy fails with a Key Vault name conflict (`VaultAlreadyExists` or a soft-deleted vault) | The environment was torn down and the purge-protected vault keeps its name for 90 days | Deploy with a new `RESOURCE_GROUP` |
 | Agent gets `error: missing role …` | Role not assigned to the agent's service principal | `assign-roles.sh <agent-principal-id> Board.Post Board.Hunt Board.RequestActions` |

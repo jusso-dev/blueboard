@@ -3,8 +3,12 @@
 # permissions, and gives agent identities their blueboard app roles. Idempotent.
 #
 #   ./infra/grant-permissions.sh <board-mi-principal-id> <board-api-app-client-id> [<agent-principal-id> ...]
-#   READ_ONLY=1 ./infra/grant-permissions.sh ...      # read permissions only: no brokered actions possible
+#                                                     # read permissions only (the default; READ_ONLY=1 says so
+#                                                     # explicitly): no brokered actions possible
 #   ACTIONS="isolate_device run_av_scan" ./infra/grant-permissions.sh ...   # only the writes you will broker
+#   ACTIONS=all ./infra/grant-permissions.sh ...      # every write permission (not recommended)
+#   CHECK=1 ./infra/grant-permissions.sh ...          # grant nothing: exit 1 if any permission the same settings
+#                                                     # would grant is missing (no special role needed)
 #   NOTIFY_MAIL=1 ./infra/grant-permissions.sh ...    # also Mail.Send for approver email (scope it with an
 #                                                       # application access policy: docs/OPERATIONS.md)
 #   TI_MSTI=1 ./infra/grant-permissions.sh ...        # add ThreatIntelligence.Read.All (Microsoft Threat Intelligence lookups)
@@ -26,12 +30,18 @@ check_az_context
 GRAPH_APP=00000003-0000-0000-c000-000000000000
 MDE_APP=fc780465-2017-40d4-a0c5-307022471b92 # WindowsDefenderATP
 
+missing=""
 assign() { # <principal-id> <resource-sp-id> <app-role-id> <label>
   local have
   have="$(az rest --method GET --uri "https://graph.microsoft.com/v1.0/servicePrincipals/$1/appRoleAssignments" \
     --query "value[?appRoleId=='$3' && resourceId=='$2'] | length(@)" -o tsv)"
   if [[ "$have" != "0" ]]; then
     printf '  = %s\n' "$4"
+    return
+  fi
+  if [[ "${CHECK:-}" == "1" ]]; then
+    printf '  - %s (not granted)\n' "$4"
+    missing="$missing $4"
     return
   fi
   az rest --method POST --uri "https://graph.microsoft.com/v1.0/servicePrincipals/$1/appRoleAssignments" \
@@ -77,10 +87,12 @@ if [[ "${TI_MSTI:-}" == "1" ]]; then
   grant "$GRAPH_APP" ThreatIntelligence.Read.All
 fi
 
-if [[ "${READ_ONLY:-}" == "1" ]]; then
-  warn "READ_ONLY=1: no write permissions granted, every brokered action will fail at execution"
+# Read-only unless ACTIONS names the writes (or ACTIONS=all): a bare run can't change anything in the tenant.
+if [[ "${READ_ONLY:-}" == "1" || -z "${ACTIONS:-}" ]]; then
+  warn "read permissions only (set ACTIONS to add writes): every brokered action will fail at execution"
 else
-  actions="${ACTIONS:-$ALL_ACTIONS}"
+  actions="$ACTIONS"
+  [[ "$actions" == "all" ]] && actions="$ALL_ACTIONS"
   log "write permissions for brokered actions: $actions"
   done_perms=" "
   for a in $actions; do
@@ -113,4 +125,12 @@ if [[ $# -gt 0 ]]; then
   done
 fi
 
+if [[ "${CHECK:-}" == "1" ]]; then
+  if [[ -n "$missing" ]]; then
+    warn "not granted yet:$missing"
+    exit 1
+  fi
+  log "every permission for these settings is granted"
+  exit 0
+fi
 log "done. Tokens pick up new permissions within ~1 hour (restart the board revision to force it)."

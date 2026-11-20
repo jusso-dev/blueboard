@@ -111,8 +111,9 @@ public sealed record Settings
             PlaybooksDir = Env("BLUEBOARD_PLAYBOOKS_DIR") ?? Path.Combine(AppContext.BaseDirectory, "playbooks"),
             Ti = TiSettings.From(Env, Env("WEBSITE_INSTANCE_ID") is not null),
         };
-        // WEBSITE_INSTANCE_ID is set on every Azure Functions host: never allow dev auth or the demo there.
-        var inAzure = Env("WEBSITE_INSTANCE_ID") is not null;
+        // WEBSITE_INSTANCE_ID / WEBSITE_SITE_NAME are set on every Azure Functions host, and AZURE_TENANT_ID means a
+        // real tenant is configured: never allow dev auth or the demo in either case.
+        var inAzure = Env("WEBSITE_INSTANCE_ID") is not null || Env("WEBSITE_SITE_NAME") is not null || s.TenantId is not null;
         if (s.DevAuth && inAzure) throw new InvalidOperationException("DEV_AUTH must not be enabled in Azure");
         if (s.DemoMode && inAzure) throw new InvalidOperationException("DEMO_MODE must not be enabled in Azure");
         if (s.DemoMode && !s.DevAuth) throw new InvalidOperationException("DEMO_MODE needs DEV_AUTH=true (local demo only)");

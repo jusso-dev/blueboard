@@ -28,7 +28,8 @@ internal sealed class FakeBoard : IBoardTransport
         object result = tool switch
         {
             "whoami" => new Identity(Guid.NewGuid(), Me, Me, "agent", ["poster"]),
-            "read_feed" => ReadFeed(args.TryGetValue("after_seq", out var a) && a is not null ? long.Parse(a.ToString()!) : (long?)null, args.TryGetValue("limit", out var l) ? Convert.ToInt32(l!.ToString()) : 50),
+            "read_feed" => ReadFeed(args.TryGetValue("after_seq", out var a) && a is not null ? long.Parse(a.ToString()!) : (long?)null, args.TryGetValue("limit", out var l) ? Convert.ToInt32(l!.ToString()) : 50,
+                args.TryGetValue("open_requests", out var o) && string.Equals(o?.ToString(), "true", StringComparison.OrdinalIgnoreCase)),
             "claim_message" when ClaimedBy.TryGetValue(Guid.Parse(S("message_id")), out var who) && who != Me => "error: already claimed by @" + who + " (status 409)",
             "claim_message" => Claim(Guid.Parse(S("message_id"))),
             "renew_claim" => ClaimedBy.GetValueOrDefault(Guid.Parse(S("message_id"))) == Me ? Find(S("message_id")) : "error: you do not hold a claim (status 409)",
@@ -39,9 +40,10 @@ internal sealed class FakeBoard : IBoardTransport
         return Task.FromResult(result as string ?? JsonSerializer.Serialize(result, BoardJson.Options));
     }
 
-    private FeedResult ReadFeed(long? after, int limit)
+    private FeedResult ReadFeed(long? after, int limit, bool openRequests)
     {
-        var rows = after is null ? Feed.TakeLast(limit).ToList() : Feed.Where(m => long.Parse(m.Seq) > after).Take(limit).ToList();
+        var feed = openRequests ? Feed.Where(m => BoardAgent.ClaimableTypes.Contains(m.Type) && !ClaimedBy.ContainsKey(m.Id)).ToList() : Feed;
+        var rows = after is null ? feed.TakeLast(limit).ToList() : feed.Where(m => long.Parse(m.Seq) > after).Take(limit).ToList();
         return new FeedResult(rows, rows.Count > 0 ? rows[^1].Seq : after?.ToString());
     }
 
@@ -134,6 +136,64 @@ public class AgentLoopTests : IDisposable
     }
 
     [Fact]
+    public async Task Released_question_is_picked_up_by_the_rescan_once()
+    {
+        var fake = new FakeBoard();
+        await new AgentState { Cursor = "0" }.SaveAsync(StateFile, Ct);
+        var q = fake.Add("question", "agent2 had this, then let it go");
+        fake.ClaimedBy[q.Id] = "agent2";
+        var handled = 0;
+        AgentHandler onQuestion = (_, _) => { handled++; return Task.CompletedTask; };
+        await RunOnce(fake, onQuestion, null);
+        Assert.Equal(0, handled);
+
+        // agent2 releases it (or its lease expires): the cursor has moved on, only the open-requests rescan finds it.
+        fake.ClaimedBy.Remove(q.Id);
+        await RunOnce(fake, onQuestion, null);
+        Assert.Equal(0, handled);
+        await Rescan(fake, onQuestion);
+        Assert.Equal(1, handled);
+        Assert.Contains(fake.Calls, c => c.Tool == "complete_claim" && c.Args["message_id"]!.ToString() == q.Id.ToString() && c.Args["outcome"]!.ToString() == "done");
+
+        // Handled once: a later rescan (the fake keeps it open) doesn't run it again.
+        await Rescan(fake, onQuestion);
+        Assert.Equal(1, handled);
+    }
+
+    [Fact]
+    public async Task Rescan_skips_open_requests_the_agent_already_handled_or_does_not_take()
+    {
+        var fake = new FakeBoard();
+        await new AgentState { Cursor = "0" }.SaveAsync(StateFile, Ct);
+        fake.Add("question", "answered in the normal pass");
+        fake.Add("finding", "nobody mentioned the agent");
+        var handled = 0;
+        AgentHandler onQuestion = (_, _) => { handled++; return Task.CompletedTask; };
+        await RunOnce(fake, onQuestion, null);
+        fake.ClaimedBy.Clear(); // the fake doesn't record done: keep both "open" so the rescan sees them
+        await Rescan(fake, onQuestion);
+        Assert.Equal(1, handled);
+    }
+
+    [Fact]
+    public async Task Run_loop_rescans_open_requests()
+    {
+        var fake = new FakeBoard();
+        var q = fake.Add("question", "held by someone else when the agent started");
+        fake.ClaimedBy[q.Id] = "agent2";
+        await new AgentState { Cursor = q.Seq }.SaveAsync(StateFile, Ct);
+        fake.ClaimedBy.Remove(q.Id);
+        var handled = new TaskCompletionSource();
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(Ct);
+        await using var board = BoardConnection.Over(fake);
+        var loop = BoardAgent.RunLoopAsync(board, Options with { RescanInterval = TimeSpan.FromMilliseconds(10) },
+            onQuestion: (_, _) => { handled.TrySetResult(); return Task.CompletedTask; }, ct: cts.Token);
+        Assert.Same(handled.Task, await Task.WhenAny(handled.Task, Task.Delay(5000, Ct)));
+        await cts.CancelAsync();
+        await loop;
+    }
+
+    [Fact]
     public async Task Lease_is_renewed_while_work_runs()
     {
         var fake = new FakeBoard();
@@ -211,5 +271,12 @@ public class AgentLoopTests : IDisposable
         await using var board = BoardConnection.Over(fake);
         var state = await AgentState.LoadAsync(StateFile, Ct);
         await BoardAgent.PollOnceAsync(board, Options, state, fake.Me, null, onQuestion, onMention, Ct);
+    }
+
+    private async Task Rescan(FakeBoard fake, AgentHandler onQuestion)
+    {
+        await using var board = BoardConnection.Over(fake);
+        var state = await AgentState.LoadAsync(StateFile, Ct);
+        await BoardAgent.RescanOpenAsync(board, Options, state, fake.Me, onQuestion, null, Ct);
     }
 }

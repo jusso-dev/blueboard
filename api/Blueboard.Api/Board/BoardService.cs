@@ -141,6 +141,8 @@ public sealed partial class BoardService(Db db, Audit audit, Settings settings, 
         var payload = input.Payload is { ValueKind: not JsonValueKind.Undefined and not JsonValueKind.Null } p
             ? Payloads.Validate(type, p)
             : (JsonElement?)null;
+        // Playbook steps are posted only by the board; a participant's checklist payload would forge step progress.
+        if (!system && PlaybookRunner.IsChecklist(payload)) throw new BoardException("payload.checklist is reserved for the board's playbook steps");
 
         // Lookups run on this transaction's connection. Borrowing a second pooled connection while holding this one
         // can exhaust the pool under load: every connection held by a transaction that waits for another.

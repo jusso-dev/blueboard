@@ -17,7 +17,8 @@
 //   mvp         the default. Public endpoints with Entra auth everywhere, Burstable PostgreSQL. Output unchanged.
 //   production  VNet + Function App VNet integration, private endpoints for PostgreSQL, storage and Key Vault (no
 //               public PostgreSQL endpoint, no AllowAzureServices rule), policy.json and notification secrets in Key
-//               Vault (RBAC mode) as Key Vault references, PostgreSQL General Purpose with zone-redundant HA, one
+//               Vault (RBAC mode) as Key Vault references, PostgreSQL General Purpose with HA (zone-redundant in
+//               Australia East, same-zone in Australia Southeast, which has no availability zones), one
 //               always-ready http instance, P0v3 for the web app, and audit_log shipped to the BlueboardAudit_CL
 //               table through a Data Collection Endpoint and Rule (see docs/OPERATIONS.md).
 //
@@ -46,7 +47,7 @@ param policyJson string
 param maximumInstanceCount int = 40
 @description('App Service plan for the web front end. B1 is enough for a SOC; P0v3 adds zone support and more headroom. The production profile always uses P0v3.')
 param webSkuName string = 'B1'
-@description('mvp (default): public endpoints with Entra auth. production: private networking, Key Vault, zone-redundant PostgreSQL, audit export to Sentinel.')
+@description('mvp (default): public endpoints with Entra auth. production: private networking, Key Vault, high-availability PostgreSQL, audit export to Sentinel.')
 @allowed(['mvp', 'production'])
 param profile string = 'mvp'
 @description('Public URL of the web app for deep links in notifications. Empty: the deployed web app\'s default host name.')
@@ -70,6 +71,15 @@ param notifyMailFrom string = ''
 @description('Approver addresses, comma separated.')
 param notifyMailTo string = ''
 param notifyRemindMinutes int = 15
+
+// Agent webhooks (docs/AGENTS.md): off unless both are set. The signing key is a Key Vault reference in production.
+@description('Exact host names agents may subscribe webhooks on, comma separated. Empty: webhooks off.')
+param webhookAllowedHosts string = ''
+@secure()
+@description('Base64 of at least 32 random bytes; signs webhook deliveries (HMAC-SHA256). Empty: webhooks off.')
+param webhookSigningKey string = ''
+@description('More browser origins allowed to call the API, e.g. [\'https://board.example.com\'] for a custom domain. The web app\'s default host is always allowed.')
+param extraCorsOrigins array = []
 
 // Threat intel and CVE sources (docs/THREAT_INTEL.md, docs/ti/sources.md). All off by default.
 @description('Outside feeds: pwn.watch, CISA KEV (scheduled); FIRST EPSS, NVD, OSV (on demand). Outbound https to each host only.')
@@ -235,7 +245,7 @@ resource api 'Microsoft.Web/sites@2024-04-01' = {
       ftpsState: 'Disabled'
       http20Enabled: true
       // The browser calls the API cross-origin with a bearer token (no cookies), so only the web origin is allowed.
-      cors: { allowedOrigins: ['https://${web.properties.defaultHostName}'], supportCredentials: false }
+      cors: { allowedOrigins: union(['https://${web.properties.defaultHostName}'], extraCorsOrigins), supportCredentials: false }
     }, isProd ? { vnetRouteAllEnabled: true } : {})
     functionAppConfig: {
       deployment: {
@@ -285,6 +295,8 @@ var notifySettings = union(notifySecretSettings, {
   NOTIFY_MAIL_TO: notifyMailTo
   NOTIFY_REMIND_MINUTES: string(notifyRemindMinutes)
   BOARD_WEB_URL: empty(webBaseUrl) ? 'https://${web.properties.defaultHostName}' : webBaseUrl
+  WEBHOOK_ALLOWED_HOSTS: webhookAllowedHosts
+  WEBHOOK_SIGNING_KEY: isProd && !empty(webhookSigningKey) ? '@Microsoft.KeyVault(VaultName=${vaultName};SecretName=webhook-signing-key)' : webhookSigningKey
 })
 var productionSettings = isProd
   ? {
@@ -413,7 +425,9 @@ module network 'network.bicep' = if (isProd) {
   params: { location: location, namePrefix: namePrefix, zoneRedundant: hasZones }
 }
 
-// Key Vault in RBAC mode, private only: policy.json and the notification secrets.
+// Key Vault in RBAC mode, private only: policy.json, the notification secrets and the webhook signing key.
+// The name is fixed per resource group and purge protection is on, so after a teardown the deleted vault keeps the
+// name for 90 days: redeploy the production profile into a new resource group name (infra/teardown.sh says so).
 resource kv 'Microsoft.KeyVault/vaults@2023-07-01' = if (isProd) {
   name: vaultName
   location: location
@@ -457,6 +471,12 @@ resource kvNvdSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = if (isProd
   parent: kv
   name: 'nvd-api-key'
   properties: { value: nvdApiKey }
+}
+
+resource kvSigningKeySecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = if (isProd && !empty(webhookSigningKey)) {
+  parent: kv
+  name: 'webhook-signing-key'
+  properties: { value: webhookSigningKey }
 }
 
 resource kvSecretsRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (isProd) {

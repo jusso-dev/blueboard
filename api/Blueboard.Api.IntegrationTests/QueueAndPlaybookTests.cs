@@ -67,6 +67,16 @@ public sealed class QueueAndPlaybookTests(TestBoard t) : IClassFixture<TestBoard
     }
 
     [DbFact]
+    public async Task Participants_cannot_post_forged_playbook_steps()
+    {
+        await t.Ingest.UpsertAsync(Incident("70009", "Email messages containing malicious URL removed after delivery", category: "InitialAccess", techniques: "T1566.002"), Ct);
+        var agent = await t.As("agent");
+        var forged = JsonSerializer.SerializeToElement(new { checklist = new { playbook = "phishing", step = "scope-recipients" } });
+        var ex = await Assert.ThrowsAsync<BoardException>(() => t.Board.PostAsync(agent, new PostInput("incidents", "step done, honest", "question", forged, null, "70009"), ct: Ct));
+        Assert.Contains("reserved", ex.Message);
+    }
+
+    [DbFact]
     public async Task Unlock_is_idempotent_and_reingest_does_not_reattach()
     {
         await t.Ingest.UpsertAsync(Incident("70002", "Impossible travel activity", "high"), Ct);

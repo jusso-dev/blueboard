@@ -29,7 +29,7 @@ state_file() { echo "$(state_dir)/state.json"; }
 # Keys that could ever hold a secret are refused, so state.json stays safe to share with whoever runs the next step.
 state_key_ok() {
   [[ "$1" =~ ^[A-Z][A-Z0-9_]*$ ]] || return 1
-  case "$1" in *SECRET* | *PASSWORD* | *TOKEN* | *KEY* | *CREDENTIAL*) return 1 ;; esac
+  case "$1" in *SECRET* | *PASSWORD* | *TOKEN* | *KEY* | *CREDENTIAL* | *WEBHOOK_URL*) return 1 ;; esac
   return 0
 }
 
@@ -65,7 +65,8 @@ step_clear() {
   mv "$file.tmp" "$file"
 }
 
-# Loads every saved value into the shell (values already set in the environment win). Older checkouts kept the same
+# Loads every saved value into the shell (a value already set in the environment wins, even an empty one, so
+# FOO= clears a remembered setting). Older checkouts kept the same
 # values in .deploy/<env>.env: they are moved into state.json once, and the old file is renamed *.migrated.
 state_load() {
   local file legacy line key value
@@ -90,7 +91,7 @@ state_load() {
   [[ -f "$file" ]] || return 0
   while IFS=$'\t' read -r key value; do
     state_key_ok "$key" || continue
-    [[ -n "${!key:-}" ]] && continue
+    [[ -n "${!key+x}" ]] && continue
     printf -v "$key" '%s' "$value"
     export "${key?}"
   done < <(jq -r 'to_entries[] | select(.key != "steps") | [.key, (.value | tostring)] | @tsv' "$file")

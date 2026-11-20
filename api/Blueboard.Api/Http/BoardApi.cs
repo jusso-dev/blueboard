@@ -180,7 +180,7 @@ public sealed class BoardApi(Endpoint ep, BoardService board, Search search, Rep
         ep.RunAsync(req, async me =>
         {
             me.Require(Roles.Requester);
-            return await broker.AssessAsync(await Endpoint.BodyAsync<PreviewRequest>(req), req.HttpContext.RequestAborted);
+            return await broker.AssessAsync(me, await Endpoint.BodyAsync<PreviewRequest>(req), req.HttpContext.RequestAborted);
         });
 
     /// <summary>The effective policy in words. Everyone on the board sees modes and counts; only admins see protected values.</summary>
@@ -193,7 +193,7 @@ public sealed class BoardApi(Endpoint ep, BoardService board, Search search, Rep
     [Function("policy-simulate")]
     [RouteDoc("Policy simulator: the same evaluation as a real request; nothing is written", Body = typeof(PreviewRequest))]
     public Task<IActionResult> SimulatePolicy([HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "policy/simulate")] HttpRequest req) =>
-        ep.RunAsync(req, async _ => await broker.AssessAsync(await Endpoint.BodyAsync<PreviewRequest>(req), req.HttpContext.RequestAborted));
+        ep.RunAsync(req, async me => await broker.AssessAsync(me, await Endpoint.BodyAsync<PreviewRequest>(req), req.HttpContext.RequestAborted));
 
     [Function("action-get")]
     [RouteDoc("One action", Response = typeof(ActionRow))]

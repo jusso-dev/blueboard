@@ -96,8 +96,8 @@ public sealed class PlaybookRunner(Db db, BoardService board, SystemPrincipal sy
     {
         var states = new Dictionary<string, string>();
         await using var cmd = db.Command("""
-            select payload #>> '{checklist,step}', claim_state from messages
-            where incident_id = @i and type = 'question' and payload #>> '{checklist,playbook}' = @p
+            select m.payload #>> '{checklist,step}', m.claim_state from messages m join principals a on a.id = m.author_id
+            where m.incident_id = @i and m.type = 'question' and m.payload #>> '{checklist,playbook}' = @p and a.handle = 'board'
             """).With("i", incidentId).With("p", playbookId);
         await using var r = await cmd.ExecuteReaderAsync(ct);
         while (await r.ReadAsync(ct)) states[r.GetString(0)] = r.GetString(1);

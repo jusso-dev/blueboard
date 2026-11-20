@@ -37,5 +37,13 @@ if [[ "${DELETE_APP:-}" == "1" && -n "${BOARD_API_CLIENT_ID:-}" ]]; then
 fi
 # Keep the state for the record, but mark everything undone so up.sh starts again from scratch.
 state="$(state_file)"
-mv "$state" "$state.deleted-$(date -u +%Y%m%dT%H%M%SZ)"
-log "state moved aside: $state.deleted-*"
+if [[ -f "$state" ]]; then
+  mv "$state" "$state.deleted-$(date -u +%Y%m%dT%H%M%SZ)"
+  log "state moved aside: $state.deleted-*"
+fi
+# The production Key Vault has purge protection and a name fixed by the resource group, so it stays soft-deleted
+# (and its name taken) for 90 days.
+if [[ "${BB_PROFILE:-}" == "production" ]]; then
+  warn "the production Key Vault is soft-deleted with purge protection: its name stays taken for 90 days, so deploying
+  into $RESOURCE_GROUP again fails until then. Redeploy with a new RESOURCE_GROUP (e.g. RESOURCE_GROUP=$RESOURCE_GROUP-2)."
+fi

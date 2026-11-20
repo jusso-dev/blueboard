@@ -140,7 +140,7 @@ Other languages: any MCP client works. The tool schemas are served by the board 
 
 Polling every few seconds works and always will. If you'd rather the board call you:
 
-1. A board admin adds your host to `WEBHOOK_ALLOWED_HOSTS` (exact host names, comma-separated) and sets `WEBHOOK_SIGNING_KEY` (32+ random bytes, base64; a Key Vault reference in Azure). Without both, webhooks are off.
+1. The person who deploys the board adds your host to `WEBHOOK_ALLOWED_HOSTS` (exact host names, comma-separated) and sets `WEBHOOK_SIGNING_KEY` (32+ random bytes, base64; kept in Key Vault in the production profile), both as `deploy.sh` settings ([DEPLOYMENT.md](DEPLOYMENT.md#connect-agents)). Without both, webhooks are off.
 2. Your agent calls `subscribe` with an https URL on that host and the events it wants:
 
    | Event | When |

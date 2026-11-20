@@ -49,6 +49,11 @@ public sealed record LoopOptions
     /// (a fresh demo board, where incidents may be posted before the agent connects).
     /// </summary>
     public bool StartFromBeginning { get; init; }
+    /// <summary>
+    /// How often to re-read the board's open requests (read_feed open_requests) and pick up questions, findings and
+    /// IOCs that were released, or whose lease expired, after the cursor passed them. Null or zero turns it off.
+    /// </summary>
+    public TimeSpan? RescanInterval { get; init; } = TimeSpan.FromSeconds(60);
 }
 
 /// <summary>
@@ -72,9 +77,18 @@ public static class BoardAgent
             await state.SaveAsync(options.StateFile, ct);
         }
 
+        var nextRescan = DateTimeOffset.MinValue;
         while (!ct.IsCancellationRequested)
         {
-            try { await PollOnceAsync(board, options, state, me, onIncident, onQuestion, onMention, ct); }
+            try
+            {
+                await PollOnceAsync(board, options, state, me, onIncident, onQuestion, onMention, ct);
+                if (options.RescanInterval is { } every && every > TimeSpan.Zero && DateTimeOffset.UtcNow >= nextRescan)
+                {
+                    await RescanOpenAsync(board, options, state, me, onQuestion, onMention, ct);
+                    nextRescan = DateTimeOffset.UtcNow + every;
+                }
+            }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { break; }
             catch (Exception ex)
             {
@@ -94,11 +108,9 @@ public static class BoardAgent
             var feed = await board.ReadFeedAsync(new FeedQuery(AfterSeq: long.Parse(state.Cursor ?? "0"), Limit: 100), ct);
             foreach (var m in feed.Messages)
             {
-                if (m.Author.Handle != me && !state.IsDone(m.Id))
-                {
-                    await DispatchAsync(board, options, m, me, onIncident, onQuestion, onMention, ct);
+                // Not marked done when someone else held the claim: RescanOpenAsync picks it up if they release it.
+                if (m.Author.Handle != me && !state.IsDone(m.Id) && await DispatchAsync(board, options, m, me, onIncident, onQuestion, onMention, ct))
                     state.MarkDone(m.Id);
-                }
                 // Saved after every message: a crash re-reads at most the message in progress, and Done stops a repeat.
                 state.Cursor = m.Seq;
                 await state.SaveAsync(options.StateFile, ct);
@@ -107,7 +119,28 @@ public static class BoardAgent
         }
     }
 
-    private static async Task DispatchAsync(BoardConnection board, LoopOptions o, Message m, string me,
+    /// <summary>
+    /// Re-reads the newest open requests (nobody holds them, or the lease expired) and handles the ones this agent
+    /// would have taken but hasn't finished: released by another agent, or left behind by a crashed one.
+    /// Ones this agent already ran (done, or released itself) are not retried. Public for tests.
+    /// </summary>
+    public static async Task RescanOpenAsync(BoardConnection board, LoopOptions options, AgentState state, string me,
+        AgentHandler? onQuestion, AgentHandler? onMention, CancellationToken ct)
+    {
+        var open = await board.ReadFeedAsync(new FeedQuery(OpenRequests: true, Limit: 200), ct);
+        foreach (var m in open.Messages)
+        {
+            if (m.Author.Handle == me || state.IsDone(m.Id)) continue;
+            if (await DispatchAsync(board, options, m, me, null, onQuestion, onMention, ct))
+            {
+                state.MarkDone(m.Id);
+                await state.SaveAsync(options.StateFile, ct);
+            }
+        }
+    }
+
+    /// <summary>Returns false only when the claim was refused (someone else holds it), so the message stays eligible for a rescan.</summary>
+    private static async Task<bool> DispatchAsync(BoardConnection board, LoopOptions o, Message m, string me,
         AgentHandler? onIncident, AgentHandler? onQuestion, AgentHandler? onMention, CancellationToken ct)
     {
         // The board's own records (action requests and results, status changes) name the requester with @handle:
@@ -116,19 +149,21 @@ public static class BoardAgent
         var open = m.ClaimState == "open";
         if (m.Type == "incident" && m.ParentId is null && onIncident is not null)
         {
-            await RunAsync(board, o, m, me, claim: false, onIncident, ct);
-            return;
+            // Not claimed: the board only claims questions, findings and IOCs, so replicas sharing a handle (each
+            // with its own state file) will each run onIncident. Run one replica, or make onIncident idempotent.
+            return await RunAsync(board, o, m, me, claim: false, onIncident, ct);
         }
-        if (ClaimableTypes.Contains(m.Type) && open && (mentioned || (m.Type == "question" && o.AnswerChannels.Contains(m.Channel))))
+        if (ClaimableTypes.Contains(m.Type) && (mentioned || (m.Type == "question" && o.AnswerChannels.Contains(m.Channel))))
         {
             var handler = mentioned ? onMention ?? onQuestion : onQuestion;
-            if (handler is not null) await RunAsync(board, o, m, me, claim: true, handler, ct);
-            return;
+            if (handler is null) return true;
+            // Held by someone when read: leave it eligible so a rescan picks it up if it's released or the lease expires.
+            return open && await RunAsync(board, o, m, me, claim: true, handler, ct);
         }
-        if (mentioned && onMention is not null) await RunAsync(board, o, m, me, claim: false, onMention, ct);
+        return !(mentioned && onMention is not null) || await RunAsync(board, o, m, me, claim: false, onMention, ct);
     }
 
-    private static async Task RunAsync(BoardConnection board, LoopOptions o, Message m, string me, bool claim, AgentHandler handler, CancellationToken ct)
+    private static async Task<bool> RunAsync(BoardConnection board, LoopOptions o, Message m, string me, bool claim, AgentHandler handler, CancellationToken ct)
     {
         if (claim)
         {
@@ -136,7 +171,7 @@ public static class BoardAgent
             catch (BoardToolException ex) when (ex.IsConflict)
             {
                 Console.WriteLine($"[agent] skip {m.Id}: {ex.Message}"); // someone else has it: that's the point of claiming
-                return;
+                return false;
             }
         }
         using var work = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -162,6 +197,7 @@ public static class BoardAgent
                 catch (BoardToolException) { /* the lease may have expired; nothing else to do */ }
             }
         }
+        return true;
     }
 
     /// <summary>Renews the lease at half-life until the work finishes. If renewal fails (lost the claim), cancels the work.</summary>

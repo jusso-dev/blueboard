@@ -5,7 +5,7 @@
 #
 # Optional:
 #   LOCATION=australiaeast  australiaeast (default) or australiasoutheast: every resource goes there
-#   BB_PROFILE=mvp          mvp (default) or production: private networking, Key Vault, zone-redundant
+#   BB_PROFILE=mvp          mvp (default) or production: private networking, Key Vault, high-availability
 #                           PostgreSQL, always-ready API instance, audit log to Sentinel (docs/OPERATIONS.md)
 #   WEB_SKU=B1              App Service plan for the web front end (production always uses P0v3)
 #   INGEST_ENABLED=true     poll Defender for incidents (default true)
@@ -22,6 +22,17 @@
 #   parameters, never written to state or printed:
 #   NOTIFY_TEAMS_WEBHOOK_URL, NOTIFY_WEBHOOK_URL, NOTIFY_WEBHOOK_SECRET, NOTIFY_ALLOWED_HOSTS,
 #   NOTIFY_MAIL_FROM, NOTIFY_MAIL_TO, NOTIFY_REMIND_MINUTES (default 15), BOARD_WEB_URL (custom domain)
+#   EXTRA_CORS_ORIGINS=…    more web origins for the API's CORS list, space or comma separated (a custom domain:
+#                           https://board.example.com). The default web host is always allowed
+#   Agent webhooks (docs/AGENTS.md), off unless both are set:
+#   WEBHOOK_ALLOWED_HOSTS   exact host names agents may subscribe, comma separated
+#   WEBHOOK_SIGNING_KEY     base64 of 32+ random bytes (secure parameter; Key Vault in production)
+#
+# The non-secret settings above are remembered in infra/out/<env>/state.json, so a bare re-run deploys the same
+# configuration (set one empty, e.g. NOTIFY_MAIL_TO=, to clear it). Not remembered: BROKER_EXECUTE (dry run unless
+# you pass it, so a redeploy never undoes an emergency BROKER_EXECUTE=false), BB_ALLOW_DIRTY, BB_YES, and the secure
+# values, which you pass on every run: if one was passed last time and not this time, deploy.sh warns that this
+# deploy clears it.
 #
 # Steps (each is safe to repeat):
 #   1. checks            5. sign-in: the web app's redirect URI on the app registration
@@ -34,6 +45,8 @@
 source "$(dirname "$0")/lib.sh"
 
 : "${BB_ENV:?set BB_ENV (e.g. prod)}"
+# Saved settings first (the environment wins), so the defaults below apply only to settings never given.
+state_load
 : "${RESOURCE_GROUP:?set RESOURCE_GROUP}"
 LOCATION="${LOCATION:-australiaeast}"
 case "$LOCATION" in australiaeast | australiasoutheast) ;; *) die "LOCATION must be australiaeast or australiasoutheast (blueboard stays in Australia)" ;; esac
@@ -51,14 +64,16 @@ for f in PWNWATCH KEV EPSS NVD OSV SENTINEL EXPOSURE MSTI; do
 done
 TI_PARAMS+=("sentinelWorkspaceResourceId=${SENTINEL_WORKSPACE_ID:-}" "assignSentinelContributor=${ASSIGN_SENTINEL_CONTRIBUTOR:-false}")
 POLICY_FILE="${POLICY_FILE:-$BB_ROOT/policy.example.json}"
+CORS_JSON="$(jq -cn --arg o "${EXTRA_CORS_ORIGINS:-}" '[$o | splits("[ ,]+") | select(length > 0)]')"
 
 require az jq git dotnet pnpm zip curl
 check_az_context
-state_load
 : "${BOARD_API_CLIENT_ID:?run BB_ENV=$BB_ENV ./infra/entra-app.sh first}"
 : "${BOARD_API_AUDIENCE:?run BB_ENV=$BB_ENV ./infra/entra-app.sh first}"
 
 [[ -f "$POLICY_FILE" ]] || die "POLICY_FILE $POLICY_FILE not found"
+# Saved as an absolute path, so a re-run from another folder finds the same file.
+POLICY_FILE="$(cd "$(dirname "$POLICY_FILE")" && pwd)/$(basename "$POLICY_FILE")"
 jq -e '.protected_users and .protected_devices' "$POLICY_FILE" >/dev/null || die "$POLICY_FILE is not a valid blueboard policy"
 # Same strict parser as the Function App: an unknown key would stop it at start-up, so catch it before deploying.
 dotnet run --project "$BB_ROOT/api/Blueboard.Tools" -c Release -- policy-check "$POLICY_FILE" >/dev/null \
@@ -77,6 +92,23 @@ if [[ "$BROKER_EXECUTE" == "true" ]]; then
   warn "BROKER_EXECUTE=true: approved actions will isolate devices, disable users and block indicators in your tenant."
   confirm "Have you reviewed policy.json and tested every action in a non-production tenant?"
 fi
+# Secure settings are never stored. state.json records only short labels for the ones passed last time, so a re-run
+# without one warns before this deployment clears it.
+secure_label() {
+  case "$1" in
+    NOTIFY_TEAMS_WEBHOOK_URL) echo teams ;; NOTIFY_WEBHOOK_URL) echo webhook ;; NOTIFY_WEBHOOK_SECRET) echo hmac ;;
+    NVD_API_KEY) echo nvd ;; WEBHOOK_SIGNING_KEY) echo signing ;;
+  esac
+}
+passed=""
+for v in NOTIFY_TEAMS_WEBHOOK_URL NOTIFY_WEBHOOK_URL NOTIFY_WEBHOOK_SECRET NVD_API_KEY WEBHOOK_SIGNING_KEY; do
+  if [[ -n "${!v:-}" ]]; then
+    passed="$passed $(secure_label "$v")"
+  elif [[ " ${SECURE_SETTINGS_PASSED:-} " == *" $(secure_label "$v") "* ]]; then
+    warn "$v was set on the last deploy but not now: this deploy clears it. Pass it again (it is never stored) to keep it."
+  fi
+done
+
 log "deploying blueboard $VERSION → $RESOURCE_GROUP ($LOCATION) · env $BB_ENV · profile $BB_PROFILE · broker execute: $BROKER_EXECUTE"
 confirm "Continue?"
 
@@ -99,10 +131,11 @@ trap 'rm -f "$params"' EXIT
 chmod 600 "$params"
 jq -n --rawfile policy "$POLICY_FILE" \
   --arg teams "${NOTIFY_TEAMS_WEBHOOK_URL:-}" --arg hook "${NOTIFY_WEBHOOK_URL:-}" --arg hmac "${NOTIFY_WEBHOOK_SECRET:-}" \
-  --arg nvd "${NVD_API_KEY:-}" \
+  --arg nvd "${NVD_API_KEY:-}" --arg signing "${WEBHOOK_SIGNING_KEY:-}" --argjson cors "$CORS_JSON" \
   '{"$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#", contentVersion: "1.0.0.0",
     parameters: {policyJson: {value: $policy}, notifyTeamsWebhookUrl: {value: $teams}, notifyWebhookUrl: {value: $hook},
-                 notifyWebhookSecret: {value: $hmac}, nvdApiKey: {value: $nvd}}}' >"$params"
+                 notifyWebhookSecret: {value: $hmac}, nvdApiKey: {value: $nvd}, webhookSigningKey: {value: $signing},
+                 extraCorsOrigins: {value: $cors}}}' >"$params"
 out="$(az deployment group create -g "$RESOURCE_GROUP" -n "blueboard-main" -f infra/main.bicep \
   -p @"$params" \
   -p location="$LOCATION" webSkuName="$WEB_SKU" namePrefix="$PREFIX" profile="$BB_PROFILE" \
@@ -110,6 +143,7 @@ out="$(az deployment group create -g "$RESOURCE_GROUP" -n "blueboard-main" -f in
   ingestEnabled="$INGEST_ENABLED" brokerExecute="$BROKER_EXECUTE" \
   notifyAllowedHosts="${NOTIFY_ALLOWED_HOSTS:-}" notifyMailFrom="${NOTIFY_MAIL_FROM:-}" notifyMailTo="${NOTIFY_MAIL_TO:-}" \
   notifyRemindMinutes="${NOTIFY_REMIND_MINUTES:-15}" webBaseUrl="${BOARD_WEB_URL:-}" \
+  webhookAllowedHosts="${WEBHOOK_ALLOWED_HOSTS:-}" \
   "${TI_PARAMS[@]}" \
   --query properties.outputs -o json)"
 rm -f "$params"
@@ -127,6 +161,14 @@ state_set WEB_NAME "$WEB_NAME"
 state_set API_NAME "$API_NAME"
 state_set RESOURCE_GROUP "$RESOURCE_GROUP"
 state_set BB_PROFILE "$BB_PROFILE"
+# The non-secret settings this deploy used, so a bare re-run deploys the same configuration.
+for v in LOCATION WEB_SKU PREFIX INGEST_ENABLED POLICY_FILE SENTINEL_WORKSPACE_ID ASSIGN_SENTINEL_CONTRIBUTOR \
+  NOTIFY_ALLOWED_HOSTS NOTIFY_MAIL_FROM NOTIFY_MAIL_TO NOTIFY_REMIND_MINUTES BOARD_WEB_URL EXTRA_CORS_ORIGINS \
+  WEBHOOK_ALLOWED_HOSTS TI_PWNWATCH_ENABLED TI_KEV_ENABLED TI_EPSS_ENABLED TI_NVD_ENABLED TI_OSV_ENABLED \
+  TI_SENTINEL_ENABLED TI_EXPOSURE_ENABLED TI_MSTI_ENABLED; do
+  state_set "$v" "${!v:-}"
+done
+state_set SECURE_SETTINGS_PASSED "${passed# }"
 
 # 5. sign-in --------------------------------------------------------------------------------------
 log "sign-in: single-page app redirect URI for https://$WEB_HOST"

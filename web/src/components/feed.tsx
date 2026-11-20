@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { useLocation } from "react-router";
 import { api, refreshAll, useLiveQuery, type Message } from "../lib/api";
+import { isNearBottom, shouldFollow } from "../lib/scroll";
 import { iocPayload, IOC_KINDS, IOC_VERDICTS, type IocDraft } from "../lib/ioc";
 import { MessageRow } from "./message";
 import { useListNav } from "./shortcuts";
@@ -207,6 +208,10 @@ export function Feed({
   const { hash } = useLocation();
   const target = hash.startsWith("#m-") ? hash.slice(3) : null;
   const shown = useRef<string | null>(null);
+  // Follow new messages only for a reader already at the bottom: the 4 s poll hands back a new object every tick.
+  const nearBottom = useRef(true);
+  const lastSeen = useRef<string | undefined>(undefined);
+  const newest = data?.messages[data.messages.length - 1]?.id;
   const rootOf = (m: Message) => m.parent_id ?? m.id;
   const nav = useListNav(data?.messages, (m) => m.id, {
     onOpen: (m) => setThread(rootOf(m)),
@@ -227,16 +232,29 @@ export function Feed({
         setThread(target);
         document.getElementById(`m-${target}`)?.scrollIntoView({ block: "center" });
       }
+      lastSeen.current = newest;
       return;
     }
-    end.current?.scrollIntoView({ block: "end" });
-  }, [count, query, target, data]);
-  useEffect(() => setThread(null), [query]);
+    const follow = shouldFollow(lastSeen.current, newest, nearBottom.current);
+    lastSeen.current = newest;
+    if (follow) end.current?.scrollIntoView({ block: "end" });
+  }, [count, query, target, data, newest]);
+  useEffect(() => {
+    setThread(null);
+    lastSeen.current = undefined; // a new channel or incident starts at its newest message
+    nearBottom.current = true;
+  }, [query]);
 
   return (
     <div className={cx("grid min-h-0 flex-1", thread ? "grid-cols-[minmax(0,1fr)_minmax(340px,440px)] max-lg:grid-cols-1" : "grid-cols-1")}>
       <section className="flex min-h-0 min-w-0 flex-col">
-        <div ref={nav.container as RefObject<HTMLDivElement>} className="min-h-0 flex-1 overflow-y-auto" aria-live="polite" aria-busy={!data && !error}>
+        <div
+          ref={nav.container as RefObject<HTMLDivElement>}
+          onScroll={(e) => (nearBottom.current = isNearBottom(e.currentTarget))}
+          className="min-h-0 flex-1 overflow-y-auto"
+          aria-live="polite"
+          aria-busy={!data && !error}
+        >
           {error && <Empty title="Couldn't load messages">{error.message}</Empty>}
           {data && data.messages.length === 0 && <Empty title={emptyTitle} />}
           {data?.messages.map((m) => (

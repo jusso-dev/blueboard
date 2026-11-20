@@ -74,7 +74,7 @@ public sealed class Broker(Db db, Audit audit, BoardService board, MsClient ms, 
             var a = list[i];
             if (!ActionStatus.Open.Contains(a.Status) || !policy.ConfirmsTarget(a.Kind)) continue;
             IncidentContext? inc = null;
-            if (a.IncidentId is { } iid && !incidents.TryGetValue(iid, out inc)) incidents[iid] = inc = await LoadIncidentAsync(iid, ct);
+            if (a.IncidentId is { } iid && !incidents.TryGetValue(iid, out inc)) incidents[iid] = inc = await LoadIncidentAsync(iid, a.RequestedBy, ct);
             list[i] = a with { ConfirmPrompt = ConfirmNames(a, inc).FirstOrDefault() };
         }
         return list;
@@ -93,11 +93,12 @@ public sealed class Broker(Db db, Audit audit, BoardService board, MsClient ms, 
         Mode = policy is null ? null : PolicyReport.ModeOf(a.Kind, policy),
     });
 
-    private async Task<IncidentContext?> LoadIncidentAsync(Guid id, CancellationToken ct)
+    /// <param name="requester">Handle of whoever filed (or would file) the request: their own ioc posts don't count as confirmation.</param>
+    private async Task<IncidentContext?> LoadIncidentAsync(Guid id, string requester, CancellationToken ct)
     {
         var inc = await LoadIncidentRowAsync(id, ct);
-        // publish_ti_indicator: policy needs the values marked malicious on this incident (issue #20).
-        return inc is null ? null : inc with { MaliciousIocs = await MaliciousIocsAsync(id, ct) };
+        // publish_ti_indicator: policy needs the values marked malicious on this incident by someone else (issue #20).
+        return inc is null ? null : inc with { MaliciousIocs = await MaliciousIocsAsync(id, requester, ct) };
     }
 
     private async Task<IncidentContext?> LoadIncidentRowAsync(Guid id, CancellationToken ct)
@@ -109,13 +110,13 @@ public sealed class Broker(Db db, Audit audit, BoardService board, MsClient ms, 
 
     /// <summary>Validate params and resolve the linked incident: the shared first half of request, preview and simulate.</summary>
     private async Task<(ActionDef Def, JsonObject Params, Guid? IncidentId, IncidentContext? Incident)> PrepareAsync(
-        string kind, JsonElement rawParams, string? incidentRef, Guid? parentId, CancellationToken ct)
+        string kind, JsonElement rawParams, string? incidentRef, Guid? parentId, string requester, CancellationToken ct)
     {
         var def = Catalog.Get(kind);
         var prms = def.Validate(rawParams);
         var incidentId = await board.ResolveIncidentAsync(incidentRef, ct);
         if (incidentId is null && parentId is { } parent) incidentId = (await board.GetAsync(parent, ct))?.IncidentId;
-        return (def, prms, incidentId, incidentId is { } iid ? await LoadIncidentAsync(iid, ct) : null);
+        return (def, prms, incidentId, incidentId is { } iid ? await LoadIncidentAsync(iid, requester, ct) : null);
     }
 
     /// <summary>
@@ -123,9 +124,9 @@ public sealed class Broker(Db db, Audit audit, BoardService board, MsClient ms, 
     /// POST /api/actions/preview and POST /api/policy/simulate. RequestAsync goes through the same PrepareAsync and
     /// PolicyEngine.Assess calls, so a preview always matches the real decision. Callers check roles.
     /// </summary>
-    public async Task<Assessment> AssessAsync(PreviewRequest req, CancellationToken ct = default)
+    public async Task<Assessment> AssessAsync(Principal p, PreviewRequest req, CancellationToken ct = default)
     {
-        var (def, prms, _, incident) = await PrepareAsync(req.Kind, req.Params, req.Incident, null, ct);
+        var (def, prms, _, incident) = await PrepareAsync(req.Kind, req.Params, req.Incident, null, p.Handle, ct);
         return PolicyEngine.Assess(def, prms, incident, policy);
     }
 
@@ -134,7 +135,7 @@ public sealed class Broker(Db db, Audit audit, BoardService board, MsClient ms, 
         p.Require(Roles.Requester);
         if (limiter is not null) await limiter.TakeAsync(p, "action_request", ct);
         if (req.Justification is not { Length: >= 20 and <= 4000 }) throw new BoardException("justification must be 20–4000 characters, citing evidence");
-        var (def, prms, incidentId, incident) = await PrepareAsync(req.Kind, req.Params, req.Incident, req.ParentId, ct);
+        var (def, prms, incidentId, incident) = await PrepareAsync(req.Kind, req.Params, req.Incident, req.ParentId, p.Handle, ct);
         var decision = PolicyEngine.Assess(def, prms, incident, policy);
         var status = decision.Status;
 
@@ -175,13 +176,13 @@ public sealed class Broker(Db db, Audit audit, BoardService board, MsClient ms, 
     }
 
     /// <summary>Indicators marked malicious in ioc messages on an incident, as normalised "kind:value".</summary>
-    private async Task<HashSet<string>> MaliciousIocsAsync(Guid incidentId, CancellationToken ct)
+    private async Task<HashSet<string>> MaliciousIocsAsync(Guid incidentId, string excludeAuthor, CancellationToken ct)
     {
         var set = new HashSet<string>();
         await using var cmd = db.Command("""
-            select i->>'kind', i->>'value' from messages m, jsonb_array_elements(m.payload->'indicators') i
-            where m.incident_id = @i and m.type = 'ioc' and i->>'verdict' = 'malicious'
-            """).With("i", incidentId);
+            select i->>'kind', i->>'value' from messages m join principals a on a.id = m.author_id, jsonb_array_elements(m.payload->'indicators') i
+            where m.incident_id = @i and m.type = 'ioc' and i->>'verdict' = 'malicious' and a.handle <> @x
+            """).With("i", incidentId).With("x", excludeAuthor);
         await using var r = await cmd.ExecuteReaderAsync(ct);
         while (await r.ReadAsync(ct))
             if (Intel.Indicators.Normalise(r.GetString(0), r.GetString(1)) is { } v) set.Add($"{r.GetString(0)}:{v}");
@@ -240,7 +241,7 @@ public sealed class Broker(Db db, Audit audit, BoardService board, MsClient ms, 
         if (decision == "approve")
         {
             if (a.Approvals?.Contains(p.Handle) == true) throw BoardException.Conflict("you already approved this action; a different approver must complete it");
-            var incident = a.IncidentId is { } iid ? await LoadIncidentAsync(iid, ct) : null;
+            var incident = a.IncidentId is { } iid ? await LoadIncidentAsync(iid, a.RequestedBy, ct) : null;
             if (policy.ConfirmsTarget(a.Kind))
             {
                 var names = ConfirmNames(a, incident);
@@ -332,7 +333,8 @@ public sealed class Broker(Db db, Audit audit, BoardService board, MsClient ms, 
     private async Task<bool> ExpireOneAsync(Guid id, CancellationToken ct)
     {
         var sys = await system.GetAsync(ct);
-        ActionRow a;
+        // Read before the transaction: borrowing a second pooled connection while one is held can exhaust the pool.
+        if (await GetAsync(id, ct) is not { } a) return false;
         await using (var conn = await db.OpenAsync(ct))
         await using (var tx = await conn.BeginTransactionAsync(ct))
         {
@@ -341,7 +343,6 @@ public sealed class Broker(Db db, Audit audit, BoardService board, MsClient ms, 
                 where id = @id and status = any(@open) and expires_at <= now() returning id
                 """, conn, tx).With("id", id).With("open", ActionStatus.Open))
                 if (await up.ExecuteScalarAsync(ct) is null) return false;
-            a = (await GetAsync(id, ct))!; // other connection: still shows the pre-update row, which is all we need
             await board.PostInTransactionAsync(conn, tx, sys, new PostInput("containment",
                 $"**{Catalog.Get(a.Kind).Title}** **expired** without {(a.Approvals is { Length: > 0 } ? "a second approval" : "a decision")}. @{a.RequestedBy} can request it again if it's still needed.",
                 "status", Json.Element(new { state = "action_expired", action_id = id }), a.RequestMessageId, a.IncidentId?.ToString()), system: true, ct);

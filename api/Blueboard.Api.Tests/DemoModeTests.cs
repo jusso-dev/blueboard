@@ -31,6 +31,13 @@ public class DemoModeTests
     public void Demo_mode_is_refused_in_azure() =>
         Assert.Throws<InvalidOperationException>(() => From([.. Mock, ("DEMO_MODE", "true"), ("DEV_AUTH", "true"), ("WEBSITE_INSTANCE_ID", "abc")]));
 
+    [Theory]
+    [InlineData("WEBSITE_INSTANCE_ID")]
+    [InlineData("WEBSITE_SITE_NAME")]
+    [InlineData("AZURE_TENANT_ID")]
+    public void Dev_auth_is_refused_in_azure_or_with_a_real_tenant(string marker) =>
+        Assert.Throws<InvalidOperationException>(() => From(("DEV_AUTH", "true"), (marker, "x")));
+
     [Fact]
     public void Real_mode_ignores_base_urls_and_keeps_exact_origins()
     {

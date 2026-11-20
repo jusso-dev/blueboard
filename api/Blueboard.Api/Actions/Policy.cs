@@ -229,11 +229,7 @@ public static class PolicyEngine
                 notes.Add($"{d} is not in the incident evidence, so its host name is unknown and the protected-device list was checked by id only");
         }
         foreach (var o in targets.Other)
-        {
-            var v = o.ToLowerInvariant();
-            if (pi.Contains(v) || pi.Any(x => v.EndsWith('.' + x) || v.Contains("://" + x)))
-                return new(Outcome.Reject, [$"{o} matches a protected indicator"]);
-        }
+            if (MatchesProtectedIndicator(o, pi)) return new(Outcome.Reject, [$"{o} matches a protected indicator"]);
 
         var all = targets.All.ToList();
         if (all.Count > 0)
@@ -267,7 +263,28 @@ public static class PolicyEngine
         return new(auto ? Outcome.Auto : Outcome.NeedsApproval, notes);
     }
 
-    private static HashSet<string> Lower(IEnumerable<string> xs) => xs.Select(x => x.ToLowerInvariant()).ToHashSet();
+    private static HashSet<string> Lower(IEnumerable<string> xs) => xs.Select(x => x.ToLowerInvariant().TrimEnd('.')).ToHashSet();
+
+    /// <summary>
+    /// A value matches when it, or the host it names, equals a protected entry or is a subdomain of one. URLs are
+    /// reduced to their host (so https://login.microsoftonline.com/x matches microsoftonline.com) and a trailing dot
+    /// is ignored.
+    /// </summary>
+    internal static bool MatchesProtectedIndicator(string value, IReadOnlySet<string> protectedLower)
+    {
+        if (protectedLower.Count == 0) return false;
+        var v = value.Trim().ToLowerInvariant();
+        if (protectedLower.Contains(v.TrimEnd('.'))) return true;
+        var host = HostOf(v);
+        return host is not null && protectedLower.Any(x => host == x || host.EndsWith('.' + x));
+    }
+
+    private static string? HostOf(string v)
+    {
+        var withScheme = v.Contains("://") ? v : "http://" + v;
+        if (!Uri.TryCreate(withScheme, UriKind.Absolute, out var u) || u.Host.Length == 0) return null;
+        return u.IdnHost.ToLowerInvariant().TrimEnd('.');
+    }
 
     /// <summary>Every name a target is known by in the evidence: device MDE id ↔ DNS name ↔ host name; user oid ↔ UPN.</summary>
     private static (Dictionary<string, HashSet<string>> Users, Dictionary<string, HashSet<string>> Devices) Aliases(IncidentEntities? e)

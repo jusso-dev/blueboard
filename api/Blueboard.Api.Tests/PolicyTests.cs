@@ -85,6 +85,12 @@ public class PolicyTests
     [InlineData("domain", "contoso.com", Outcome.Reject)]
     [InlineData("domain", "login.contoso.com", Outcome.Reject)]
     [InlineData("url", "https://contoso.com/x", Outcome.Reject)]
+    [InlineData("url", "https://login.contoso.com/oauth2", Outcome.Reject)]
+    [InlineData("url", "HTTPS://Login.Contoso.Com:443/", Outcome.Reject)]
+    [InlineData("domain", "contoso.com.", Outcome.Reject)]
+    [InlineData("domain", "login.contoso.com.", Outcome.Reject)]
+    [InlineData("url", "https://contoso.com.evil.example/x", Outcome.NeedsApproval)]
+    [InlineData("domain", "notcontoso.com", Outcome.NeedsApproval)]
     [InlineData("domain", "evil.example.net", Outcome.NeedsApproval)]
     public void Protected_indicators_and_subdomains_are_rejected(string type, string value, Outcome expected) =>
         Assert.Equal(expected, Eval("block_indicator", new { indicator_type = type, value, title = "test block" },

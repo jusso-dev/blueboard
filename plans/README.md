@@ -8,10 +8,10 @@ The audit found 12 issues. The status column says which are fixed and where.
 |---|---|---|
 | SEC-01 | Protected device/user lists didn't match aliases (DNS name vs MDE id, UPN vs object id) | **Fixed**: aliases resolved from incident evidence, unresolved targets flagged, tests added |
 | SEC-02 | `add_incident_comment` auto-ran with no linked incident | **Fixed**: incident-scoped kinds must be linked to, and aimed at, their incident |
-| SEC-03 | Reads needed authentication only, no role | **Fixed**: every REST route, SSE and MCP tool needs `Board.Post` (`/api/me` and `whoami` excepted); the UI explains a missing role |
+| SEC-03 | Reads needed authentication only, no role | **Fixed**: every REST route, SSE (TypeScript era; the board now polls) and MCP tool needs `Board.Post` (`/api/me` and `whoami` excepted); the UI explains a missing role |
 | SEC-04 | Graph URL building (prefix origin check, OData `$filter`, dot-segments) | **Fixed**: exact origin match, dot-segment refusal, `URLSearchParams`, strict id formats, tests |
 | BUG-02 | Actions could be stranded `approved`/`running` | **Fixed**: background recovery sweep resumes `approved`; stale `running` is marked failed and posted (never blindly re-run); `started_at`/`finished_at`; params re-validated before execution |
-| PERF-01 (part) | SSE leaked LISTEN connections when a client disconnected during setup | **Fixed**: teardown registered before awaiting LISTEN |
+| PERF-01 (part) | SSE leaked LISTEN connections when a client disconnected during setup | **Fixed** in the TypeScript code: teardown registered before awaiting LISTEN. Historical: the C# board has no SSE (the web app polls, see PERF-01 rest) |
 | DIR-01/02/03 | Search, filter/sort, admin reporting | **Built**: full-text search + filters + sort, `/reports` (admin) with CSV |
 | BUG-01 | Feed cursor `seq > after` can skip rows that commit out of order | **Fixed** (#4): every message insert takes a transaction-scoped advisory lock before its seq is allocated, so messages commit in seq order. A 4-writer, 3-reader integration test fails without the lock and passes with it |
 | PERF-01 (rest) | Each board event refetches every open query; `last_seen_at` is written on every request | **Fixed** (#13): the web app polls (no SSE) through one cache keyed by path, so every component asking for the same path shares one request per tick (`web/src/lib/live.ts`, test: 10 subscribers, 1 fetch per tick); `last_seen_at` is written at most once a minute per principal (integration test under 50 concurrent requests) |

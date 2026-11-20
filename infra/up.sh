@@ -13,7 +13,7 @@
 #                    Privileged Role Administrator or Global Administrator; otherwise writes
 #                    infra/out/<env>/handoff.md with the exact command for the person who does.
 #
-# Settings (environment, remembered in state.json for the next run):
+# Settings (environment, remembered in state.json for the next run; set one empty, e.g. ACTIONS=, to clear it):
 #   RESOURCE_GROUP     default rg-blueboard-<env>
 #   LOCATION           australiaeast (default) or australiasoutheast
 #   BB_PROFILE         mvp (default) or production (private networking, Key Vault, HA, audit export)
@@ -22,6 +22,9 @@
 #                      so a first deploy can't change anything in the tenant
 #   AGENT_PRINCIPAL_IDS  agent service principal object ids (space separated) to give the three agent roles
 #   BB_REDO=<step>     run one step again even though it's recorded as done (deploy is always re-run)
+# deploy.sh also remembers its other non-secret settings (TI_*, NOTIFY_* hosts and mail, WEBHOOK_ALLOWED_HOSTS, …),
+# but not BROKER_EXECUTE. Secrets (webhook URLs, keys) are never stored: pass them on every run, or deploy.sh warns
+# that it will clear them.
 #
 # It never asks for broader roles than each step needs and never escalates: see docs/DEPLOYMENT.md § Roles.
 source "$(dirname "$0")/lib.sh"
@@ -42,6 +45,15 @@ state_set BB_ENV "$BB_ENV"
 state_set RESOURCE_GROUP "$RESOURCE_GROUP"
 state_set LOCATION "$LOCATION"
 state_set BB_PROFILE "$BB_PROFILE"
+# Absolute, so a re-run from another folder deploys the same policy.
+if [[ -n "${POLICY_FILE:-}" ]]; then
+  [[ -f "$POLICY_FILE" ]] || die "POLICY_FILE $POLICY_FILE not found"
+  POLICY_FILE="$(cd "$(dirname "$POLICY_FILE")" && pwd)/$(basename "$POLICY_FILE")"
+  export POLICY_FILE
+fi
+state_set POLICY_FILE "${POLICY_FILE:-}"
+state_set ACTIONS "${ACTIONS:-}"
+state_set AGENT_PRINCIPAL_IDS "${AGENT_PRINCIPAL_IDS:-}"
 [[ -n "${BB_REDO:-}" ]] && step_clear "$BB_REDO"
 
 run_step() { # <name> <description> <command...>
@@ -138,12 +150,10 @@ EOF
 }
 
 # After a hand-off, the privileged person has granted the permissions: reading the identity's assignments needs no
-# special role, so the deployer's re-run sees them and finishes.
+# special role, so the deployer's re-run checks that every permission for these settings (reads, ACTIONS, agent
+# roles) is in place, with the same list grant-permissions.sh would grant, and finishes.
 already_granted() {
-  local n
-  n="$(az rest --method GET --uri "https://graph.microsoft.com/v1.0/servicePrincipals/$API_MI_PRINCIPAL_ID/appRoleAssignments" \
-    --query 'length(value)' -o tsv 2>/dev/null || echo 0)"
-  [[ "${n:-0}" -gt 0 ]]
+  env "${GRANT_ENV[@]}" CHECK=1 "$BB_INFRA/grant-permissions.sh" "$API_MI_PRINCIPAL_ID" "$BOARD_API_CLIENT_ID" ${agents[@]+"${agents[@]}"}
 }
 
 grant_or_handoff() {

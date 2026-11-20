@@ -39,7 +39,7 @@ Warnings (allowed, but probably not what you meant):
 | `disabled` | none | Kinds rejected outright. |
 | `protected_users` | none | UPNs or object IDs never disabled, reset or revoked. Matched by every alias in the evidence. |
 | `protected_devices` | none | MDE IDs, DNS names or host names never isolated or scanned. |
-| `protected_indicators` | none | Domains, IPs or URLs never blocked. Subdomains are included. |
+| `protected_indicators` | none | Domains, IPs or URLs never blocked. Subdomains are included, and a URL is matched by its host, so `https://login.contoso.com/x` matches `contoso.com`. |
 | `require_target_in_incident` | `true` | Flag targets missing from the linked incident's evidence. A flagged request never runs on its own. |
 | `require_two_approvers` | none | Kinds that need two different human approvers. Suggested: `disable_user`, `purge_email`, `block_indicator`. |
 | `confirm_target` | none | Kinds where the approver types the target back (a device name, UPN or indicator) before approving. Checked by the API, not just the page. |
