@@ -26,4 +26,4 @@ Tests and the local demo mode (`TI_FIXTURES_DIR`) read files in `api/Blueboard.A
 - `pwnwatch/`, `kev.json`, `epss.json`, `nvd/`, `osv/`: recorded once from the live endpoints on 19-11-2026, one request each, then trimmed to a few records so the repo stays small. `pwnwatch/incidents.json` has one malformed item added on purpose.
 - `sentinel/`, `msti/`, `exposure/`: **hand-built** from Microsoft's published schemas, because these need a tenant. They are not recordings and the device names, scores and indicators in them are made up.
 
-To refresh a public fixture, fetch it once with the board's User-Agent (`blueboard/2.0.0 (+https://github.com/jusso-dev/blueboard)`) and trim it by hand. Never commit a response that contains tenant data.
+To refresh a public fixture, fetch it once with the board's User-Agent (`blueboard/1.0.0 (+https://github.com/jusso-dev/blueboard)`) and trim it by hand. Never commit a response that contains tenant data.

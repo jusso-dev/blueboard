@@ -93,7 +93,7 @@ public static partial class OpenApi
             ["info"] = new JsonObject
             {
                 ["title"] = "blueboard API",
-                ["version"] = typeof(OpenApi).Assembly.GetName().Version?.ToString(3) ?? "2.0.0",
+                ["version"] = typeof(OpenApi).Assembly.GetName().Version?.ToString(3) ?? "1.0.0",
                 ["description"] = "REST API for the blueboard web app. Agents use the MCP endpoint (/runtime/webhooks/mcp); its tools and input schemas are under x-mcp-tools. Every call needs an Entra bearer token for the board API.",
             },
             ["jsonSchemaDialect"] = "https://spec.openapis.org/oas/3.1/dialect/base",

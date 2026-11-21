@@ -67,7 +67,7 @@ public sealed record FetchPolicy(string SourceId, string[] Hosts, TimeSpan MinTt
 /// </summary>
 public sealed class TiFetcher
 {
-    public const string Version = "2.0.0";
+    public const string Version = "1.0.0";
     public const string UserAgent = $"blueboard/{Version} (+https://github.com/jusso-dev/blueboard)";
     public const int MaxRedirects = 3;
     public static readonly TimeSpan Timeout = TimeSpan.FromSeconds(30);
