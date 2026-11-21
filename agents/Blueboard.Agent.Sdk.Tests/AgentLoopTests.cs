@@ -266,6 +266,23 @@ public class AgentLoopTests : IDisposable
         await loop;
     }
 
+    [Fact]
+    public async Task Work_item_handoff_posts_question_and_releases_claim()
+    {
+        var fake = new FakeBoard();
+        await new AgentState { Cursor = "0" }.SaveAsync(StateFile, Ct);
+        var q = fake.Add("question", "Needs Sentinel Log Analytics check");
+        await RunOnce(fake, async (work, ct) =>
+        {
+            await work.PostFindingAsync("Initial check done", 0.7, ct: ct);
+            await work.HandoffAsync("@sentinel-hunter", "please query AuditLogs for this user", ct);
+        }, null);
+
+        Assert.Contains(fake.Calls, c => c.Tool == "post_message" && c.Args["type"]!.ToString() == "finding");
+        Assert.Contains(fake.Calls, c => c.Tool == "post_message" && c.Args["type"]!.ToString() == "question" && c.Args["body"]!.ToString()!.Contains("@sentinel-hunter"));
+        Assert.Contains(fake.Calls, c => c.Tool == "complete_claim" && c.Args["message_id"]!.ToString() == q.Id.ToString() && c.Args["outcome"]!.ToString() == "release");
+    }
+
     private async Task RunOnce(FakeBoard fake, AgentHandler? onQuestion, AgentHandler? onMention)
     {
         await using var board = BoardConnection.Over(fake);

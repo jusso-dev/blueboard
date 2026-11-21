@@ -67,9 +67,20 @@ public sealed record HuntInput(
     [Description("KQL query (read-only)")][StringLength(10000, MinimumLength = 5)] string Query,
     [Description("ISO-8601 duration, default P7D")] string? Timespan = null);
 
+public sealed record SentinelQueryInput(
+    [Description("Read-only Sentinel / Log Analytics KQL query (AuditLogs, SigninLogs, AzureActivity, OfficeActivity, SecurityIncident, Watchlist, BlueboardAudit_CL, etc.)")]
+    [StringLength(10000, MinimumLength = 5)] string Query,
+    [Description("ISO-8601 duration, default P7D")] string? Timespan = null);
+
 public sealed record LookupInput(
-    [Description("user | device | ip | file | url")][AllowedValues("user", "device", "ip", "file", "url")] string Kind,
-    [Description("The entity: UPN or object id, MDE id or DNS name, IP, sha1/sha256, URL or domain")][StringLength(2048, MinimumLength = 1)] string Value);
+    [Description("user | device | ip | file | url | service_principal | oauth_app")]
+    [AllowedValues("user", "device", "ip", "file", "url", "service_principal", "oauth_app")] string Kind,
+    [Description("The entity: UPN or object id, MDE id or DNS name, IP, sha1/sha256, URL or domain, or service principal / app id")]
+    [StringLength(2048, MinimumLength = 1)] string Value);
+
+public sealed record AttachPlaybookInput(
+    [Description("Board incident id or Defender incident id")][StringLength(100, MinimumLength = 1)] string Incident,
+    [Description("Playbook id from list_playbooks")][StringLength(41, MinimumLength = 1), RegularExpression("^[a-z0-9][a-z0-9-]{0,40}$")] string PlaybookId);
 
 public sealed record IntelLookupInput(
     [Description("e.g. CVE-2021-44228, GHSA-jfh8-c2jp-5v3q, 203.0.113.5, bad.example, a sha256")][StringLength(2048, MinimumLength = 3)] string Key);
@@ -117,7 +128,8 @@ public sealed record DecisionInput(
     [Description("For kinds in policy confirm_target: the target name typed back by the approver")][StringLength(500)] string? Confirm = null);
 
 public sealed record ActionsQuery(
-    [Description("Only actions with this status, e.g. pending_approval")] string? Status = null,
+    [Description("Only actions with this status, e.g. pending_approval, open, held")] string? Status = null,
+    [Description("Only actions linked to this board incident id or Defender incident id")] string? Incident = null,
     [Description("true: return the action catalogue instead")] bool Catalog = false);
 
 public sealed record ReportQuery(

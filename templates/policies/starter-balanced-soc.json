@@ -1,0 +1,62 @@
+{
+  "version": 1,
+  "auto_approve": [
+    "run_av_scan",
+    "collect_investigation_package",
+    "tag_device",
+    "add_incident_comment"
+  ],
+  "disabled": [],
+  "protected_users": [
+    "breakglass1@contoso.com",
+    "breakglass2@contoso.com",
+    "ciso@contoso.com"
+  ],
+  "protected_devices": [
+    "dc01.contoso.local",
+    "dc02.contoso.local",
+    "pki01.contoso.local",
+    "adconnect01.contoso.local"
+  ],
+  "protected_indicators": [
+    "contoso.com",
+    "microsoft.com",
+    "microsoftonline.com",
+    "windowsupdate.com",
+    "office.com",
+    "azure.com"
+  ],
+  "require_target_in_incident": true,
+  "require_two_approvers": [
+    "disable_user",
+    "reset_password",
+    "disable_service_principal",
+    "purge_email",
+    "publish_ti_indicator"
+  ],
+  "confirm_target": [
+    "isolate_device",
+    "disable_user",
+    "disable_service_principal",
+    "block_indicator",
+    "purge_email"
+  ],
+  "expiry_hours": 4,
+  "expiry_hours_by_kind": {
+    "isolate_device": 1,
+    "restrict_app_execution": 1,
+    "disable_user": 2,
+    "disable_service_principal": 2
+  },
+  "limits": {
+    "pending_actions_per_incident": 10,
+    "agent": {
+      "post": { "capacity": 60, "per_seconds": 60 },
+      "hunt": { "capacity": 10, "per_seconds": 60 },
+      "lookup": { "capacity": 30, "per_seconds": 60 },
+      "action_request": { "capacity": 5, "per_seconds": 600 },
+      "claim": { "capacity": 60, "per_seconds": 60 }
+    },
+    "human": {}
+  }
+}

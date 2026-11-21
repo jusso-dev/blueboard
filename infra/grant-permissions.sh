@@ -65,17 +65,22 @@ perm_for() {
     isolate_device | release_device) echo "$MDE_APP Machine.Isolate" ;;
     run_av_scan) echo "$MDE_APP Machine.Scan" ;;
     collect_investigation_package) echo "$MDE_APP Machine.CollectForensics" ;;
-    block_indicator) echo "$MDE_APP Ti.ReadWrite.All" ;;
-    disable_user) echo "$GRAPH_APP User.EnableDisableAccount.All" ;;
+    restrict_app_execution | unrestrict_app_execution) echo "$MDE_APP Machine.RestrictExecution" ;;
+    stop_and_quarantine_file) echo "$MDE_APP Machine.StopAndQuarantine" ;;
+    tag_device) echo "$MDE_APP Machine.ReadWrite.All" ;;
+    block_indicator | unblock_indicator) echo "$MDE_APP Ti.ReadWrite.All" ;;
+    disable_user | enable_user) echo "$GRAPH_APP User.EnableDisableAccount.All" ;;
     revoke_sessions) echo "$GRAPH_APP User.RevokeSessions.All" ;;
     reset_password) echo "$GRAPH_APP User-PasswordProfile.ReadWrite.All" ;;
+    confirm_user_compromised | dismiss_user_risk) echo "$GRAPH_APP IdentityRiskyUser.ReadWrite.All" ;;
+    disable_service_principal) echo "$GRAPH_APP Application.ReadWrite.All" ;;
     purge_email) echo "$GRAPH_APP SecurityAnalyzedMessage.ReadWrite.All" ;;
     update_incident | add_incident_comment) echo "$GRAPH_APP SecurityIncident.ReadWrite.All" ;;
     publish_ti_indicator) echo "AZURE_RBAC" ;;
     *) return 1 ;;
   esac
 }
-ALL_ACTIONS="isolate_device release_device run_av_scan collect_investigation_package block_indicator disable_user revoke_sessions reset_password purge_email update_incident add_incident_comment publish_ti_indicator"
+ALL_ACTIONS="isolate_device release_device run_av_scan collect_investigation_package restrict_app_execution unrestrict_app_execution stop_and_quarantine_file tag_device block_indicator unblock_indicator disable_user enable_user revoke_sessions reset_password confirm_user_compromised dismiss_user_risk disable_service_principal purge_email update_incident add_incident_comment publish_ti_indicator"
 
 log "read permissions (incident ingest, hunting, entity lookups)"
 for p in SecurityIncident.Read.All SecurityAlert.Read.All ThreatHunting.Read.All User.Read.All IdentityRiskyUser.Read.All RoleManagement.Read.Directory; do

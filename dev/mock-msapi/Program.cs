@@ -45,6 +45,28 @@ app.MapGet("/v1.0/users/{id}", (string id) => Entity("users", id));
 app.MapGet("/v1.0/users/{id}/transitiveMemberOf/microsoft.graph.directoryRole", (string id) => Results.Json(new { value = Array.Empty<object>() }));
 app.MapGet("/v1.0/identityProtection/riskyUsers/{id}", (string id) =>
     Results.Json(new { id, riskLevel = id.EndsWith("0003") ? "medium" : "none", riskState = id.EndsWith("0003") ? "atRisk" : "none", riskDetail = "none" }));
+app.MapGet("/v1.0/identityProtection/riskDetections", () => Results.Json(new { value = Array.Empty<object>() }));
+app.MapGet("/v1.0/servicePrincipals/{id}", (string id) => Entity("servicePrincipals", id, new { id, appId = id, displayName = "Mock App", accountEnabled = true }));
+app.MapGet("/v1.0/servicePrincipals", () => Results.Json(new { value = Array.Empty<object>() }));
+app.MapGet("/v1.0/servicePrincipals/{id}/oauth2PermissionGrants", () => Results.Json(new { value = Array.Empty<object>() }));
+app.MapGet("/v1.0/servicePrincipals/{id}/appRoleAssignments", () => Results.Json(new { value = Array.Empty<object>() }));
+app.MapPost("/v1/workspaces/{id}/query", async (HttpRequest req) =>
+{
+    var body = await JsonNode.ParseAsync(req.Body);
+    var query = body?["query"]?.GetValue<string>() ?? "";
+    return Results.Json(new
+    {
+        tables = new[]
+        {
+            new
+            {
+                name = "PrimaryResult",
+                columns = new[] { new { name = "Query", type = "string" }, new { name = "Matches", type = "long" } },
+                rows = new[] { new object[] { query.Length > 120 ? query[..120] : query, 1 } },
+            },
+        },
+    });
+});
 
 // ── Defender for Endpoint ──────────────────────────────────────────────────────────────────────
 app.MapGet("/api/machines", (HttpRequest req) =>
@@ -56,6 +78,7 @@ app.MapGet("/api/machines", (HttpRequest req) =>
 });
 app.MapGet("/api/machines/{id}", (string id) => Entity("machines", id));
 app.MapGet("/api/machines/{id}/logonusers", (string id) => Results.Json(new { value = new[] { new { accountName = "spatel", accountDomain = "CONTOSO", isDomainAdmin = false, lastSeen = DateTimeOffset.UtcNow.AddMinutes(-30) } } }));
+app.MapGet("/api/machines/{id}/alerts", () => Results.Json(new { value = Array.Empty<object>() }));
 app.MapGet("/api/ips/{ip}/stats", (string ip) => Entity("ips", ip, new { ipAddress = ip, orgPrevalence = 0, communicationCount = 0 }));
 app.MapGet("/api/ips/{ip}/alerts", (string ip) => Results.Json(new { value = Array.Empty<object>() }));
 app.MapGet("/api/files/{hash}", (string hash) => Entity("files", hash));
@@ -67,8 +90,12 @@ app.MapGet("/api/domains/{domain}/stats", (string domain) => Entity("domains", d
 foreach (var (method, pattern) in new[]
 {
     ("POST", "/api/machines/{id}/isolate"), ("POST", "/api/machines/{id}/unisolate"), ("POST", "/api/machines/{id}/runAntiVirusScan"),
-    ("POST", "/api/machines/{id}/collectInvestigationPackage"), ("POST", "/api/indicators"),
+    ("POST", "/api/machines/{id}/collectInvestigationPackage"), ("POST", "/api/machines/{id}/restrictCodeExecution"),
+    ("POST", "/api/machines/{id}/unrestrictCodeExecution"), ("POST", "/api/machines/{id}/StopAndQuarantineFile"),
+    ("POST", "/api/machines/{id}/tags"), ("POST", "/api/indicators"), ("DELETE", "/api/indicators/{id}"),
     ("PATCH", "/v1.0/users/{id}"), ("POST", "/v1.0/users/{id}/revokeSignInSessions"),
+    ("POST", "/v1.0/identityProtection/riskyUsers/confirmCompromised"), ("POST", "/v1.0/identityProtection/riskyUsers/dismiss"),
+    ("PATCH", "/v1.0/servicePrincipals/{id}"),
     ("POST", "/beta/security/collaboration/analyzedEmails/remediate"),
     ("PATCH", "/v1.0/security/incidents/{id}"), ("POST", "/v1.0/security/incidents/{id}/comments"),
 })

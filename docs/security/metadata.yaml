@@ -1,0 +1,25 @@
+title: "blueboard: Security Controls & Threat Model"
+running-title: "blueboard Security Controls"
+kicker: "Security Architecture"
+subtitle: "Collaborative Blue-Team SOC Board"
+note: "Trust boundaries, threat model (T1–T16), code-to-test traceability, Microsoft permissions inventory and incident response"
+version: "2.0"
+date: "21-11-2026"
+status: "Published"
+lang: en-AU
+toc-title: Contents
+control: |
+  ## Document control
+
+  | Item | Value |
+  |---|---|
+  | Document | blueboard: Security Controls & Threat Model |
+  | Version | 2.0 |
+  | Date | 21-11-2026 |
+  | Status | Published |
+  | Owner | blueboard security engineering & SOC governance |
+  | Audience | CISO, security architects, internal/external auditors, Entra administrators |
+  | Source | `docs/security/` in the `blueboard` repository; rebuilt with `./tools/docs/build-all.sh` |
+  | Related | Solution Design Document; Deployment Guide; Administrator SOPs; Walkthrough Guides |
+
+  Every control, file path, permission and test named in this document reflects the `blueboard` source at version 2.0.

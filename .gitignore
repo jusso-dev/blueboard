@@ -30,3 +30,8 @@ web/host/obj/
 
 # agent worktrees
 .claude/
+
+# python & doc build artefacts
+__pycache__/
+*.pyc
+docs/design/.build-*.html

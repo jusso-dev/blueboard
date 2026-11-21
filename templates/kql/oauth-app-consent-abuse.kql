@@ -1,0 +1,28 @@
+// =============================================================================
+// Blueboard Starter KQL Hunts — Illicit OAuth Consent & Service Principal Abuse
+// Compatible with: run_sentinel_query (Sentinel AuditLogs / AADServicePrincipalSignInLogs)
+// =============================================================================
+
+// 1. Recent OAuth app consents and delegated permission grants (Sentinel: AuditLogs)
+AuditLogs
+| where TimeGenerated > ago(14d)
+| where OperationName in ("Consent to application", "Add delegated permission grant", "Add app role assignment to service principal", "Add service principal credentials")
+| extend Actor = tostring(InitiatedBy.user.userPrincipalName), AppName = tostring(TargetResources[0].displayName), AppId = tostring(TargetResources[0].id)
+| project TimeGenerated, OperationName, Actor, AppName, AppId, Result, AdditionalDetails
+| order by TimeGenerated desc
+| take 100
+
+// 2. Service principal sign-in origins and anomalous IPs (Sentinel: AADServicePrincipalSignInLogs)
+AADServicePrincipalSignInLogs
+| where TimeGenerated > ago(14d)
+| where AppId == "<APP_ID_GUID>" or ServicePrincipalId == "<SP_OBJECT_ID_GUID>"
+| summarize SignIns = count(), DistinctIPs = dcount(IPAddress), IPs = make_set(IPAddress, 20), Resources = make_set(ResourceDisplayName, 10) by ServicePrincipalName, ResultType
+| order by SignIns desc
+
+// 3. Mail accessed via Graph/OAuth app (Sentinel: OfficeActivity)
+OfficeActivity
+| where TimeGenerated > ago(7d)
+| where Operation == "MailItemsAccessed"
+| where AppId == "<APP_ID_GUID>"
+| summarize MailEvents = count(), Mailboxes = make_set(UserId, 20), ClientIPs = make_set(ClientIP, 10) by AppId, bin(TimeGenerated, 1h)
+| order by TimeGenerated desc

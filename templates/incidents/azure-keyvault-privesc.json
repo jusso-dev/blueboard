@@ -1,0 +1,40 @@
+{
+  "_minutesAgo": 12,
+  "id": "1006",
+  "displayName": "Suspicious Azure Key Vault secret enumeration and Owner role assignment",
+  "severity": "high",
+  "status": "active",
+  "classification": null,
+  "determination": null,
+  "assignedTo": null,
+  "alerts": [
+    {
+      "id": "da1006-1",
+      "title": "Unusual Key Vault secret enumeration followed by subscription role assignment",
+      "severity": "high",
+      "category": "PrivilegeEscalation",
+      "serviceSource": "microsoftDefenderForCloud",
+      "detectionSource": "microsoftDefenderForCloud",
+      "mitreTechniques": ["T1552.005", "T1098.003"],
+      "description": "Service principal 'sp-ci-deploy' listed 42 secrets in kv-prod-core from an unfamiliar IP and attempted to assign Owner on rg-prod-core.",
+      "evidence": [
+        {
+          "@odata.type": "#microsoft.graph.security.servicePrincipalEvidence",
+          "appId": "cc33dd44-ee55-46ff-88aa-112233445566",
+          "objectId": "dd44ee55-ff66-47aa-99bb-223344556677",
+          "appDisplayName": "sp-ci-deploy"
+        },
+        {
+          "@odata.type": "#microsoft.graph.security.azureResourceEvidence",
+          "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-prod-core/providers/Microsoft.KeyVault/vaults/kv-prod-core",
+          "resourceName": "kv-prod-core",
+          "resourceType": "Microsoft.KeyVault/vaults"
+        },
+        {
+          "@odata.type": "#microsoft.graph.security.ipEvidence",
+          "ipAddress": "203.0.113.201"
+        }
+      ]
+    }
+  ]
+}

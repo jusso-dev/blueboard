@@ -1,0 +1,34 @@
+// =============================================================================
+// Blueboard Starter KQL Hunts — Identity, AiTM Token Theft & MFA Fatigue
+// Compatible with: run_sentinel_query (Sentinel SigninLogs / AuditLogs)
+//                  or run_hunting_query (Defender AADSignInEventsBeta)
+// =============================================================================
+
+// 1. Session cookie replay: same SessionId used from multiple IPs/countries (Sentinel: SigninLogs)
+SigninLogs
+| where TimeGenerated > ago(7d)
+| where UserPrincipalName =~ "user@contoso.com"
+| where ResultType == 0
+| summarize DistinctIPs = dcount(IPAddress), IPs = make_set(IPAddress, 10), Countries = make_set(tostring(LocationDetails.countryOrRegion), 5), Apps = make_set(AppDisplayName, 10) by SessionId, UserPrincipalName
+| where DistinctIPs > 1
+
+// 2. Password spray / MFA fatigue summary for an attacker IP (Sentinel: SigninLogs)
+SigninLogs
+| where TimeGenerated > ago(7d)
+| where IPAddress == "203.0.113.45"
+| summarize
+    TotalAttempts = count(),
+    Succeeded = countif(ResultType == 0),
+    Failed = countif(ResultType != 0),
+    UsersTargeted = dcount(UserPrincipalName),
+    SucceededUsers = make_set_if(UserPrincipalName, ResultType == 0, 20),
+    ErrorCodes = make_set(ResultType, 15)
+  by IPAddress, AppDisplayName
+
+// 3. New MFA methods or security info registered after a risky sign-in (Sentinel: AuditLogs)
+AuditLogs
+| where TimeGenerated > ago(7d)
+| where OperationName has_any ("User registered security info", "Register security info", "Update user", "Reset password")
+| where tostring(TargetResources) has "user@contoso.com"
+| project TimeGenerated, OperationName, InitiatedBy, Result, TargetResources
+| take 50

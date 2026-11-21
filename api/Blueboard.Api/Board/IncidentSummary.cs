@@ -55,8 +55,10 @@ public static partial class IncidentSummary
 
     public static readonly IReadOnlyDictionary<string, string> ActionStatusText = new Dictionary<string, string>
     {
-        ["pending_approval"] = "waiting for approval", ["approved"] = "approved, about to run", ["running"] = "running",
-        ["succeeded"] = "done", ["failed"] = "failed", ["denied"] = "denied", ["rejected"] = "rejected by policy",
+        ["pending_approval"] = "waiting for approval", ["approved_once"] = "waiting for second approval",
+        ["approved"] = "approved, about to run", ["running"] = "running",
+        ["succeeded"] = "done", ["failed"] = "failed", ["denied"] = "denied",
+        ["rejected"] = "rejected by policy", ["expired"] = "expired",
     };
 
     // Identifiers a verdict or finding can cite: IPv4, URLs, e-mail addresses / UPNs, hashes and domain names.

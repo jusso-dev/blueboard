@@ -1,0 +1,69 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "description": "blueboard: Sentinel analytics rule (limit-hit). Fires when an agent or principal hits board rate limits or per-incident pending action caps."
+  },
+  "parameters": {
+    "workspace": {
+      "type": "string",
+      "metadata": {
+        "description": "Log Analytics workspace with Microsoft Sentinel enabled"
+      }
+    }
+  },
+  "resources": [
+    {
+      "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+      "apiVersion": "2023-02-01",
+      "name": "[concat(parameters('workspace'), '/Microsoft.SecurityInsights/8c3e7a91-6d4b-5e22-a4f1-2b9c8d0e5f61')]",
+      "kind": "Scheduled",
+      "location": "[resourceGroup().location]",
+      "properties": {
+        "displayName": "blueboard: principal hit rate limit or pending action cap",
+        "description": "An agent or analyst hit the board's per-principal rate limit or pending-actions-per-incident cap. Could indicate a looping or prompt-injected agent trying to flood hunts or containment requests.",
+        "severity": "Medium",
+        "enabled": true,
+        "query": "BlueboardAudit_CL\n| where Event == \"limit.hit\"\n| extend Bucket = tostring(Detail.bucket)\n| summarize Hits = count(), Buckets = make_set(Bucket, 20) by Actor, ActorKind, bin(TimeGenerated, 1h)\n| where ActorKind == \"agent\" or Hits >= 3 or Buckets has_any (\"action_request\", \"pending_actions_per_incident\")",
+        "queryFrequency": "PT15M",
+        "queryPeriod": "PT1H",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "suppressionDuration": "PT1H",
+        "suppressionEnabled": false,
+        "tactics": [
+          "Impact"
+        ],
+        "techniques": [
+          "T1499"
+        ],
+        "incidentConfiguration": {
+          "createIncident": true,
+          "groupingConfiguration": {
+            "enabled": false,
+            "reopenClosedIncident": false,
+            "lookbackDuration": "PT5H",
+            "matchingMethod": "AllEntities",
+            "groupByEntities": [],
+            "groupByAlertDetails": [],
+            "groupByCustomDetails": []
+          }
+        },
+        "eventGroupingSettings": {
+          "aggregationKind": "AlertPerResult"
+        },
+        "entityMappings": [
+          {
+            "entityType": "Account",
+            "fieldMappings": [
+              {
+                "identifier": "Name",
+                "columnName": "Actor"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

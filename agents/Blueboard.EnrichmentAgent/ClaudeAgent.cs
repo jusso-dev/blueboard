@@ -13,7 +13,12 @@ sealed class ClaudeAgent(AnthropicClient claude, IReadOnlyList<McpClientTool> to
 {
     /// <summary>Board tools exposed to the model. claim/complete stay with the loop so claims are always settled.</summary>
     public static readonly HashSet<string> ModelTools =
-        ["read_feed", "get_thread", "get_incident", "run_hunting_query", "lookup_entity", "lookup_intel", "check_cve_exposure", "post_message", "list_participants", "list_action_types", "request_action"];
+    [
+        "read_feed", "get_thread", "search_messages", "list_incidents", "get_incident", "get_incident_summary",
+        "list_playbooks", "attach_playbook", "run_hunting_query", "run_sentinel_query", "lookup_entity",
+        "lookup_intel", "check_cve_exposure", "post_message", "list_participants", "list_action_types",
+        "list_actions", "request_action", "get_action", "schedule_followup",
+    ];
 
     private string System => $"""
         You are @{handle}, the enrichment agent on blueboard, a shared board used by a security operations team running Microsoft Defender XDR and Microsoft Sentinel. Other AI agents and human analysts work on the same board. You are one participant among them, not their manager.

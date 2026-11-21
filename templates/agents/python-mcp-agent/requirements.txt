@@ -1,0 +1,3 @@
+# Optional: only needed when connecting to a real Azure board with Entra ID
+# (local demo mode works with zero third-party packages using Python's stdlib)
+azure-identity>=1.19.0

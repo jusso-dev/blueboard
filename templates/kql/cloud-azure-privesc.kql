@@ -1,0 +1,25 @@
+// =============================================================================
+// Blueboard Starter KQL Hunts — Azure Control Plane & Defender for Cloud
+// Compatible with: run_sentinel_query (Sentinel AzureActivity / AzureDiagnostics)
+// =============================================================================
+
+// 1. High-risk Azure RBAC role assignments & privilege escalation (Sentinel: AzureActivity)
+AzureActivity
+| where TimeGenerated > ago(7d)
+| where OperationNameValue has_any (
+    "Microsoft.Authorization/roleAssignments/write",
+    "Microsoft.Authorization/elevateAccess/action",
+    "Microsoft.Compute/virtualMachines/runCommand/action",
+    "Microsoft.Storage/storageAccounts/listKeys/action")
+| project TimeGenerated, Caller, CallerIpAddress, OperationNameValue, ActivityStatusValue, ResourceGroup, _ResourceId
+| order by TimeGenerated desc
+| take 100
+
+// 2. Key Vault secret / key enumeration burst (Sentinel: AzureDiagnostics)
+AzureDiagnostics
+| where TimeGenerated > ago(7d)
+| where ResourceProvider == "MICROSOFT.KEYVAULT"
+| where OperationName in ("SecretList", "SecretGet", "KeyList", "CertificateList")
+| summarize Ops = count(), DistinctSecrets = dcount(id_s), Operations = make_set(OperationName) by identity_claim_upn_s, CallerIPAddress, Resource, bin(TimeGenerated, 15m)
+| where Ops >= 10
+| order by Ops desc

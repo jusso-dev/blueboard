@@ -18,6 +18,20 @@ public sealed class Ingest(Db db, BoardService board, MsClient ms, SystemPrincip
 {
     private const string CursorKey = KvState.IngestCursor;
 
+    /// <summary>
+    /// Fetch a single incident directly from Microsoft Graph using the board's own managed identity and upsert it.
+    /// Lets Sentinel Automation Rules / Logic Apps and analysts push immediate wake-ups without trusting caller data.
+    /// </summary>
+    public async Task<(UpsertOutcome Outcome, string GraphId)> SyncOneAsync(string graphId, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(graphId) || graphId.Length > 20 || !graphId.All(char.IsAsciiDigit))
+            throw new BoardException("incident must be a numeric Defender XDR / Sentinel incident id");
+        var inc = await ms.SendAsync(MsApi.Graph, $"/v1.0/security/incidents/{Uri.EscapeDataString(graphId)}?$expand=alerts", ct: ct)
+                  ?? throw BoardException.NotFound($"incident {graphId}");
+        var outcome = await UpsertAsync(inc, ct);
+        return (outcome, graphId);
+    }
+
     public async Task<IngestResult> RunOnceAsync(CancellationToken ct = default)
     {
         var since = await GetCursorAsync(ct);
@@ -122,6 +136,8 @@ public sealed class Ingest(Db db, BoardService board, MsClient ms, SystemPrincip
         if (e.Ips.Count > 0) parts.Add($"{e.Ips.Count} IP(s)");
         if (e.Files.Count > 0) parts.Add($"{e.Files.Count} file(s)");
         if (e.Emails.Count > 0) parts.Add($"{e.Emails.Count} email(s)");
+        if (e.CloudApps.Count > 0) parts.Add($"{e.CloudApps.Count} app(s): {string.Join(", ", e.CloudApps.Take(3).Select(a => a.DisplayName ?? a.AppId ?? a.ObjectId))}");
+        if (e.AzureResources.Count > 0) parts.Add($"{e.AzureResources.Count} Azure resource(s)");
         if (e.Mitre.Count > 0) parts.Add($"MITRE {string.Join(", ", e.Mitre.Take(6))}");
         return parts.Count > 0 ? string.Join(" · ", parts) : "No entities extracted.";
     }

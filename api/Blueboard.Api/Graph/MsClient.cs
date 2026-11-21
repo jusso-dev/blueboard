@@ -9,21 +9,22 @@ using Blueboard.Api.Core;
 
 namespace Blueboard.Api.Graph;
 
-public enum MsApi { Graph, Defender, SentinelTi }
+public enum MsApi { Graph, Defender, SentinelTi, LogAnalytics }
 
 /// <summary>
 /// Where Microsoft API calls go. Real mode: the exact Microsoft origins, with the managed identity's token.
 /// Demo mode (local only: DEMO_MODE and DEV_AUTH, both refused in Azure): a mock API, and no token is ever fetched or sent.
 /// </summary>
-public sealed record MsOrigins(string Graph, string Defender, bool Mocked)
+public sealed record MsOrigins(string Graph, string Defender, bool Mocked, string LogAnalytics = MsClient.LogAnalyticsOrigin)
 {
-    public static readonly MsOrigins Real = new(MsClient.GraphOrigin, MsClient.DefenderOrigin, false);
+    public static readonly MsOrigins Real = new(MsClient.GraphOrigin, MsClient.DefenderOrigin, false, MsClient.LogAnalyticsOrigin);
 
     /// <summary>The base-URL override is honoured only in demo mode; otherwise the real origins, always.</summary>
     public static MsOrigins For(Settings s)
     {
         if (!(s.DemoMode && s.DevAuth)) return Real;
-        return new MsOrigins(Origin(s.GraphBaseUrl, "GRAPH_BASE_URL"), Origin(s.DefenderBaseUrl, "DEFENDER_BASE_URL"), true);
+        var graph = Origin(s.GraphBaseUrl, "GRAPH_BASE_URL");
+        return new MsOrigins(graph, Origin(s.DefenderBaseUrl, "DEFENDER_BASE_URL"), true, graph);
     }
 
     private static string Origin(string? url, string name)
@@ -46,6 +47,8 @@ public sealed partial class MsClient(HttpClient http, TokenCredential? credentia
     public const string DefenderOrigin = "https://api.security.microsoft.com";
     /// <summary>Microsoft Sentinel threat intelligence upload API (publish_ti_indicator). Token audience: Azure Resource Manager.</summary>
     public const string SentinelTiOrigin = "https://api.ti.sentinel.azure.com";
+    /// <summary>Azure Monitor / Microsoft Sentinel Log Analytics query API (run_sentinel_query).</summary>
+    public const string LogAnalyticsOrigin = "https://api.loganalytics.io";
     private readonly MsOrigins _origins = origins ?? MsOrigins.Real;
     private readonly Lazy<TokenCredential> _cred = new(() => credential ?? new DefaultAzureCredential());
 
@@ -55,6 +58,7 @@ public sealed partial class MsClient(HttpClient http, TokenCredential? credentia
     {
         MsApi.Graph => "https://graph.microsoft.com/.default",
         MsApi.SentinelTi => "https://management.azure.com/.default",
+        MsApi.LogAnalytics => "https://api.loganalytics.io/.default",
         _ => "https://api.securitycenter.microsoft.com/.default",
     };
 
@@ -68,7 +72,13 @@ public sealed partial class MsClient(HttpClient http, TokenCredential? credentia
     public static Uri BuildUri(MsOrigins origins, MsApi api, string pathOrUrl)
     {
         // Sentinel TI is never overridden, not even in demo mode: it is a write path and has no mock.
-        var origin = api switch { MsApi.Graph => origins.Graph, MsApi.SentinelTi => SentinelTiOrigin, _ => origins.Defender };
+        var origin = api switch
+        {
+            MsApi.Graph => origins.Graph,
+            MsApi.SentinelTi => SentinelTiOrigin,
+            MsApi.LogAnalytics => origins.LogAnalytics,
+            _ => origins.Defender,
+        };
         var absolute = pathOrUrl.StartsWith("https://", StringComparison.Ordinal) || pathOrUrl.StartsWith("http://", StringComparison.Ordinal);
         var uri = new Uri(absolute ? pathOrUrl : origin + pathOrUrl);
         if (!string.Equals(uri.GetLeftPart(UriPartial.Authority), origin, StringComparison.OrdinalIgnoreCase))

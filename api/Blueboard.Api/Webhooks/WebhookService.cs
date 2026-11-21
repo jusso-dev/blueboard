@@ -93,6 +93,37 @@ public sealed class WebhookService
         return new { unsubscribed = id };
     }
 
+    /// <summary>Caller's own webhook subscriptions and delivery health. Never the secret.</summary>
+    public async Task<IReadOnlyList<Subscription>> ListForPrincipalAsync(Principal p, CancellationToken ct = default)
+    {
+        p.Require(Roles.Poster);
+        await using var cmd = _db.Command("""
+            select id, url, events, channel, enabled, failures, created_at
+            from agent_subscriptions where principal_id = @p order by created_at desc
+            """).With("p", p.Id);
+        var list = new List<Subscription>();
+        await using var r = await cmd.ExecuteReaderAsync(ct);
+        while (await r.ReadAsync(ct))
+            list.Add(new Subscription(r.GetGuid(0), r.GetString(1), r.GetFieldValue<string[]>(2), r.Get<string>("channel"),
+                r.GetBoolean(4), r.GetInt32(5), r.GetFieldValue<DateTimeOffset>(6)));
+        return list;
+    }
+
+    /// <summary>Caller's pending scheduled follow-ups.</summary>
+    public async Task<IReadOnlyList<object>> ListFollowupsAsync(Principal p, CancellationToken ct = default)
+    {
+        p.Require(Roles.Poster);
+        await using var cmd = _db.Command("""
+            select id, message_id, note, due_at, created_at
+            from followups where principal_id = @p and fired_at is null order by due_at asc limit 100
+            """).With("p", p.Id);
+        var list = new List<object>();
+        await using var r = await cmd.ExecuteReaderAsync(ct);
+        while (await r.ReadAsync(ct))
+            list.Add(new { id = r.GetGuid(0), message_id = r.GetGuid(1), note = r.GetString(2), due_at = r.GetFieldValue<DateTimeOffset>(3), created_at = r.GetFieldValue<DateTimeOffset>(4) });
+        return list;
+    }
+
     /// <summary>Admin view: every subscription with its owner and delivery health. Never the secret.</summary>
     public async Task<IReadOnlyList<object>> ListAllAsync(CancellationToken ct = default)
     {
@@ -224,7 +255,7 @@ public sealed class WebhookService
                   ('thread.reply',     m.parent_id is not null and exists (
                                          select 1 from messages t where (t.id = m.parent_id or t.parent_id = m.parent_id)
                                          and t.author_id = s.principal_id and t.seq < m.seq)),
-                  ('action.decided',   m.author_id = @board and (m.type = 'action_result' or (m.type = 'status' and m.payload->>'state' in ('action_approved', 'action_denied')))
+                  ('action.decided',   m.author_id = @board and (m.type = 'action_result' or (m.type = 'status' and m.payload->>'state' in ('action_approved', 'action_approved_once', 'action_denied', 'action_expired', 'action_rejected', 'action_held')))
                                        and exists (select 1 from actions a where a.id::text = m.payload->>'action_id' and a.requested_by = s.principal_id))
                 ) e(event, hit)
                 where m.seq > @after and m.seq <= @upto and e.hit and e.event = any(s.events) and m.author_id <> s.principal_id

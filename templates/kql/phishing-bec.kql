@@ -1,0 +1,36 @@
+// =============================================================================
+// Blueboard Starter KQL Hunts — Phishing & Business Email Compromise (BEC)
+// Compatible with: run_hunting_query (Defender XDR) & run_sentinel_query (Sentinel)
+// Replace placeholder values before running; keep time windows narrow.
+// =============================================================================
+
+// 1. Scope every recipient of a phishing campaign (Defender XDR: EmailEvents)
+EmailEvents
+| where Timestamp > ago(7d)
+| where SenderFromDomain =~ "evil-payroll.example"
+    or Subject has "confirm your payroll details"
+| project Timestamp, NetworkMessageId, RecipientEmailAddress, SenderFromAddress, Subject, DeliveryAction, DeliveryLocation, ThreatTypes
+| take 100
+
+// 2. Who clicked a malicious URL and was the click allowed? (Defender XDR: UrlClickEvents)
+UrlClickEvents
+| where Timestamp > ago(7d)
+| where Url has "evil-payroll.example"
+| project Timestamp, AccountUpn, Url, ActionType, IsClickedThrough, IPAddress, NetworkMessageId
+| order by Timestamp desc
+| take 100
+
+// 3. Detect suspicious inbox forwarding / hiding rules after compromise (Defender XDR: CloudAppEvents)
+CloudAppEvents
+| where Timestamp > ago(7d)
+| where AccountObjectId == "<AAD_USER_OBJECT_ID>"
+| where ActionType in ("New-InboxRule", "Set-InboxRule", "UpdateInboxRules", "Set-Mailbox")
+| project Timestamp, AccountDisplayName, ActionType, IPAddress, CountryCode, UserAgent, RawEventData
+| take 50
+
+// 4. Outbound emails sent by a suspected compromised mailbox (Defender XDR: EmailEvents)
+EmailEvents
+| where Timestamp > ago(72h)
+| where SenderFromAddress =~ "user@contoso.com" and EmailDirection == "Outbound"
+| summarize Recipients = dcount(RecipientEmailAddress), SampleSubjects = make_set(Subject, 10) by bin(Timestamp, 1h), SenderFromAddress
+| order by Timestamp desc

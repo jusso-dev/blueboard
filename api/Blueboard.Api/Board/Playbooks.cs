@@ -9,8 +9,8 @@ using YamlDotNet.Serialization.NamingConventions;
 namespace Blueboard.Api.Board;
 
 public sealed record PlaybookStep(string Id, string Stage, string Title, string? Detail, string[] After, string? SuggestedAction);
-public sealed record PlaybookMatch(string[] Categories, string[] Titles, string[] Techniques);
-public sealed record Playbook(string Id, string Title, string File, PlaybookMatch Match, IReadOnlyList<PlaybookStep> Steps, string Notes);
+public sealed record PlaybookMatch(string[] Categories, string[] Titles, string[] Techniques, string[]? ServiceSources = null, string[]? Severities = null);
+public sealed record Playbook(string Id, string Title, string File, PlaybookMatch Match, IReadOnlyList<PlaybookStep> Steps, string Notes, int Priority = 0);
 public sealed record PlaybookProblem(string File, string Error);
 
 /// <summary>The playbooks loaded at startup, plus the files that were skipped and why.</summary>
@@ -20,8 +20,9 @@ public sealed record PlaybookSet(IReadOnlyList<Playbook> All, IReadOnlyList<Play
 
     public Playbook? Get(string id) => All.FirstOrDefault(p => p.Id == id);
 
-    /// <summary>The first playbook (in file name order) that matches the incident, or null.</summary>
-    public Playbook? Match(JsonElement incident) => All.FirstOrDefault(p => Playbooks.Matches(p.Match, incident));
+    /// <summary>The highest-priority (ties broken by file name order) playbook that matches the incident, or null.</summary>
+    public Playbook? Match(JsonElement incident) =>
+        All.OrderByDescending(p => p.Priority).FirstOrDefault(p => Playbooks.Matches(p.Match, incident));
 }
 
 /// <summary>
@@ -81,19 +82,26 @@ public static partial class Playbooks
         if (error is not null) return (null, error);
 
         var steps = fm.Steps!.Select(s => new PlaybookStep(s.Id!, s.Stage!, s.Title!.Trim(), s.Detail?.Trim(), [.. s.After ?? []], s.SuggestedAction)).ToList();
-        var match = new PlaybookMatch([.. fm.Match!.Categories ?? []], [.. fm.Match.Titles ?? []], [.. fm.Match.Techniques ?? []]);
-        return (new Playbook(fm.Id!, fm.Title!.Trim(), file, match, steps, notes), null);
+        var match = new PlaybookMatch(
+            [.. fm.Match!.Categories ?? []],
+            [.. fm.Match.Titles ?? []],
+            [.. fm.Match.Techniques ?? []],
+            [.. fm.Match.ServiceSources ?? []],
+            [.. fm.Match.Severities ?? []]);
+        return (new Playbook(fm.Id!, fm.Title!.Trim(), file, match, steps, notes, fm.Priority ?? 0), null);
     }
 
     private static string? Validate(FrontMatter fm, string notes)
     {
         if (fm.Id is null || !Slug().IsMatch(fm.Id)) return "id must be a lower-case slug (a-z, 0-9, -)";
         if (fm.Title is not { Length: > 0 and <= 120 }) return "title is required (up to 120 characters)";
+        if (fm.Priority is < -100 or > 1000) return "priority must be between -100 and 1000";
         if (notes.Length > 4000) return "notes after the front matter must be under 4000 characters";
         var m = fm.Match;
-        if (m is null || (m.Categories ?? []).Count + (m.Titles ?? []).Count + (m.Techniques ?? []).Count == 0)
-            return "match needs at least one of categories, titles or techniques";
-        if ((m.Categories ?? []).Concat(m.Titles ?? []).Any(s => s is not { Length: > 0 and <= 200 })) return "match entries must be 1-200 characters";
+        if (m is null || (m.Categories ?? []).Count + (m.Titles ?? []).Count + (m.Techniques ?? []).Count + (m.ServiceSources ?? []).Count == 0)
+            return "match needs at least one of categories, titles, techniques or service_sources";
+        if ((m.Categories ?? []).Concat(m.Titles ?? []).Concat(m.ServiceSources ?? []).Concat(m.Severities ?? []).Any(s => s is not { Length: > 0 and <= 200 }))
+            return "match entries must be 1-200 characters";
         if ((m.Techniques ?? []).FirstOrDefault(t => !Technique().IsMatch(t ?? "")) is { } bad) return $"invalid MITRE technique '{bad}' (use T1234 or T1234.001)";
 
         if (fm.Steps is not { Count: > 0 and <= MaxSteps }) return $"steps must list 1-{MaxSteps} steps";
@@ -139,19 +147,27 @@ public static partial class Playbooks
         var titles = new List<string>();
         var categories = new List<string>();
         var techniques = new List<string>();
+        var sources = new List<string>();
+        var severities = new List<string>();
         if (Str(incident, "displayName") is { } name) titles.Add(name);
+        if (Str(incident, "severity") is { } incSev) severities.Add(incSev);
         if (incident.TryGetProperty("alerts", out var alerts) && alerts.ValueKind == JsonValueKind.Array)
             foreach (var a in alerts.EnumerateArray())
             {
                 if (Str(a, "title") is { } t) titles.Add(t);
                 if (Str(a, "category") is { } c) categories.Add(c);
+                if (Str(a, "serviceSource") is { } src) sources.Add(src);
+                if (Str(a, "severity") is { } aSev) severities.Add(aSev);
                 if (a.TryGetProperty("mitreTechniques", out var mt) && mt.ValueKind == JsonValueKind.Array)
                     techniques.AddRange(mt.EnumerateArray().Select(x => x.ValueKind == JsonValueKind.String ? x.GetString() : null).OfType<string>());
             }
+        if (match.Severities is { Length: > 0 } reqSev && !reqSev.Any(s => severities.Contains(s, StringComparer.OrdinalIgnoreCase)))
+            return false;
         return match.Categories.Any(c => categories.Contains(c, StringComparer.OrdinalIgnoreCase))
                || match.Titles.Any(t => titles.Any(x => x.Contains(t, StringComparison.OrdinalIgnoreCase)))
                || match.Techniques.Any(t => techniques.Any(x =>
-                   x.Equals(t, StringComparison.OrdinalIgnoreCase) || x.StartsWith(t + ".", StringComparison.OrdinalIgnoreCase)));
+                   x.Equals(t, StringComparison.OrdinalIgnoreCase) || x.StartsWith(t + ".", StringComparison.OrdinalIgnoreCase)))
+               || (match.ServiceSources is { Length: > 0 } reqSrc && reqSrc.Any(s => sources.Contains(s, StringComparer.OrdinalIgnoreCase)));
     }
 
     private static string? Str(JsonElement e, string k) =>
@@ -162,6 +178,7 @@ public static partial class Playbooks
     {
         public string? Id { get; set; }
         public string? Title { get; set; }
+        public int? Priority { get; set; }
         public MatchDoc? Match { get; set; }
         public List<StepDoc>? Steps { get; set; }
     }
@@ -171,6 +188,8 @@ public static partial class Playbooks
         public List<string>? Categories { get; set; }
         public List<string>? Titles { get; set; }
         public List<string>? Techniques { get; set; }
+        public List<string>? ServiceSources { get; set; }
+        public List<string>? Severities { get; set; }
     }
 
     private sealed class StepDoc

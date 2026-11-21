@@ -89,15 +89,45 @@ public class PlaybookTests
     {
         var set = Playbooks.Load(Path.Combine(AppContext.BaseDirectory, "playbooks"));
         Assert.Empty(set.Problems);
-        Assert.Equal(["endpoint-powershell", "phishing", "risky-sign-in"], set.All.Select(p => p.Id));
-        Assert.All(set.All, p => Assert.InRange(p.Steps.Count, 6, 8));
+        Assert.Equal(
+        [
+            "azure-privilege-escalation",
+            "bec-aitm-token-theft",
+            "data-exfiltration-cloud",
+            "endpoint-powershell",
+            "malware-infostealer",
+            "oauth-app-consent-abuse",
+            "password-spray-mfa-fatigue",
+            "phishing",
+            "ransomware-lateral-movement",
+            "risky-sign-in",
+        ], set.All.Select(p => p.Id));
+        Assert.All(set.All, p => Assert.InRange(p.Steps.Count, 6, 10));
     }
 
     private static JsonElement Incident(string title, string? category = null, params string[] techniques) => JsonSerializer.SerializeToElement(new
     {
         displayName = "Incident",
-        alerts = new[] { new { title, category, mitreTechniques = techniques } },
+        severity = "high",
+        alerts = new[] { new { title, category, mitreTechniques = techniques, serviceSource = "microsoftDefenderForEndpoint" } },
     });
+
+    [Fact]
+    public void Matches_service_sources_severities_and_priority()
+    {
+        var m = new PlaybookMatch([], [], [], ["microsoftDefenderForCloud"], ["high"]);
+        var cloudHigh = JsonSerializer.SerializeToElement(new { displayName = "X", severity = "high", alerts = new[] { new { title = "A", serviceSource = "microsoftDefenderForCloud" } } });
+        var cloudLow = JsonSerializer.SerializeToElement(new { displayName = "X", severity = "low", alerts = new[] { new { title = "A", serviceSource = "microsoftDefenderForCloud" } } });
+        Assert.True(Playbooks.Matches(m, cloudHigh));
+        Assert.False(Playbooks.Matches(m, cloudLow));
+
+        var set = Playbooks.Load(Path.Combine(AppContext.BaseDirectory, "playbooks"));
+        // Higher-priority ransomware playbook wins over generic PowerShell when LSASS credential theft is also present.
+        Assert.Equal("ransomware-lateral-movement", set.Match(Incident("PowerShell + LSASS credential dump", "Execution", "T1059.001", "T1003.001"))?.Id);
+        Assert.Equal("bec-aitm-token-theft", set.Match(Incident("Suspicious inbox forwarding rule", "Persistence", "T1564.008"))?.Id);
+        Assert.Equal("oauth-app-consent-abuse", set.Match(Incident("Illicit OAuth consent grant", "CredentialAccess", "T1528"))?.Id);
+        Assert.Equal("azure-privilege-escalation", set.Match(cloudHigh)?.Id);
+    }
 
     [Fact]
     public void Matches_titles_categories_and_techniques()

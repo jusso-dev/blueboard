@@ -18,7 +18,7 @@ namespace Blueboard.Api.Http;
 /// Inputs are the contract records in Blueboard.Contracts (the same ones the MCP tools use), and each route's
 /// [RouteDoc] feeds /api/openapi.json.
 /// </summary>
-public sealed class BoardApi(Endpoint ep, BoardService board, Search search, Reporting reporting, Broker broker, Enrichment enrich, WebhookService hooks, Db db, Policy policy,
+public sealed class BoardApi(Endpoint ep, BoardService board, Search search, Reporting reporting, Broker broker, Enrichment enrich, Ingest ingest, WebhookService hooks, Db db, Policy policy,
     IncidentQueries incidents, PlaybookRunner playbookRunner, PlaybookSet playbooks, IntelService intel)
 {
     /// <summary>The web app sends ?type=a&amp;type=b; the contract field is types.</summary>
@@ -104,9 +104,31 @@ public sealed class BoardApi(Endpoint ep, BoardService board, Search search, Rep
     public Task<IActionResult> PlaybookList([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "playbooks")] HttpRequest req) =>
         ep.RunAsync(req, _ => Task.FromResult<object?>(new
         {
-            playbooks = playbooks.All.Select(p => new { p.Id, p.Title, p.File, p.Match, steps = p.Steps.Count }),
+            playbooks = playbooks.All.Select(p => new { p.Id, p.Title, p.File, p.Priority, p.Match, steps = p.Steps.Count }),
             problems = playbooks.Problems,
         }));
+
+    /// <summary>Sync one Defender/Sentinel incident directly from Microsoft Graph by its numeric id (for Sentinel automation rules or on-demand refresh).</summary>
+    [Function("incident-sync")]
+    [RouteDoc("Fetch a Defender/Sentinel incident from Microsoft Graph by numeric id and upsert it")]
+    public Task<IActionResult> IncidentSync([HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "incidents/{id}/sync")] HttpRequest req, string id) =>
+        ep.RunAsync(req, async _ =>
+        {
+            var (outcome, graphId) = await ingest.SyncOneAsync(id, Ct(req));
+            return new { graph_id = graphId, outcome = outcome.ToString().ToLowerInvariant() };
+        });
+
+    public sealed record PlaybookAttachBody(string PlaybookId);
+
+    /// <summary>Attach a playbook checklist to an incident that doesn't have one yet.</summary>
+    [Function("incident-playbook-attach")]
+    [RouteDoc("Attach a playbook checklist to an incident", Body = typeof(PlaybookAttachBody))]
+    public Task<IActionResult> AttachPlaybook([HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "incidents/{id}/playbook")] HttpRequest req, string id) =>
+        ep.RunAsync(req, async me =>
+        {
+            var b = await Endpoint.BodyAsync<PlaybookAttachBody>(req);
+            return await playbookRunner.AttachByIdAsync(me, id, b.PlaybookId, Ct(req));
+        });
 
     // ── threat intel (/intel pages) ────────────────────────────────────────────────────────────
     public sealed record WatchBody(string? Kind, string? Value, bool? Enabled);
@@ -165,7 +187,7 @@ public sealed class BoardApi(Endpoint ep, BoardService board, Search search, Rep
         ep.RunAsync(req, async _ =>
         {
             var q = Endpoint.Query<ActionsQuery>(req);
-            return q.Catalog ? Broker.CatalogInfo(policy) : await broker.ListAsync(q.Status, Ct(req));
+            return q.Catalog ? Broker.CatalogInfo(policy) : await broker.ListAsync(q.Status, q.Incident, Ct(req));
         });
 
     [Function("actions-request")]

@@ -60,9 +60,13 @@ internal static class A1
         var ep = new Blueboard.Api.Http.Endpoint(auth, NullLogger<Blueboard.Api.Http.Endpoint>.Instance);
         var hooks = new Blueboard.Api.Webhooks.WebhookService(db, audit, board, sys, t.Settings);
         var books = PlaybookSet.Empty;
-        var api = new BoardApi(ep, board, new Search(db, board), new Reporting(db), broker, enrich, hooks, db, policy,
-            new IncidentQueries(db, board, books), new PlaybookRunner(db, board, sys, books), books, Intel(db, board, ms, enrich, sys, t.Settings));
-        return new App { Db = db, Policy = policy, Limiter = limiter, Board = board, Broker = broker, Enrich = enrich, Auth = auth, Api = api, Hooks = hooks, Intel = Intel(db, board, ms, enrich, sys, t.Settings), Playbooks = new PlaybookRunner(db, board, sys, books), Microsoft = fake };
+        var runner = new PlaybookRunner(db, board, sys, books);
+        var ingest = new Ingest(db, board, ms, sys, t.Settings, runner);
+        var search = new Search(db, board);
+        var queries = new IncidentQueries(db, board, books);
+        var intel = Intel(db, board, ms, enrich, sys, t.Settings);
+        var api = new BoardApi(ep, board, search, new Reporting(db), broker, enrich, ingest, hooks, db, policy, queries, runner, books, intel);
+        return new App { Db = db, Policy = policy, Limiter = limiter, Board = board, Broker = broker, Enrich = enrich, Auth = auth, Api = api, Hooks = hooks, Intel = intel, Playbooks = runner, Microsoft = fake };
     }
 
     /// <summary>Threat intel with every source off (the default), so these tests never fetch anything.</summary>

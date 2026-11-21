@@ -26,6 +26,27 @@ public sealed class WorkItem(BoardConnection board, Message message, string me, 
     public Task<Message> ReplyAsync(string body, string type = "chat", object? payload = null, CancellationToken ct = default) =>
         Board.PostAsync(new PostInput(Message.Channel, body, type, payload is null ? null : System.Text.Json.JsonSerializer.SerializeToElement(payload, BoardJson.Options),
             ThreadId, Message.IncidentId?.ToString()), ct);
+
+    /// <summary>Post a structured finding in this thread.</summary>
+    public Task<Message> PostFindingAsync(string body, double confidence, object? entities = null, object? evidence = null, CancellationToken ct = default) =>
+        ReplyAsync(body, "finding", new { confidence, entities, evidence }, ct);
+
+    /// <summary>Post structured IOCs in this thread (each entry: kind, value, verdict, optional source).</summary>
+    public Task<Message> PostIocAsync(string body, IEnumerable<object> indicators, CancellationToken ct = default) =>
+        ReplyAsync(body, "ioc", new { indicators }, ct);
+
+    /// <summary>Post a structured verdict in this thread (truePositive | falsePositive | informationalExpectedActivity | unknown).</summary>
+    public Task<Message> PostVerdictAsync(string body, string classification, double confidence, string? determination = null, CancellationToken ct = default) =>
+        ReplyAsync(body, "verdict", new { classification, confidence, determination }, ct);
+
+    /// <summary>Hand off a claimed item to another participant by posting a question @mentioning them and releasing the claim.</summary>
+    public async Task<Message> HandoffAsync(string targetHandle, string question, CancellationToken ct = default)
+    {
+        var handle = targetHandle.TrimStart('@');
+        var posted = await ReplyAsync($"@{handle} {question}", "question", ct: ct);
+        ReleaseWhenDone();
+        return posted;
+    }
 }
 
 public delegate Task AgentHandler(WorkItem item, CancellationToken ct);

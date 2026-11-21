@@ -1,0 +1,39 @@
+// =============================================================================
+// Blueboard Starter KQL Hunts — Endpoint PowerShell, LSASS & Lateral Movement
+// Compatible with: run_hunting_query (Defender XDR)
+// =============================================================================
+
+// 1. Process tree around suspicious PowerShell on a specific device
+DeviceProcessEvents
+| where Timestamp > ago(48h)
+| where DeviceId == "<MDE_MACHINE_ID>"
+| where FileName in~ ("powershell.exe", "pwsh.exe", "cmd.exe", "mshta.exe", "wscript.exe", "rundll32.exe")
+| project Timestamp, DeviceName, AccountName, InitiatingProcessFileName, FileName, ProcessCommandLine, SHA256
+| order by Timestamp asc
+| take 100
+
+// 2. Fleet-wide hunt for a suspicious file hash or command-line fragment
+DeviceProcessEvents
+| where Timestamp > ago(14d)
+| where SHA256 =~ "<SHA256>" or ProcessCommandLine has "<IOC_DOMAIN_OR_FLAG>"
+| summarize FirstSeen = min(Timestamp), LastSeen = max(Timestamp), Count = count(), Accounts = make_set(AccountName, 10) by DeviceId, DeviceName, FileName
+| take 100
+
+// 3. Lateral movement network connections (SMB 445, RDP 3389, WinRM 5985/5986, RPC 135) from a suspect host
+DeviceNetworkEvents
+| where Timestamp > ago(48h)
+| where DeviceId == "<MDE_MACHINE_ID>"
+| where RemotePort in (445, 3389, 5985, 5986, 135)
+| where ActionType == "ConnectionSuccess"
+| summarize Connections = count(), Ports = make_set(RemotePort) by RemoteIP, InitiatingProcessFileName, InitiatingProcessAccountName
+| order by Connections desc
+| take 50
+
+// 4. Persistence hunt: new scheduled tasks, services and run keys on a host
+union DeviceProcessEvents, DeviceRegistryEvents
+| where Timestamp > ago(48h)
+| where DeviceId == "<MDE_MACHINE_ID>"
+| where (FileName in~ ("schtasks.exe", "sc.exe", "reg.exe") and ProcessCommandLine has_any ("/create", "create", "Run"))
+    or RegistryKey has_any (@"\CurrentVersion\Run", @"\CurrentVersion\RunOnce")
+| project Timestamp, ActionType, FileName, ProcessCommandLine, RegistryKey, RegistryValueName, RegistryValueData
+| take 100

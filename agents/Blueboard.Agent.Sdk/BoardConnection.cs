@@ -103,19 +103,31 @@ public sealed class BoardConnection : IAsyncDisposable
     public Task<Participant[]> ListParticipantsAsync(CancellationToken ct = default) => Call<Participant[]>(Tools.ListParticipants, null, ct);
     public Task<FeedResult> ReadFeedAsync(FeedQuery query, CancellationToken ct = default) => Call<FeedResult>(Tools.ReadFeed, query, ct);
     public Task<ThreadResult> GetThreadAsync(Guid messageId, CancellationToken ct = default) => Call<ThreadResult>(Tools.GetThread, new ThreadQuery(messageId), ct);
+    public Task<JsonElement> SearchMessagesAsync(SearchQuery query, CancellationToken ct = default) => Call<JsonElement>(Tools.SearchMessages, query, ct);
     public Task<Message> PostAsync(PostInput input, CancellationToken ct = default) => Call<Message>(Tools.PostMessage, input, ct);
     public Task<Message> ClaimAsync(Guid messageId, int? leaseSeconds = null, CancellationToken ct = default) => Call<Message>(Tools.ClaimMessage, new ClaimInput(messageId, leaseSeconds), ct);
     public Task<Message> RenewClaimAsync(Guid messageId, int? leaseSeconds = null, CancellationToken ct = default) => Call<Message>(Tools.RenewClaim, new ClaimInput(messageId, leaseSeconds), ct);
     public Task<Message> CompleteClaimAsync(Guid messageId, string outcome, CancellationToken ct = default) => Call<Message>(Tools.CompleteClaim, new CompleteClaimInput(messageId, outcome), ct);
+    public Task<JsonElement> ListIncidentsAsync(IncidentsQuery? query = null, CancellationToken ct = default) => Call<JsonElement>(Tools.ListIncidents, query ?? new IncidentsQuery(), ct);
     public Task<JsonElement> GetIncidentAsync(string incident, CancellationToken ct = default) => Call<JsonElement>(Tools.GetIncident, new IncidentQuery(incident), ct);
+    public Task<JsonElement> GetIncidentSummaryAsync(string incident, CancellationToken ct = default) => Call<JsonElement>(Tools.GetIncidentSummary, new IncidentQuery(incident), ct);
+    public Task<JsonElement> SyncIncidentAsync(string incident, CancellationToken ct = default) => Call<JsonElement>(Tools.SyncIncident, new IncidentQuery(incident), ct);
+    public Task<JsonElement> ListPlaybooksAsync(CancellationToken ct = default) => Call<JsonElement>(Tools.ListPlaybooks, null, ct);
+    public Task<JsonElement> AttachPlaybookAsync(string incident, string playbookId, CancellationToken ct = default) => Call<JsonElement>(Tools.AttachPlaybook, new AttachPlaybookInput(incident, playbookId), ct);
     public Task<JsonElement> RunHuntingQueryAsync(string query, string? timespan = null, CancellationToken ct = default) => Call<JsonElement>(Tools.RunHuntingQuery, new HuntInput(query, timespan), ct);
+    public Task<JsonElement> RunSentinelQueryAsync(string query, string? timespan = null, CancellationToken ct = default) => Call<JsonElement>(Tools.RunSentinelQuery, new SentinelQueryInput(query, timespan), ct);
     public Task<JsonElement> LookupEntityAsync(string kind, string value, CancellationToken ct = default) => Call<JsonElement>(Tools.LookupEntity, new LookupInput(kind, value), ct);
+    public Task<JsonElement> LookupIntelAsync(string key, CancellationToken ct = default) => Call<JsonElement>(Tools.LookupIntel, new IntelLookupInput(key), ct);
+    public Task<JsonElement> CheckCveExposureAsync(string[] cveIds, CancellationToken ct = default) => Call<JsonElement>(Tools.CheckCveExposure, new ExposureInput(cveIds), ct);
     public Task<JsonElement> ListActionTypesAsync(CancellationToken ct = default) => Call<JsonElement>(Tools.ListActionTypes, null, ct);
+    public Task<ActionRow[]> ListActionsAsync(ActionsQuery? query = null, CancellationToken ct = default) => Call<ActionRow[]>(Tools.ListActions, query ?? new ActionsQuery(), ct);
     public Task<ActionRow> RequestActionAsync(ActionRequest request, CancellationToken ct = default) => Call<ActionRow>(Tools.RequestAction, request, ct);
     public Task<ActionRow> GetActionAsync(Guid actionId, CancellationToken ct = default) => Call<ActionRow>(Tools.GetAction, new ActionQuery(actionId), ct);
     public Task<Subscription> SubscribeAsync(SubscribeInput input, CancellationToken ct = default) => Call<Subscription>(Tools.Subscribe, input, ct);
     public Task<JsonElement> UnsubscribeAsync(Guid subscriptionId, CancellationToken ct = default) => Call<JsonElement>(Tools.Unsubscribe, new UnsubscribeInput(subscriptionId), ct);
+    public Task<Subscription[]> ListSubscriptionsAsync(CancellationToken ct = default) => Call<Subscription[]>(Tools.ListSubscriptions, null, ct);
     public Task<Followup> ScheduleFollowupAsync(Guid messageId, string note, int inMinutes, CancellationToken ct = default) => Call<Followup>(Tools.ScheduleFollowup, new FollowupInput(messageId, note, inMinutes), ct);
+    public Task<JsonElement> ListFollowupsAsync(CancellationToken ct = default) => Call<JsonElement>(Tools.ListFollowups, null, ct);
 
     public ValueTask DisposeAsync() => _transport.DisposeAsync();
 

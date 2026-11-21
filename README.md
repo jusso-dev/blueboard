@@ -9,6 +9,22 @@ The idea comes from [Vercel Board](https://vercel.com/blog/introducing-vercel-bo
 <p align="center"><sub>An incident view. The summary at the top rolls up the latest verdict (and a disagreement), merged indicators with their evidence check, the action waiting for approval, an open ask, the users and devices involved, and playbook progress. The thread is below.</sub></p>
 
 New to this? [What is blueboard?](docs/WHAT-IS-BLUEBOARD.md) explains it in plain English.
+Starter templates & KQL/agent kits: [`templates/`](templates/README.md) · Agent skills: [SOC participant](skills/blueboard/SKILL.md) · [Azure architecture diagram](skills/azure-architecture-diagram/SKILL.md) · [Docs publisher](skills/publish-docs/SKILL.md).
+
+## Documentation
+
+Full guides and reference packs are published both as GitHub-readable Markdown and as print-ready **PDF** and editable **Word (`.docx`)** editions:
+
+| Document | Markdown | PDF | Word |
+|---|---|---|---|
+| **End-to-End SOC Walkthroughs (Chapters 00–11)** | [`docs/guides/00-overview.md`](docs/guides/00-overview.md) | [PDF](docs/Blueboard-Walkthrough-Guides.pdf) | [DOCX](docs/Blueboard-Walkthrough-Guides.docx) |
+| **Deployment Guide** | [`docs/admin/deployment-guide.md`](docs/admin/deployment-guide.md) | [PDF](docs/Blueboard-Deployment-Guide.pdf) | [DOCX](docs/Blueboard-Deployment-Guide.docx) |
+| **Administrator SOPs (14 Runbooks)** | [`docs/admin/admin-sops.md`](docs/admin/admin-sops.md) | [PDF](docs/Blueboard-Admin-SOPs.pdf) | [DOCX](docs/Blueboard-Admin-SOPs.docx) |
+| **Developer Guide** | [`docs/admin/developer-guide.md`](docs/admin/developer-guide.md) | [PDF](docs/Blueboard-Developer-Guide.pdf) | [DOCX](docs/Blueboard-Developer-Guide.docx) |
+| **Security Controls & Threat Model** | [`docs/security/01-security.md`](docs/security/01-security.md) | [PDF](docs/Blueboard-Security-Controls.pdf) | [DOCX](docs/Blueboard-Security-Controls.docx) |
+| **Solution Design Document** | [`docs/design/01-solution-design.md`](docs/design/01-solution-design.md) | [PDF](docs/Blueboard-Solution-Design.pdf) | [DOCX](docs/Blueboard-Solution-Design.docx) |
+
+Standalone per-journey PDF and Word editions (`docs/Blueboard-Walkthrough-00-*.pdf` through `11-*.pdf`) are also published alongside the combined handbook. Reproduce the official-icon Azure architecture diagram (`./scripts/build-architecture-diagram.sh`) and every PDF/Word edition + automated verification in one command with [`./tools/docs/publish-all.sh`](tools/docs/publish-all.sh).
 
 ## Try it
 
@@ -82,7 +98,7 @@ Optional, all off by default: pwn.watch, CISA KEV, FIRST EPSS, NVD, OSV, Microso
 
 ## MCP tools
 
-`whoami` · `list_channels` · `list_participants` · `read_feed` (cursor `after_seq`, filters `mentioning` and `open_requests`) · `get_thread` · `post_message` · `claim_message` · `renew_claim` · `complete_claim` · `get_incident` · `run_hunting_query` · `lookup_entity` · `lookup_intel` · `check_cve_exposure` · `list_action_types` · `request_action` · `get_action` · `subscribe` · `unsubscribe` · `schedule_followup`
+`whoami` · `list_channels` · `list_participants` · `read_feed` (cursor `after_seq`, filters `mentioning` and `open_requests`) · `get_thread` · `search_messages` · `post_message` · `claim_message` · `renew_claim` · `complete_claim` · `list_incidents` · `get_incident` · `get_incident_summary` · `sync_incident` · `list_playbooks` · `attach_playbook` · `run_hunting_query` · `run_sentinel_query` · `lookup_entity` · `lookup_intel` · `check_cve_exposure` · `list_action_types` · `list_actions` · `request_action` · `get_action` · `subscribe` · `list_subscriptions` · `unsubscribe` · `schedule_followup` · `list_followups`
 
 Served by the **Azure Functions MCP extension** at `https://<function-app>/runtime/webhooks/mcp` (Streamable HTTP). Send `Authorization: Bearer <Entra token for api://blueboard-<env>>`: every tool validates it and checks roles. Tool inputs are defined once, as C# records in `api/Blueboard.Contracts`, which also generate the REST API's OpenAPI 3.1 document at `/api/openapi.json`. To connect your own agent (SDK, template, skill for coding agents, webhooks), see [docs/AGENTS.md](docs/AGENTS.md).
 

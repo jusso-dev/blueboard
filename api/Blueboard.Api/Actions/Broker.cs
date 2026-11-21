@@ -53,16 +53,24 @@ public sealed class Broker(Db db, Audit audit, BoardService board, MsClient ms, 
     }
 
     /// <summary>Actions, newest first. status: one status, or "open" for everything waiting on a human (pending or 1 of 2).</summary>
-    public async Task<IReadOnlyList<ActionRow>> ListAsync(string? status, CancellationToken ct = default)
+    public Task<IReadOnlyList<ActionRow>> ListAsync(string? status, CancellationToken ct = default) =>
+        ListAsync(status, null, ct);
+
+    /// <summary>Actions, newest first, optionally filtered by status and/or linked incident (board UUID or Defender graph id).</summary>
+    public async Task<IReadOnlyList<ActionRow>> ListAsync(string? status, string? incident, CancellationToken ct = default)
     {
-        // "held": approved while the broker was paused, waiting for an approver's Run now.
-        await using var cmd = status switch
+        var incidentId = await board.ResolveIncidentAsync(incident, ct);
+        var where = new List<string>();
+        await using var cmd = db.Command("");
+        switch (status)
         {
-            null => db.Command($"{Select} order by a.created_at desc limit 100"),
-            "open" => db.Command($"{Select} where a.status = any(@s) order by a.created_at desc limit 100").With("s", ActionStatus.Open),
-            "held" => db.Command($"{Select} where a.status = 'approved' and a.held_at is not null order by a.created_at desc limit 100"),
-            _ => db.Command($"{Select} where a.status = @s order by a.created_at desc limit 100").With("s", status),
-        };
+            case null: break;
+            case "open": where.Add("a.status = any(@s)"); cmd.With("s", ActionStatus.Open); break;
+            case "held": where.Add("a.status = 'approved' and a.held_at is not null"); break;
+            default: where.Add("a.status = @s"); cmd.With("s", status); break;
+        }
+        if (incidentId is { } filterInc) { where.Add("a.incident_id = @inc"); cmd.With("inc", filterInc); }
+        cmd.CommandText = $"{Select}{(where.Count > 0 ? " where " + string.Join(" and ", where) : "")} order by a.created_at desc limit 100";
         var list = new List<ActionRow>();
         await using (var r = await cmd.ExecuteReaderAsync(ct))
             while (await r.ReadAsync(ct)) list.Add(Read(r));

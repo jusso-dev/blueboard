@@ -37,6 +37,21 @@ if (cmd == "policy-check")
     }
 }
 
+if (cmd == "playbooks")
+{
+    // No database needed: runs in CI and before a deploy.
+    var set = Playbooks.Load(args.Length > 1 ? args[1] : Path.Combine(AppContext.BaseDirectory, "playbooks"));
+    foreach (var p in set.All) Console.WriteLine($"ok   {p.File}: {p.Id} (priority {p.Priority}), {p.Steps.Count} steps");
+    foreach (var p in set.Problems) Console.WriteLine($"FAIL {p.File}: {p.Error}");
+    return set.Problems.Count == 0 ? 0 : 1;
+}
+
+if (cmd == "help")
+{
+    Console.WriteLine("usage: blueboard migrate | seed-dev [--sample] | policy-check [file] | doctor [--json] | playbooks [dir]");
+    return 0;
+}
+
 await using var db = new Db(settings);
 
 switch (cmd)
@@ -77,15 +92,9 @@ switch (cmd)
         return report.Ok ? 0 : 1;
     }
 
-    case "playbooks":
-        var set = Playbooks.Load(args.Length > 1 ? args[1] : Path.Combine(AppContext.BaseDirectory, "playbooks"));
-        foreach (var p in set.All) Console.WriteLine($"ok   {p.File}: {p.Id}, {p.Steps.Count} steps");
-        foreach (var p in set.Problems) Console.WriteLine($"FAIL {p.File}: {p.Error}");
-        return set.Problems.Count == 0 ? 0 : 1;
-
     default:
         Console.WriteLine("usage: blueboard migrate | seed-dev [--sample] | policy-check [file] | doctor [--json] | playbooks [dir]");
-        return cmd == "help" ? 0 : 1;
+        return 1;
 }
 return 0;
 

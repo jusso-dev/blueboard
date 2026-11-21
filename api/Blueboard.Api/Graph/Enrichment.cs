@@ -9,14 +9,15 @@ namespace Blueboard.Api.Graph;
 
 /// <summary>
 /// Read-only enrichment brokered by the board so agents need no Microsoft credentials. Every call is
-/// audited. Advanced hunting is read-only by design (KQL can't write).
+/// audited. Advanced hunting and Sentinel Log Analytics queries are read-only by design (KQL can't write).
 /// </summary>
-public sealed partial class Enrichment(Db db, Audit audit, BoardService board, MsClient ms, RateLimiter? limiter = null)
+public sealed partial class Enrichment(Db db, Audit audit, BoardService board, MsClient ms, RateLimiter? limiter = null, Settings? settings = null)
 {
     [GeneratedRegex(@"^\s*\.", RegexOptions.Multiline)] private static partial Regex MgmtCommand();
     [GeneratedRegex(@"//.*$", RegexOptions.Multiline)] private static partial Regex KqlComment();
     [GeneratedRegex(@"^P(T?\d+[DHM])+$")] private static partial Regex IsoDuration();
     [GeneratedRegex("^[0-9a-f]{40}$", RegexOptions.IgnoreCase)] private static partial Regex MdeId();
+    [GeneratedRegex(@"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", RegexOptions.IgnoreCase)] private static partial Regex GuidId();
 
     public async Task<JsonObject> GetIncidentAsync(string reference, CancellationToken ct = default)
     {
@@ -61,11 +62,7 @@ public sealed partial class Enrichment(Db db, Audit audit, BoardService board, M
         p.Require(Roles.Hunter);
         // Before any Graph call: advanced hunting has tenant-wide quotas that one noisy agent must not burn (issue #5).
         if (limiter is not null) await limiter.TakeAsync(p, "hunt", ct);
-        if (query is not { Length: >= 5 and <= 10000 }) throw new BoardException("query must be 5–10000 characters");
-        var span = timespan ?? "P7D";
-        if (!IsoDuration().IsMatch(span)) throw new BoardException("timespan must be an ISO-8601 duration, e.g. P7D or PT12H");
-        // Advanced hunting is read-only, but refuse management commands outright.
-        if (MgmtCommand().IsMatch(KqlComment().Replace(query, ""))) throw new BoardException("management commands are not allowed");
+        var span = ValidateKql(query, timespan);
         await audit.WriteAsync(p.Id, "enrich.hunt", null, new { query, timespan = span }, ct);
         var res = await ms.SendAsync(MsApi.Graph, "/v1.0/security/runHuntingQuery", HttpMethod.Post, new { query, timespan = span }, ct);
         var results = res?.GetProperty("results").EnumerateArray().ToList() ?? [];
@@ -76,6 +73,69 @@ public sealed partial class Enrichment(Db db, Audit audit, BoardService board, M
             truncated = results.Count > 200,
             total = results.Count,
         };
+    }
+
+    /// <summary>
+    /// Read-only KQL directly against the configured Microsoft Sentinel Log Analytics workspace (AuditLogs, SigninLogs,
+    /// AzureActivity, OfficeActivity, SecurityIncident, Watchlist, BlueboardAudit_CL). Needs SENTINEL_WORKSPACE_ID and
+    /// Log Analytics Reader on the workspace for the board's managed identity.
+    /// </summary>
+    public async Task<object> SentinelQueryAsync(Principal p, string query, string? timespan, CancellationToken ct = default)
+    {
+        p.Require(Roles.Hunter);
+        if (limiter is not null) await limiter.TakeAsync(p, "hunt", ct);
+        var span = ValidateKql(query, timespan);
+        var ws = settings?.Ti.SentinelWorkspaceId;
+        if (ws is null || !Guid.TryParse(ws, out var wsId))
+            throw new BoardException("SENTINEL_WORKSPACE_ID is not configured on this board (set it to the Log Analytics workspace id GUID)", 400);
+        await audit.WriteAsync(p.Id, "enrich.sentinel_hunt", wsId.ToString(), new { query, timespan = span }, ct);
+        var res = await ms.SendAsync(MsApi.LogAnalytics, $"/v1/workspaces/{wsId}/query", HttpMethod.Post, new { query, timespan = span }, ct);
+        return ShapeLogAnalyticsResult(res);
+    }
+
+    internal static object ShapeLogAnalyticsResult(JsonElement? res)
+    {
+        if (res is not { } r || !r.TryGetProperty("tables", out var tables) || tables.ValueKind != JsonValueKind.Array || tables.GetArrayLength() == 0)
+            return new { columns = Array.Empty<object>(), rows = Array.Empty<object>(), truncated = false, total = 0 };
+        var primary = tables[0];
+        var cols = primary.TryGetProperty("columns", out var c) && c.ValueKind == JsonValueKind.Array
+            ? c.EnumerateArray().Select(x => new { name = Str(x, "name") ?? "", type = Str(x, "type") ?? "string" }).ToList()
+            : [];
+        var rawRows = primary.TryGetProperty("rows", out var rr) && rr.ValueKind == JsonValueKind.Array
+            ? rr.EnumerateArray().ToList()
+            : [];
+        var shaped = new List<Dictionary<string, JsonElement?>>(Math.Min(rawRows.Count, 200));
+        foreach (var row in rawRows.Take(200))
+        {
+            var dict = new Dictionary<string, JsonElement?>(cols.Count);
+            if (row.ValueKind == JsonValueKind.Array)
+            {
+                var i = 0;
+                foreach (var cell in row.EnumerateArray())
+                {
+                    if (i < cols.Count) dict[cols[i].name] = cell.ValueKind == JsonValueKind.Null ? null : cell.Clone();
+                    i++;
+                }
+            }
+            shaped.Add(dict);
+        }
+        return new
+        {
+            columns = cols,
+            rows = shaped,
+            truncated = rawRows.Count > 200,
+            total = rawRows.Count,
+        };
+    }
+
+    private static string ValidateKql(string query, string? timespan)
+    {
+        if (query is not { Length: >= 5 and <= 10000 }) throw new BoardException("query must be 5–10000 characters");
+        var span = timespan ?? "P7D";
+        if (!IsoDuration().IsMatch(span)) throw new BoardException("timespan must be an ISO-8601 duration, e.g. P7D or PT12H");
+        // Advanced hunting & Log Analytics are read-only, but refuse management commands outright.
+        if (MgmtCommand().IsMatch(KqlComment().Replace(query, ""))) throw new BoardException("management commands are not allowed");
+        return span;
     }
 
     /// <summary>
@@ -95,8 +155,13 @@ public sealed partial class Enrichment(Db db, Audit audit, BoardService board, M
     {
         p.Require(Roles.Hunter);
         if (limiter is not null) await limiter.TakeAsync(p, "lookup", ct);
-        if (value is not { Length: >= 1 and <= 2048 } || value.IndexOfAny(['/', '\\', '?', '#']) >= 0 || value is "." or "..")
+        if (value is not { Length: >= 1 and <= 2048 } || value.Any(char.IsControl) || value is "." or "..")
             throw new BoardException("invalid value");
+        // URLs naturally contain /, ? and #: parse the host safely in the url case below. All other entity kinds
+        // interpolate into Graph/MDE path segments and must never contain path or query delimiters.
+        if (kind != "url" && value.IndexOfAny(['/', '\\', '?', '#']) >= 0)
+            throw new BoardException("invalid value");
+
         await audit.WriteAsync(p.Id, "enrich.lookup", $"{kind}:{value}", null, ct);
         var e = Uri.EscapeDataString(value);
 
@@ -115,11 +180,20 @@ public sealed partial class Enrichment(Db db, Audit audit, BoardService board, M
                 var uid = user?.GetProperty("id").GetString();
                 var roles = await Try(MsApi.Graph, $"/v1.0/users/{e}/transitiveMemberOf/microsoft.graph.directoryRole?$select=displayName");
                 var risky = uid is null ? null : await Try(MsApi.Graph, $"/v1.0/identityProtection/riskyUsers/{uid}");
+                var detections = uid is null || !GuidId().IsMatch(uid) ? null
+                    : await Try(MsApi.Graph, $"/v1.0/identityProtection/riskDetections?$filter={Uri.EscapeDataString($"userId eq '{uid}'")}&$top=10");
                 return new
                 {
                     user,
                     directory_roles = roles?.GetProperty("value").EnumerateArray().Select(r => r.GetProperty("displayName").GetString()).ToList(),
                     risk = risky is { } rk ? new { level = Str(rk, "riskLevel"), state = Str(rk, "riskState"), detail = Str(rk, "riskDetail") } : null,
+                    recent_risk_detections = detections is { } dt && dt.TryGetProperty("value", out var dv) && dv.ValueKind == JsonValueKind.Array
+                        ? dv.EnumerateArray().Take(10).Select(d => new
+                        {
+                            risk_event_type = Str(d, "riskEventType"), risk_level = Str(d, "riskLevel"),
+                            ip_address = Str(d, "ipAddress"), detected_at = Str(d, "detectedDateTime"),
+                        }).ToList()
+                        : null,
                 };
             }
             case "device":
@@ -133,10 +207,12 @@ public sealed partial class Enrichment(Db db, Audit audit, BoardService board, M
                     machine = list?.GetProperty("value").EnumerateArray().FirstOrDefault() is { ValueKind: JsonValueKind.Object } m ? m : null;
                 }
                 if (machine is not { } mc) return new { found = false };
+                var mid = mc.GetProperty("id").GetString()!;
                 var pick = new JsonObject();
                 foreach (var k in new[] { "id", "computerDnsName", "osPlatform", "osVersion", "healthStatus", "riskScore", "exposureLevel", "isolationState", "lastSeen", "lastIpAddress", "machineTags", "onboardingStatus" })
                     if (mc.TryGetProperty(k, out var v)) pick[k] = JsonNode.Parse(v.GetRawText());
-                var users = await Try(MsApi.Defender, $"/api/machines/{mc.GetProperty("id").GetString()}/logonusers");
+                var users = await Try(MsApi.Defender, $"/api/machines/{mid}/logonusers");
+                var alerts = await Try(MsApi.Defender, $"/api/machines/{mid}/alerts");
                 return new
                 {
                     device = pick,
@@ -146,6 +222,13 @@ public sealed partial class Enrichment(Db db, Audit audit, BoardService board, M
                         is_domain_admin = u.TryGetProperty("isDomainAdmin", out var da) && da.ValueKind == JsonValueKind.True,
                         last_seen = Str(u, "lastSeen"),
                     }).ToList(),
+                    recent_alerts = alerts is { } al && al.TryGetProperty("value", out var av) && av.ValueKind == JsonValueKind.Array
+                        ? av.EnumerateArray().Take(10).Select(a => new
+                        {
+                            id = Str(a, "id"), title = Str(a, "title"), severity = Str(a, "severity"), status = Str(a, "status"),
+                            category = Str(a, "category"), created_at = Str(a, "alertCreationTime"),
+                        }).ToList()
+                        : null,
                 };
             }
             case "ip":
@@ -163,12 +246,60 @@ public sealed partial class Enrichment(Db db, Audit audit, BoardService board, M
                 return new { file = await Try(MsApi.Defender, $"/api/files/{e}"), stats = await Try(MsApi.Defender, $"/api/files/{e}/stats?lookBackHours=720") };
             case "url":
             {
-                if (!Uri.TryCreate(value.Contains("://") ? value : $"https://{value}", UriKind.Absolute, out var u)) throw new BoardException("invalid url");
-                return new { domain = u.Host, stats = await Try(MsApi.Defender, $"/api/domains/{Uri.EscapeDataString(u.Host)}/stats?lookBackHours=720") };
+                var raw = value.Trim();
+                if (!Uri.TryCreate(raw.Contains("://") ? raw : $"https://{raw}", UriKind.Absolute, out var u)
+                    || u.Scheme is not ("http" or "https") || string.IsNullOrEmpty(u.IdnHost))
+                    throw new BoardException("invalid url");
+                var host = u.IdnHost.ToLowerInvariant().TrimEnd('.');
+                return new { domain = host, stats = await Try(MsApi.Defender, $"/api/domains/{Uri.EscapeDataString(host)}/stats?lookBackHours=720") };
+            }
+            case "service_principal":
+            case "oauth_app":
+            {
+                JsonElement? sp = null;
+                if (GuidId().IsMatch(value))
+                {
+                    sp = await Try(MsApi.Graph, $"/v1.0/servicePrincipals/{value}?$select=id,appId,displayName,accountEnabled,servicePrincipalType,verifiedPublisher,createdDateTime,homepage,replyUrls")
+                         ?? await FindSpByAppIdAsync(Try, value);
+                }
+                else
+                {
+                    var filter = Uri.EscapeDataString($"displayName eq '{value.Replace("'", "''")}'");
+                    var list = await Try(MsApi.Graph, $"/v1.0/servicePrincipals?$filter={filter}&$top=1&$select=id,appId,displayName,accountEnabled,servicePrincipalType,verifiedPublisher,createdDateTime,homepage,replyUrls");
+                    sp = list is { } l && l.TryGetProperty("value", out var v) && v.ValueKind == JsonValueKind.Array && v.GetArrayLength() > 0 ? v[0].Clone() : null;
+                }
+                if (sp is not { } found) return new { found = false };
+                var spId = Str(found, "id");
+                var grants = spId is null ? null : await Try(MsApi.Graph, $"/v1.0/servicePrincipals/{spId}/oauth2PermissionGrants?$top=20");
+                var roles = spId is null ? null : await Try(MsApi.Graph, $"/v1.0/servicePrincipals/{spId}/appRoleAssignments?$top=20");
+                return new
+                {
+                    service_principal = found,
+                    oauth_grants = grants is { } g && g.TryGetProperty("value", out var gv) && gv.ValueKind == JsonValueKind.Array
+                        ? gv.EnumerateArray().Take(20).Select(x => new
+                        {
+                            id = Str(x, "id"), consent_type = Str(x, "consentType"), principal_id = Str(x, "principalId"),
+                            resource_id = Str(x, "resourceId"), scope = Str(x, "scope"),
+                        }).ToList()
+                        : null,
+                    app_role_assignments = roles is { } r && r.TryGetProperty("value", out var rv) && rv.ValueKind == JsonValueKind.Array
+                        ? rv.EnumerateArray().Take(20).Select(x => new
+                        {
+                            id = Str(x, "id"), resource_display_name = Str(x, "resourceDisplayName"), app_role_id = Str(x, "appRoleId"),
+                        }).ToList()
+                        : null,
+                };
             }
             default:
-                throw new BoardException("kind must be user, device, ip, file or url");
+                throw new BoardException("kind must be user, device, ip, file, url, service_principal or oauth_app");
         }
+    }
+
+    private static async Task<JsonElement?> FindSpByAppIdAsync(Func<MsApi, string, Task<JsonElement?>> tryGet, string appId)
+    {
+        var filter = Uri.EscapeDataString($"appId eq '{appId}'");
+        var list = await tryGet(MsApi.Graph, $"/v1.0/servicePrincipals?$filter={filter}&$top=1&$select=id,appId,displayName,accountEnabled,servicePrincipalType,verifiedPublisher,createdDateTime,homepage,replyUrls");
+        return list is { } l && l.TryGetProperty("value", out var v) && v.ValueKind == JsonValueKind.Array && v.GetArrayLength() > 0 ? v[0].Clone() : null;
     }
 
     private static string? Str(JsonElement e, string k) => e.TryGetProperty(k, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;

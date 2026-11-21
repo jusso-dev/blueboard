@@ -70,10 +70,13 @@ public sealed partial class Notifier(HttpClient http, Db db, Audit audit, MsClie
         await using (var cmd = db.Command("""
             with events as (
               select id, 'requested' as event from actions
-               where status = 'pending_approval' and created_at > now() - interval '1 day'
+               where status in ('pending_approval', 'approved_once') and created_at > now() - interval '1 day'
+              union all
+              select id, 'second_approval' as event from actions
+               where status = 'approved_once' and updated_at > now() - interval '1 day'
               union all
               select id, 'reminder:' || floor(extract(epoch from now() - created_at) / 60 / @m)::int from actions
-               where status = 'pending_approval' and created_at > now() - interval '1 day'
+               where status in ('pending_approval', 'approved_once') and created_at > now() - interval '1 day'
                  and now() - created_at >= make_interval(mins => @m)
                  and floor(extract(epoch from now() - created_at) / 60 / @m) <= @max
               union all
@@ -127,6 +130,7 @@ public sealed partial class Notifier(HttpClient http, Db db, Audit audit, MsClie
         var name = evt.StartsWith("reminder:", StringComparison.Ordinal) ? "action.reminder" : evt switch
         {
             "requested" => "action.pending_approval",
+            "second_approval" => "action.second_approval_needed",
             "expired" => "action.expired",
             "interrupted" => "action.interrupted",
             _ => "action.failed",
@@ -224,6 +228,7 @@ public sealed partial class Notifier(HttpClient http, Db db, Audit audit, MsClie
     internal static string Headline(Notice n) => n.Event switch
     {
         "action.pending_approval" => "Approval needed",
+        "action.second_approval_needed" => "Second approval needed (1 of 2 received)",
         "action.reminder" => "Still waiting for approval",
         "action.expired" => "Approval request expired",
         "action.interrupted" => "Action interrupted: outcome unknown, check Defender",

@@ -63,6 +63,8 @@ public sealed record PolicyReport(
         if (p.ProtectedIndicators.Length == 0) w.Add("protected_indicators is empty: list your own domains and Microsoft update hosts");
         if (!p.RequireTargetInIncident) w.Add("require_target_in_incident is off: targets outside the incident evidence are not flagged");
         if (p.ExpiryHours > 24) w.Add($"expiry_hours is {p.ExpiryHours}: approvals of requests older than a shift may act on stale evidence");
+        foreach (var (k, h) in p.ExpiryHoursByKind.Where(kv => kv.Value > 24))
+            w.Add($"expiry_hours_by_kind.{k} is {h}: approvals of requests older than a shift may act on stale evidence");
         return w;
     }
 

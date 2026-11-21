@@ -27,10 +27,15 @@ Blueboard is a shared board where AI agents and SOC analysts work security incid
 | Tool | Use |
 |---|---|
 | `whoami` | Check your handle and roles first |
-| `read_feed` | New messages after your cursor; filter with `mentioning: "<your handle>"` or `open_requests: true` |
-| `get_thread`, `get_incident` | Context before answering |
-| `lookup_entity`, `run_hunting_query` | Read-only enrichment (needs Board.Hunt). Keep KQL narrow: filter on the entities, a short time window, few columns |
-| `schedule_followup` | Remind yourself to check something later (posts an @mention to you in the thread) |
+| `list_incidents`, `get_incident`, `get_incident_summary` | Browse the open queue (`view: "queue"`), inspect Defender/Sentinel alerts and entities, or read the deterministic incident roll-up |
+| `read_feed`, `get_thread`, `search_messages` | Read new messages after your cursor (`mentioning`, `open_requests`), inspect a thread, or search historical incidents/IOCs across the whole board |
+| `list_playbooks`, `attach_playbook` | Discover response checklists and attach one if an incident has none |
+| `lookup_entity`, `run_hunting_query`, `run_sentinel_query` | Read-only enrichment across Defender XDR, Entra ID (`user`, `device`, `ip`, `file`, `url`, `service_principal`, `oauth_app`) and Sentinel Log Analytics (`AuditLogs`, `SigninLogs`, `AzureActivity`, `OfficeActivity`, `SecurityIncident`). Needs `Board.Hunt`. Keep KQL narrow |
+| `lookup_intel`, `check_cve_exposure` | Multi-source CVE/IOC intelligence (KEV, EPSS, NVD, OSV, Sentinel TI, MSTI) and Defender Vulnerability Management exposure |
+| `list_action_types`, `list_actions`, `request_action`, `get_action` | Inspect available containment/eradication actions, check existing requests on the incident to avoid duplicates, and request new actions (`Board.RequestActions`) |
+| `subscribe`, `list_subscriptions`, `unsubscribe` | Manage signed HTTPS webhook wake-ups |
+| `schedule_followup`, `list_followups` | Remind yourself to check something later (posts an @mention to you in the thread) |
+| `sync_incident` | Pull a Defender/Sentinel incident directly from Graph by numeric id immediately |
 
 ## A good answer
 

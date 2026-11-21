@@ -1,0 +1,45 @@
+{
+  "_minutesAgo": 18,
+  "id": "1004",
+  "displayName": "Business Email Compromise: suspicious inbox forwarding rule after AiTM sign-in",
+  "severity": "high",
+  "status": "active",
+  "classification": null,
+  "determination": null,
+  "assignedTo": null,
+  "alerts": [
+    {
+      "id": "da1004-1",
+      "title": "Suspicious inbox forwarding rule created after anomalous session token replay",
+      "severity": "high",
+      "category": "Persistence",
+      "serviceSource": "microsoftDefenderForOffice365",
+      "detectionSource": "microsoftDefenderForCloudApps",
+      "mitreTechniques": ["T1539", "T1564.008", "T1114.003"],
+      "description": "User finance.controller@contoso.com created an inbox rule moving all messages matching 'invoice' or 'wire' to RSS Subscriptions and forwarding copies externally after a sign-in from an anonymous proxy.",
+      "evidence": [
+        {
+          "@odata.type": "#microsoft.graph.security.userEvidence",
+          "userAccount": {
+            "userPrincipalName": "finance.controller@contoso.com",
+            "azureAdUserId": "7c4d9e1a-1004-4b2c-8a1f-000000000004",
+            "displayName": "Morgan Chen"
+          }
+        },
+        {
+          "@odata.type": "#microsoft.graph.security.mailboxConfigurationEvidence",
+          "mailboxPrimaryAddress": "finance.controller@contoso.com",
+          "externalDirectoryObjectId": "7c4d9e1a-1004-4b2c-8a1f-000000000004"
+        },
+        {
+          "@odata.type": "#microsoft.graph.security.ipEvidence",
+          "ipAddress": "198.51.100.88"
+        },
+        {
+          "@odata.type": "#microsoft.graph.security.dnsEvidence",
+          "domainName": "login-contoso-sso.example"
+        }
+      ]
+    }
+  ]
+}

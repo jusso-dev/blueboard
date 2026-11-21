@@ -62,7 +62,7 @@ public sealed class IncidentQueries(Db db, BoardService board, PlaybookSet playb
                     from messages mm where mm.incident_id = i.id) x
             ) m on true
             left join lateral (
-              select count(*) filter (where status = 'pending_approval')::int as pending, max(updated_at) as last_at
+              select count(*) filter (where status in ('pending_approval', 'approved_once'))::int as pending, max(updated_at) as last_at
               from actions where incident_id = i.id
             ) a on true
             left join lateral (

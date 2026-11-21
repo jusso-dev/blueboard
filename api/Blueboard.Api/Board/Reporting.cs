@@ -18,7 +18,12 @@ public sealed record Report(object Range, Coverage Incidents, Stat Enrichment, S
 /// <summary>Response metrics from when the board first saw each incident. Durations in seconds.</summary>
 public sealed class Reporting(Db db)
 {
-    private static readonly string[] ContainKinds = ["isolate_device", "disable_user", "revoke_sessions", "block_indicator"];
+    private static readonly string[] ContainKinds =
+    [
+        "isolate_device", "restrict_app_execution", "stop_and_quarantine_file",
+        "disable_user", "revoke_sessions", "confirm_user_compromised", "disable_service_principal",
+        "block_indicator", "purge_email",
+    ];
 
     public async Task<Report> BuildAsync(DateTimeOffset? fromIn, DateTimeOffset? toIn, string? severity, CancellationToken ct = default)
     {

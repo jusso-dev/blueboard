@@ -259,6 +259,7 @@ public sealed partial class BoardService(Db db, Audit audit, Settings settings, 
 
     public async Task<Message> SettleClaimAsync(Principal p, Guid id, string outcome, CancellationToken ct = default)
     {
+        p.Require(Roles.Poster);
         if (outcome is not ("done" or "release")) throw new BoardException("outcome must be done or release");
         var state = outcome == "done" ? "done" : "open";
         await using var cmd = db.Command("""

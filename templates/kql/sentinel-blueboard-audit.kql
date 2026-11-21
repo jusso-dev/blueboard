@@ -1,0 +1,27 @@
+// =============================================================================
+// Blueboard Starter KQL Hunts — Auditing Blueboard Itself in Microsoft Sentinel
+// Compatible with: run_sentinel_query (Sentinel BlueboardAudit_CL)
+// =============================================================================
+
+// 1. All brokered containment actions and decisions over the last 24h
+BlueboardAudit_CL
+| where TimeGenerated > ago(24h)
+| where Event startswith "action."
+| project TimeGenerated, Event, Actor, ActorKind, Subject, Detail
+| order by TimeGenerated desc
+| take 100
+
+// 2. Agent activity overview (hunts, lookups, claims, action requests, rate-limit hits)
+BlueboardAudit_CL
+| where TimeGenerated > ago(24h)
+| where ActorKind == "agent"
+| summarize Events = count() by Actor, Event
+| order by Actor asc, Events desc
+
+// 3. Policy rejections & broker pauses
+BlueboardAudit_CL
+| where TimeGenerated > ago(7d)
+| where Event in ("broker.paused", "broker.resumed", "principal.disabled", "action.rejected_on_recheck", "limit.hit")
+    or (Event == "action.requested" and tostring(Detail.outcome) == "Reject")
+| project TimeGenerated, Event, Actor, Subject, Detail
+| order by TimeGenerated desc

@@ -14,11 +14,13 @@ public sealed class OpsApi(Endpoint ep, Setup setup, Notifier notifier, Particip
 
     /// <summary>Cheap state for the banner on every page (Board.Post): broker mode, pause, policy loaded or default.</summary>
     [Function("status")]
+    [RouteDoc("Board status banner state: broker mode, pause, policy, held actions")]
     public Task<IActionResult> Status([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "status")] HttpRequest req) =>
         ep.RunAsync(req, async _ => await setup.StatusAsync(req.HttpContext.RequestAborted));
 
     /// <summary>The setup checklist (Board.Admin), cached for 60 seconds. ?fresh=true re-runs it.</summary>
     [Function("setup")]
+    [RouteDoc("Setup checklist and health probes (admin)", Role = Roles.Admin)]
     public Task<IActionResult> SetupChecks([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "setup")] HttpRequest req) =>
         ep.RunAsync(req, async _ =>
         {
@@ -27,16 +29,19 @@ public sealed class OpsApi(Endpoint ep, Setup setup, Notifier notifier, Particip
         }, Roles.Admin);
 
     [Function("setup-test-notification")]
+    [RouteDoc("Send a test notification to configured approver sinks (admin)", Role = Roles.Admin)]
     public Task<IActionResult> TestNotification([HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "setup/test-notification")] HttpRequest req) =>
         ep.RunAsync(req, async me => await notifier.SendTestAsync(me, req.HttpContext.RequestAborted), Roles.Admin);
 
     [Function("admin-participants")]
+    [RouteDoc("List all participants with activity and enabled state (admin)", Role = Roles.Admin)]
     public Task<IActionResult> ListParticipants([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "manage/participants")] HttpRequest req) =>
         ep.RunAsync(req, async me => await participants.ListAsync(me, req.HttpContext.RequestAborted), Roles.Admin);
 
     public sealed record EnabledBody(bool Enabled, string? Reason);
 
     [Function("admin-participant-set")]
+    [RouteDoc("Enable or disable a participant (admin)", Body = typeof(EnabledBody), Role = Roles.Admin)]
     public Task<IActionResult> SetParticipant([HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "manage/participants/{handle}")] HttpRequest req, string handle) =>
         ep.RunAsync(req, async me =>
         {
@@ -45,12 +50,14 @@ public sealed class OpsApi(Endpoint ep, Setup setup, Notifier notifier, Particip
         }, Roles.Admin);
 
     [Function("admin-broker")]
+    [RouteDoc("Read broker pause state (admin)", Role = Roles.Admin)]
     public Task<IActionResult> GetBroker([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "manage/broker")] HttpRequest req) =>
         ep.RunAsync(req, async _ => await broker.GetPauseAsync(req.HttpContext.RequestAborted), Roles.Admin);
 
     public sealed record PauseBody(bool Paused, string? Reason);
 
     [Function("admin-broker-set")]
+    [RouteDoc("Pause or resume the action broker (admin)", Body = typeof(PauseBody), Role = Roles.Admin)]
     public Task<IActionResult> SetBroker([HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "manage/broker")] HttpRequest req) =>
         ep.RunAsync(req, async me =>
         {
@@ -62,6 +69,7 @@ public sealed class OpsApi(Endpoint ep, Setup setup, Notifier notifier, Particip
 
     /// <summary>Run an action that was approved while the broker was paused (human approver, not the requester).</summary>
     [Function("action-run")]
-    public Task<IActionResult> RunNow([HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "actions/{id}/run")] HttpRequest req, string id) =>
+    [RouteDoc("Run an approved action that was held while the broker was paused", Role = Roles.Approver)]
+    public Task<IActionResult> RunNow([HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "actions/{id:guid}/run")] HttpRequest req, string id) =>
         ep.RunAsync(req, async me => await broker.RunNowAsync(me, Id(id), req.HttpContext.RequestAborted));
 }

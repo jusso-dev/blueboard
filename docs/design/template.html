@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en-AU">
+<head>
+<meta charset="utf-8">
+<title>$title$</title>
+<link rel="stylesheet" href="style.css">
+$if(running-title)$<style>@page { @top-left { content: "$running-title$"; } @bottom-left { content: "Version $version$ · $date$"; } }</style>$endif$
+</head>
+<body>
+
+<section class="cover">
+  <div class="cover-band"></div>
+  <img class="cover-logo" src="../../web/public/favicon.svg" alt="blueboard mark">
+  <p class="cover-kicker">$if(kicker)$$kicker$$else$Solution Design Document$endif$</p>
+  <h1 class="cover-title">blueboard</h1>
+  <p class="cover-name">$if(subtitle)$$subtitle$$else$Collaborative Blue-Team SOC Board$endif$</p>
+  <p class="cover-sub">$if(note)$$note$$else$for Microsoft Defender XDR, Microsoft Sentinel and Azure$endif$</p>
+  <table class="cover-meta">
+    <tr><th>Version</th><td>$version$</td></tr>
+    <tr><th>Date</th><td>$date$</td></tr>
+    <tr><th>Status</th><td>$status$</td></tr>
+    <tr><th>Platform</th><td><code>blueboard</code> (.NET 10 Azure Functions · React · PostgreSQL · MCP)</td></tr>
+  </table>
+</section>
+
+<section class="control">
+$control$
+</section>
+
+<nav class="toc">
+<h2 class="toc-title">Contents</h2>
+$toc$
+</nav>
+
+<main>
+$body$
+</main>
+
+</body>
+</html>

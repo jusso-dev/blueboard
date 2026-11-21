@@ -29,6 +29,29 @@ public sealed class PlaybookRunner(Db db, BoardService board, SystemPrincipal sy
         return pb.Id;
     }
 
+    /// <summary>Manually attach a playbook to an incident that doesn't have one yet (analyst or agent via MCP/REST).</summary>
+    public async Task<object> AttachByIdAsync(Principal caller, string incidentRef, string playbookId, CancellationToken ct = default)
+    {
+        caller.Require(Roles.Poster);
+        var pb = playbooks.Get(playbookId) ?? throw BoardException.NotFound($"playbook '{playbookId}'");
+        var incidentId = await board.ResolveIncidentAsync(incidentRef, ct) ?? throw BoardException.NotFound("incident");
+        Guid? root = null;
+        await using (var rc = db.Command("""
+            select m.id from messages m join channels c on c.id = m.channel_id
+            where m.incident_id = @i and m.type = 'incident' and m.parent_id is null and c.name = 'incidents'
+            order by m.seq asc limit 1
+            """).With("i", incidentId))
+            root = await rc.ExecuteScalarAsync(ct) as Guid?;
+        await using (var cmd = db.Command("""
+            insert into incident_playbooks (incident_id, playbook_id, root_message_id) values (@i, @p, @r)
+            on conflict (incident_id) do nothing returning incident_id
+            """).With("i", incidentId).With("p", pb.Id).With("r", root))
+            if (await cmd.ExecuteScalarAsync(ct) is null)
+                throw BoardException.Conflict("incident already has a playbook attached");
+        var posted = await UnlockAsync(incidentId, ct);
+        return new { incident_id = incidentId, playbook_id = pb.Id, title = pb.Title, steps_posted = posted, total_steps = pb.Steps.Count };
+    }
+
     /// <summary>Post every step whose prerequisites are done and that isn't on the board yet. Safe to run concurrently.</summary>
     public async Task<int> UnlockAsync(Guid incidentId, CancellationToken ct = default)
     {

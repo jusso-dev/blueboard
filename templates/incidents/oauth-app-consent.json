@@ -1,0 +1,42 @@
+{
+  "_minutesAgo": 25,
+  "id": "1005",
+  "displayName": "Illicit OAuth consent grant to unverified multi-tenant application",
+  "severity": "high",
+  "status": "active",
+  "classification": null,
+  "determination": null,
+  "assignedTo": null,
+  "alerts": [
+    {
+      "id": "da1005-1",
+      "title": "Suspicious OAuth app consent grant requesting Mail.Read and offline_access",
+      "severity": "high",
+      "category": "CredentialAccess",
+      "serviceSource": "microsoftDefenderForCloudApps",
+      "detectionSource": "microsoftDefenderForCloudApps",
+      "mitreTechniques": ["T1528", "T1550.001"],
+      "description": "An unverified OAuth application 'DocViewer Sync' received delegated Mail.Read, Files.Read.All and offline_access consent from a user in Legal.",
+      "evidence": [
+        {
+          "@odata.type": "#microsoft.graph.security.userEvidence",
+          "userAccount": {
+            "userPrincipalName": "priya.nair@contoso.com",
+            "azureAdUserId": "8d5e0f2b-1005-4c3d-9b2e-000000000005",
+            "displayName": "Priya Nair"
+          }
+        },
+        {
+          "@odata.type": "#microsoft.graph.security.oauthApplicationEvidence",
+          "appId": "aa11bb22-cc33-44dd-88ee-ff0011223344",
+          "objectId": "bb22cc33-dd44-45ee-99ff-001122334455",
+          "displayName": "DocViewer Sync"
+        },
+        {
+          "@odata.type": "#microsoft.graph.security.urlEvidence",
+          "url": "https://docviewer-sync.example/oauth/callback"
+        }
+      ]
+    }
+  ]
+}

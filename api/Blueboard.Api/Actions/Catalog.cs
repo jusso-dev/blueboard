@@ -36,9 +36,11 @@ public sealed record ActionDef(
 public static partial class Catalog
 {
     [GeneratedRegex("^[0-9a-f]{40}$", RegexOptions.IgnoreCase)] private static partial Regex MdeId();
+    [GeneratedRegex(@"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", RegexOptions.IgnoreCase)] private static partial Regex GuidId();
     [GeneratedRegex(@"^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[^\s/\\?#@]+@[^\s/\\?#@]+\.[^\s/\\?#@]+)$", RegexOptions.IgnoreCase)] private static partial Regex UserRef();
     [GeneratedRegex(@"^\d{1,20}$")] private static partial Regex IncidentId();
     [GeneratedRegex(@"^[^@\s]+@[^@\s]+\.[^@\s]+$")] private static partial Regex Email();
+    [GeneratedRegex(@"^[A-Za-z0-9][A-Za-z0-9._ -]{0,199}$")] private static partial Regex DeviceTag();
 
     // ── param helpers ──────────────────────────────────────────────────────────────────────────
     private static string Req(JsonElement p, string name, Regex? pattern = null, string? hint = null, int max = 2048)
@@ -117,12 +119,86 @@ public static partial class Catalog
             p => $"Collect forensic investigation package from {S(p, "machine_id")}",
             (ms, p, c, ct) => Send(ms, MsApi.Defender, $"/api/machines/{S(p, "machine_id")}/collectInvestigationPackage", HttpMethod.Post, new { Comment = Comment(c) }, ct)),
 
+        new("restrict_app_execution", "Restrict app execution to Microsoft-signed binaries (MDE)", "contain", true,
+            Schema(new { machine_id = MachineIdProp }, ["machine_id"]),
+            p => new JsonObject { ["machine_id"] = Req(p, "machine_id", MdeId(), "MDE machine id (40 hex chars)") },
+            p => new Targets([], [S(p, "machine_id")], []),
+            p => $"Restrict code execution to Microsoft-signed binaries on MDE device {S(p, "machine_id")}",
+            (ms, p, c, ct) => Send(ms, MsApi.Defender, $"/api/machines/{S(p, "machine_id")}/restrictCodeExecution", HttpMethod.Post, new { Comment = Comment(c) }, ct)),
+
+        new("unrestrict_app_execution", "Remove app execution restriction (MDE)", "recover", true,
+            Schema(new { machine_id = MachineIdProp }, ["machine_id"]),
+            p => new JsonObject { ["machine_id"] = Req(p, "machine_id", MdeId(), "MDE machine id (40 hex chars)") },
+            p => new Targets([], [S(p, "machine_id")], []),
+            p => $"Remove code execution restriction on MDE device {S(p, "machine_id")}",
+            (ms, p, c, ct) => Send(ms, MsApi.Defender, $"/api/machines/{S(p, "machine_id")}/unrestrictCodeExecution", HttpMethod.Post, new { Comment = Comment(c) }, ct)),
+
+        new("stop_and_quarantine_file", "Stop process and quarantine file (MDE)", "eradicate", true,
+            Schema(new
+            {
+                machine_id = MachineIdProp,
+                sha1 = new { type = "string", description = "File SHA-1 hash (40 hex chars)", pattern = "^[0-9a-fA-F]{40}$" },
+            }, ["machine_id", "sha1"]),
+            p => new JsonObject
+            {
+                ["machine_id"] = Req(p, "machine_id", MdeId(), "MDE machine id (40 hex chars)"),
+                ["sha1"] = Req(p, "sha1", MdeId(), "SHA-1 hash (40 hex chars)").ToLowerInvariant(),
+            },
+            p => new Targets([], [S(p, "machine_id")], [S(p, "sha1")]),
+            p => $"Stop and quarantine SHA-1 {S(p, "sha1")} on MDE device {S(p, "machine_id")}",
+            (ms, p, c, ct) => Send(ms, MsApi.Defender, $"/api/machines/{S(p, "machine_id")}/StopAndQuarantineFile", HttpMethod.Post, new { Comment = Comment(c), Sha1 = S(p, "sha1") }, ct)),
+
+        new("tag_device", "Add or remove device tag (MDE)", "contain", false,
+            Schema(new
+            {
+                machine_id = MachineIdProp,
+                tag = new { type = "string", minLength = 1, maxLength = 200, description = "Device tag (e.g. UnderInvestigation, Compromised)" },
+                action = new { type = "string", @enum = new[] { "Add", "Remove" }, @default = "Add" },
+            }, ["machine_id", "tag"]),
+            p => new JsonObject
+            {
+                ["machine_id"] = Req(p, "machine_id", MdeId(), "MDE machine id (40 hex chars)"),
+                ["tag"] = Req(p, "tag", DeviceTag(), "letters, digits, spaces, '.', '_' or '-'", 200),
+                ["action"] = Enum(p, "action", ["Add", "Remove"], "Add"),
+            },
+            p => new Targets([], [S(p, "machine_id")], []),
+            p => $"{S(p, "action")} tag '{S(p, "tag")}' on MDE device {S(p, "machine_id")}",
+            (ms, p, _, ct) => Send(ms, MsApi.Defender, $"/api/machines/{S(p, "machine_id")}/tags", HttpMethod.Post, new { Value = S(p, "tag"), Action = S(p, "action") }, ct)),
+
         new("disable_user", "Disable user account (Entra ID)", "contain", true,
             Schema(new { user = UserProp }, ["user"]),
             p => new JsonObject { ["user"] = Req(p, "user", UserRef(), "Entra user object id or UPN", 200) },
             p => new Targets([S(p, "user")], [], []),
             p => $"Disable Entra ID account {S(p, "user")}",
             (ms, p, _, ct) => Send(ms, MsApi.Graph, $"/v1.0/users/{Enc(S(p, "user"))}", HttpMethod.Patch, new { accountEnabled = false }, ct)),
+
+        new("enable_user", "Re-enable user account (Entra ID)", "recover", true,
+            Schema(new { user = UserProp }, ["user"]),
+            p => new JsonObject { ["user"] = Req(p, "user", UserRef(), "Entra user object id or UPN", 200) },
+            p => new Targets([S(p, "user")], [], []),
+            p => $"Re-enable Entra ID account {S(p, "user")}",
+            (ms, p, _, ct) => Send(ms, MsApi.Graph, $"/v1.0/users/{Enc(S(p, "user"))}", HttpMethod.Patch, new { accountEnabled = true }, ct)),
+
+        new("confirm_user_compromised", "Confirm user compromised (Entra ID Protection)", "contain", true,
+            Schema(new { user_id = new { type = "string", description = "Entra user object id (GUID)" } }, ["user_id"]),
+            p => new JsonObject { ["user_id"] = Req(p, "user_id", GuidId(), "Entra user object id (GUID)", 64).ToLowerInvariant() },
+            p => new Targets([S(p, "user_id")], [], []),
+            p => $"Mark Entra user {S(p, "user_id")} as High risk (compromised) in Entra ID Protection",
+            (ms, p, _, ct) => Send(ms, MsApi.Graph, "/v1.0/identityProtection/riskyUsers/confirmCompromised", HttpMethod.Post, new { userIds = new[] { S(p, "user_id") } }, ct)),
+
+        new("dismiss_user_risk", "Dismiss user risk (Entra ID Protection)", "recover", true,
+            Schema(new { user_id = new { type = "string", description = "Entra user object id (GUID)" } }, ["user_id"]),
+            p => new JsonObject { ["user_id"] = Req(p, "user_id", GuidId(), "Entra user object id (GUID)", 64).ToLowerInvariant() },
+            p => new Targets([S(p, "user_id")], [], []),
+            p => $"Dismiss Entra ID Protection risk for user {S(p, "user_id")}",
+            (ms, p, _, ct) => Send(ms, MsApi.Graph, "/v1.0/identityProtection/riskyUsers/dismiss", HttpMethod.Post, new { userIds = new[] { S(p, "user_id") } }, ct)),
+
+        new("disable_service_principal", "Disable service principal / OAuth app (Entra ID)", "contain", true,
+            Schema(new { service_principal_id = new { type = "string", description = "Entra service principal object id (GUID)" } }, ["service_principal_id"]),
+            p => new JsonObject { ["service_principal_id"] = Req(p, "service_principal_id", GuidId(), "Entra service principal object id (GUID)", 64).ToLowerInvariant() },
+            p => new Targets([], [], [S(p, "service_principal_id")]),
+            p => $"Disable Entra service principal {S(p, "service_principal_id")} (stops sign-ins and token issuance)",
+            (ms, p, _, ct) => Send(ms, MsApi.Graph, $"/v1.0/servicePrincipals/{Enc(S(p, "service_principal_id"))}", HttpMethod.Patch, new { accountEnabled = false }, ct)),
 
         new("revoke_sessions", "Revoke sign-in sessions (Entra ID)", "contain", true,
             Schema(new { user = UserProp }, ["user"]),
@@ -156,14 +232,15 @@ public static partial class Catalog
             }, ["indicator_type", "value", "title"]),
             p =>
             {
-                var days = p.TryGetProperty("expires_in_days", out var d) && d.ValueKind == JsonValueKind.Number ? d.GetInt32() : 30;
-                if (days is < 1 or > 365) throw new BoardException("expires_in_days must be 1–365");
+                var kind = Enum(p, "indicator_type", IndicatorTypes.Keys.ToArray(), "");
+                var value = Intel.Indicators.Normalise(kind, Req(p, "value")) ?? throw new BoardException($"value is not a valid {kind}");
+                var days = Int(p, "expires_in_days", 30, 1, 365);
                 var title = Req(p, "title", max: 200);
                 if (title.Length < 3) throw new BoardException("title must be at least 3 characters");
                 return new JsonObject
                 {
-                    ["indicator_type"] = Enum(p, "indicator_type", IndicatorTypes.Keys.ToArray(), ""),
-                    ["value"] = Req(p, "value"),
+                    ["indicator_type"] = kind,
+                    ["value"] = value,
                     ["title"] = title,
                     ["severity"] = Enum(p, "severity", ["Informational", "Low", "Medium", "High"], "High"),
                     ["expires_in_days"] = days,
@@ -187,6 +264,13 @@ public static partial class Catalog
                     expirationTime = DateTimeOffset.UtcNow.AddDays(p["expires_in_days"]!.GetValue<int>()).ToString("O"),
                 }, ct);
             }),
+
+        new("unblock_indicator", "Remove custom indicator block (MDE)", "recover", true,
+            Schema(new { indicator_id = new { type = "string", description = "Defender custom indicator id (digits)", pattern = "^[0-9]{1,20}$" } }, ["indicator_id"]),
+            p => new JsonObject { ["indicator_id"] = Req(p, "indicator_id", IncidentId(), "Defender indicator id (digits)") },
+            _ => Targets.None,
+            p => $"Remove Defender custom indicator {S(p, "indicator_id")}",
+            (ms, p, _, ct) => Send(ms, MsApi.Defender, $"/api/indicators/{Enc(S(p, "indicator_id"))}", HttpMethod.Delete, null, ct)),
 
         new("purge_email", "Purge email (Defender for Office 365)", "eradicate", true,
             Schema(new
@@ -235,8 +319,8 @@ public static partial class Catalog
             p =>
             {
                 var o = new JsonObject { ["incident_id"] = Req(p, "incident_id", IncidentId(), "Defender XDR incident id (digits)") };
-                if (p.TryGetProperty("status", out _)) o["status"] = Enum(p, "status", ["active", "inProgress", "resolved", "redirected"], "");
-                if (p.TryGetProperty("classification", out _)) o["classification"] = Enum(p, "classification", ["truePositive", "falsePositive", "informationalExpectedActivity", "unknown"], "");
+                if (p.TryGetProperty("status", out var sv) && sv.ValueKind != JsonValueKind.Null) o["status"] = Enum(p, "status", ["active", "inProgress", "resolved", "redirected"], "");
+                if (p.TryGetProperty("classification", out var cv) && cv.ValueKind != JsonValueKind.Null) o["classification"] = Enum(p, "classification", ["truePositive", "falsePositive", "informationalExpectedActivity", "unknown"], "");
                 if (Opt(p, "determination", 100) is { } det) o["determination"] = det;
                 if (Opt(p, "assigned_to", 200) is { } at) o["assigned_to"] = at;
                 if (o.Count == 1) throw new BoardException("nothing to update");
@@ -325,9 +409,11 @@ public static partial class Catalog
     /// <summary>What a kind acts on: device, user, indicator, email or incident. The UI filters its action picker by this.</summary>
     public static string TargetType(string kind) => kind switch
     {
-        "isolate_device" or "release_device" or "run_av_scan" or "collect_investigation_package" => "device",
-        "disable_user" or "revoke_sessions" or "reset_password" => "user",
-        "block_indicator" or "publish_ti_indicator" => "indicator",
+        "isolate_device" or "release_device" or "run_av_scan" or "collect_investigation_package"
+            or "restrict_app_execution" or "unrestrict_app_execution" or "stop_and_quarantine_file" or "tag_device" => "device",
+        "disable_user" or "enable_user" or "revoke_sessions" or "reset_password"
+            or "confirm_user_compromised" or "dismiss_user_risk" or "disable_service_principal" => "user",
+        "block_indicator" or "unblock_indicator" or "publish_ti_indicator" => "indicator",
         "purge_email" => "email",
         _ => "incident",
     };

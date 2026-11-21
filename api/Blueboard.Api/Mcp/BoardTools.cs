@@ -20,7 +20,7 @@ namespace Blueboard.Api.Mcp;
 /// Every call authenticates the bearer token from the transport headers and re-reads the caller's roles from Entra;
 /// there is no shared key. Board content is untrusted data.
 /// </summary>
-public sealed class BoardTools(Authenticator auth, BoardService board, Broker broker, Enrichment enrich, WebhookService hooks, Policy policy, PlaybookRunner playbooks, IntelService intel, ILogger<BoardTools> log)
+public sealed class BoardTools(Authenticator auth, BoardService board, Search search, IncidentQueries incidents, Broker broker, Enrichment enrich, Ingest ingest, WebhookService hooks, Policy policy, PlaybookRunner playbooks, PlaybookSet playbookSet, IntelService intel, ILogger<BoardTools> log)
 {
     /// <summary>Authenticate, require the tool's role, read its input record, run, and return JSON text or an error string.</summary>
     private async Task<string> Call<TIn>(ToolInvocationContext ctx, Func<Principal, TIn, Task<object?>> fn) where TIn : class
@@ -86,6 +86,10 @@ public sealed class BoardTools(Authenticator auth, BoardService board, Broker br
     public Task<string> GetThread([McpToolTrigger(Tools.GetThread, Tools.GetThreadDoc)] ToolInvocationContext ctx) =>
         Call<ThreadQuery>(ctx, async (_, q) => await board.GetThreadAsync(q.MessageId));
 
+    [Function(nameof(SearchMessages))]
+    public Task<string> SearchMessages([McpToolTrigger(Tools.SearchMessages, Tools.SearchMessagesDoc)] ToolInvocationContext ctx) =>
+        Call<SearchQuery>(ctx, async (_, q) => await search.RunAsync(q));
+
     [Function(nameof(PostMessage))]
     public Task<string> PostMessage([McpToolTrigger(Tools.PostMessage, Tools.PostMessageDoc)] ToolInvocationContext ctx) =>
         Call<PostInput>(ctx, async (me, input) => await board.PostAsync(me, input));
@@ -107,6 +111,12 @@ public sealed class BoardTools(Authenticator auth, BoardService board, Broker br
             return settled;
         });
 
+    [Function(nameof(ListIncidents))]
+    public Task<string> ListIncidents([McpToolTrigger(Tools.ListIncidents, Tools.ListIncidentsDoc)] ToolInvocationContext ctx) =>
+        Call<IncidentsQuery>(ctx, async (me, q) => q.View == "queue"
+            ? (object)await incidents.QueueAsync(me, q.IncludeResolved)
+            : await incidents.ListAsync(q.Limit));
+
     [Function(nameof(GetIncident))]
     public Task<string> GetIncident([McpToolTrigger(Tools.GetIncident, Tools.GetIncidentDoc)] ToolInvocationContext ctx) =>
         Call<IncidentQuery>(ctx, async (_, q) =>
@@ -115,6 +125,34 @@ public sealed class BoardTools(Authenticator auth, BoardService board, Broker br
             await intel.AnnotateIncidentAsync(inc);
             return inc;
         });
+
+    [Function(nameof(GetIncidentSummary))]
+    public Task<string> GetIncidentSummary([McpToolTrigger(Tools.GetIncidentSummary, Tools.GetIncidentSummaryDoc)] ToolInvocationContext ctx) =>
+        Call<IncidentQuery>(ctx, async (_, q) =>
+        {
+            var id = await board.ResolveIncidentAsync(q.Incident) ?? throw BoardException.NotFound("incident");
+            return await incidents.SummaryAsync(id);
+        });
+
+    [Function(nameof(SyncIncident))]
+    public Task<string> SyncIncident([McpToolTrigger(Tools.SyncIncident, Tools.SyncIncidentDoc)] ToolInvocationContext ctx) =>
+        Call<IncidentQuery>(ctx, async (_, q) =>
+        {
+            var (outcome, graphId) = await ingest.SyncOneAsync(q.Incident);
+            return new { graph_id = graphId, outcome = outcome.ToString().ToLowerInvariant() };
+        });
+
+    [Function(nameof(ListPlaybooks))]
+    public Task<string> ListPlaybooks([McpToolTrigger(Tools.ListPlaybooks, Tools.ListPlaybooksDoc)] ToolInvocationContext ctx) =>
+        Call(ctx, _ => Task.FromResult<object?>(new
+        {
+            playbooks = playbookSet.All.Select(p => new { p.Id, p.Title, p.File, p.Priority, p.Match, steps = p.Steps.Count }),
+            problems = playbookSet.Problems,
+        }));
+
+    [Function(nameof(AttachPlaybook))]
+    public Task<string> AttachPlaybook([McpToolTrigger(Tools.AttachPlaybook, Tools.AttachPlaybookDoc)] ToolInvocationContext ctx) =>
+        Call<AttachPlaybookInput>(ctx, async (me, a) => await playbooks.AttachByIdAsync(me, a.Incident, a.PlaybookId));
 
     /// <summary>Outside and tenant intel is data written by others: say so in the tool output itself.</summary>
     private const string UntrustedNotice =
@@ -160,6 +198,10 @@ public sealed class BoardTools(Authenticator auth, BoardService board, Broker br
     public Task<string> RunHuntingQuery([McpToolTrigger(Tools.RunHuntingQuery, Tools.RunHuntingQueryDoc)] ToolInvocationContext ctx) =>
         Call<HuntInput>(ctx, async (me, h) => await enrich.HuntAsync(me, h.Query, h.Timespan));
 
+    [Function(nameof(RunSentinelQuery))]
+    public Task<string> RunSentinelQuery([McpToolTrigger(Tools.RunSentinelQuery, Tools.RunSentinelQueryDoc)] ToolInvocationContext ctx) =>
+        Call<SentinelQueryInput>(ctx, async (me, h) => await enrich.SentinelQueryAsync(me, h.Query, h.Timespan));
+
     [Function(nameof(LookupEntity))]
     public Task<string> LookupEntity([McpToolTrigger(Tools.LookupEntity, Tools.LookupEntityDoc)] ToolInvocationContext ctx) =>
         Call<LookupInput>(ctx, async (me, l) => await enrich.LookupAsync(me, l.Kind, l.Value));
@@ -167,6 +209,10 @@ public sealed class BoardTools(Authenticator auth, BoardService board, Broker br
     [Function(nameof(ListActionTypes))]
     public Task<string> ListActionTypes([McpToolTrigger(Tools.ListActionTypes, Tools.ListActionTypesDoc)] ToolInvocationContext ctx) =>
         Call(ctx, _ => Task.FromResult<object?>(Broker.CatalogInfo(policy)));
+
+    [Function(nameof(ListActions))]
+    public Task<string> ListActions([McpToolTrigger(Tools.ListActions, Tools.ListActionsDoc)] ToolInvocationContext ctx) =>
+        Call<ActionsQuery>(ctx, async (_, q) => q.Catalog ? Broker.CatalogInfo(policy) : await broker.ListAsync(q.Status, q.Incident));
 
     [Function(nameof(RequestAction))]
     public Task<string> RequestAction([McpToolTrigger(Tools.RequestAction, Tools.RequestActionDoc)] ToolInvocationContext ctx) =>
@@ -184,7 +230,15 @@ public sealed class BoardTools(Authenticator auth, BoardService board, Broker br
     public Task<string> Unsubscribe([McpToolTrigger(Tools.Unsubscribe, Tools.UnsubscribeDoc)] ToolInvocationContext ctx) =>
         Call<UnsubscribeInput>(ctx, async (me, u) => await hooks.UnsubscribeAsync(me, u.SubscriptionId));
 
+    [Function(nameof(ListSubscriptions))]
+    public Task<string> ListSubscriptions([McpToolTrigger(Tools.ListSubscriptions, Tools.ListSubscriptionsDoc)] ToolInvocationContext ctx) =>
+        Call(ctx, async me => await hooks.ListForPrincipalAsync(me));
+
     [Function(nameof(ScheduleFollowup))]
     public Task<string> ScheduleFollowup([McpToolTrigger(Tools.ScheduleFollowup, Tools.ScheduleFollowupDoc)] ToolInvocationContext ctx) =>
         Call<FollowupInput>(ctx, async (me, f) => await hooks.ScheduleFollowupAsync(me, f));
+
+    [Function(nameof(ListFollowups))]
+    public Task<string> ListFollowups([McpToolTrigger(Tools.ListFollowups, Tools.ListFollowupsDoc)] ToolInvocationContext ctx) =>
+        Call(ctx, async me => await hooks.ListFollowupsAsync(me));
 }
