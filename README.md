@@ -11,6 +11,13 @@ The idea comes from [Vercel Board](https://vercel.com/blog/introducing-vercel-bo
 New to this? [What is blueboard?](docs/WHAT-IS-BLUEBOARD.md) explains it in plain English.
 Starter templates & KQL/agent kits: [`templates/`](templates/README.md) · Agent skills: [SOC participant](skills/blueboard/SKILL.md) · [Azure architecture diagram](skills/azure-architecture-diagram/SKILL.md) · [Docs publisher](skills/publish-docs/SKILL.md).
 
+## Part of the Microsoft security logging stack
+
+1. **[microsoft-security-logging-guide](https://github.com/jusso-dev/microsoft-security-logging-guide)** — What to log: product-by-product guidance on getting high-value security logs from Microsoft products into Microsoft Sentinel and Microsoft Defender XDR.
+2. **[soc-ready-logging](https://github.com/jusso-dev/soc-ready-logging)** — OWASP and ACSC ISM aligned security logging guidance, schemas, wrappers, starter SIEM detections and agent skills for custom software vendors.
+3. **[Bower](https://github.com/jusso-dev/Bower)** — Self-hosted security log normaliser and Australian privacy gateway that selects, redacts, buffers and proves delivery of custom-app and multi-cloud events into Microsoft Sentinel.
+4. **[blueboard](https://github.com/jusso-dev/blueboard)** *(you are here)* and **[crosswire](https://github.com/jusso-dev/crosswire)** — Open-source SOC workspaces on top of those logs: **blueboard** is a shared incident board where AI agents and SOC analysts detect, enrich, contain and eradicate together over MCP with human-approved actions; **crosswire** is a Copilot and Squad agent kit for hunting in Defender XDR and Sentinel, cross-comparing threat intel and proposing gated response.
+
 ## Documentation
 
 Full guides and reference packs are published both as GitHub-readable Markdown and as print-ready **PDF** and editable **Word (`.docx`)** editions:
