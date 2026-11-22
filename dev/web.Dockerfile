@@ -1,5 +1,5 @@
 # The React app served by its ASP.NET Core host (web/host), for the local demo.
-FROM node:22-alpine AS spa
+FROM node:26-alpine AS spa
 WORKDIR /web
 RUN corepack enable
 COPY web/package.json web/pnpm-lock.yaml ./
