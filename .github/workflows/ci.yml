@@ -6,10 +6,15 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   api:
     name: C# API + agent
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     services:
       postgres:
         image: postgres:16-alpine
@@ -20,8 +25,8 @@ jobs:
     env:
       BLUEBOARD_TEST_DATABASE_URL: postgres://postgres:ci-only-password@localhost:5432/postgres
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
         with: { dotnet-version: "10.0.x" }
       - name: Build (warnings are errors)
         working-directory: api
@@ -38,6 +43,8 @@ jobs:
           dotnet build dev/mock-msapi -c Release
       - name: Agent SDK tests
         run: dotnet test --project agents/Blueboard.Agent.Sdk.Tests -c Release
+      - name: No vulnerable NuGet packages (direct or transitive)
+        run: ./scripts/check-nuget-vulns.sh
 
   demo-smoke:
     # The one-command local demo (issue #1): build the compose stack, wait for health, then check over MCP
@@ -46,7 +53,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Start the demo
         run: ./scripts/demo.sh up
       - name: Check incidents, agent output and pending actions over MCP
@@ -61,16 +68,19 @@ jobs:
   web:
     name: React web
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     defaults: { run: { working-directory: web } }
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
         with: { package_json_file: web/package.json }
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
         with: { dotnet-version: "10.0.x" }
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with: { node-version: 22, cache: pnpm, cache-dependency-path: web/pnpm-lock.yaml }
       - run: pnpm install --frozen-lockfile
+      - name: No high or critical advisories in production dependencies
+        run: pnpm audit --prod --audit-level high
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm build
@@ -80,8 +90,9 @@ jobs:
   infra:
     name: Bicep + scripts
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Bicep build + lint
         run: |
           az bicep install

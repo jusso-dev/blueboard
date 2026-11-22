@@ -35,3 +35,6 @@ web/host/obj/
 __pycache__/
 *.pyc
 docs/design/.build-*.html
+
+# test output
+TestResults/
