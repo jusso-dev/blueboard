@@ -11,7 +11,7 @@ COPY agents/ agents/
 COPY dev/mock-msapi/ dev/mock-msapi/
 RUN dotnet publish "$PROJECT" -c Release -o /out
 
-FROM mcr.microsoft.com/dotnet/aspnet:10.0
+FROM mcr.microsoft.com/dotnet/aspnet:11.0
 ARG DLL
 WORKDIR /app
 COPY --from=build /out ./

@@ -14,7 +14,7 @@ COPY web/host/ web/host/
 COPY --from=spa /web/dist web/dist
 RUN dotnet publish web/host -c Release -o /out
 
-FROM mcr.microsoft.com/dotnet/aspnet:10.0
+FROM mcr.microsoft.com/dotnet/aspnet:11.0
 WORKDIR /app
 COPY --from=host /out ./
 USER $APP_UID
