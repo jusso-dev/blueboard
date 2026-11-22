@@ -1,7 +1,7 @@
 # Small .NET apps for the local demo: the mock Microsoft API and the scripted reference agent.
 #   --build-arg PROJECT=dev/mock-msapi  DLL=blueboard-mock-msapi.dll
 #   --build-arg PROJECT=agents/Blueboard.EnrichmentAgent  DLL=blueboard-enrichment-agent.dll
-FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+FROM mcr.microsoft.com/dotnet/sdk:11.0 AS build
 ARG PROJECT
 WORKDIR /src
 COPY global.json ./

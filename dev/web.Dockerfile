@@ -7,7 +7,7 @@ RUN pnpm install --frozen-lockfile
 COPY web/ ./
 RUN pnpm build
 
-FROM mcr.microsoft.com/dotnet/sdk:10.0 AS host
+FROM mcr.microsoft.com/dotnet/sdk:11.0 AS host
 WORKDIR /src
 COPY global.json ./
 COPY web/host/ web/host/

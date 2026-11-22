@@ -11,7 +11,7 @@ ARG FUNCTIONS_IMAGE=mcr.microsoft.com/azure-functions/dotnet-isolated:4-dotnet-i
 ARG CORE_TOOLS_VERSION=4.0.7030
 ARG CORE_TOOLS_SHA256=22931181a4c2891d0040077b7e27f145a1010bac74193ddec269acbea8a3a782
 
-FROM --platform=linux/amd64 mcr.microsoft.com/dotnet/sdk:10.0 AS build
+FROM --platform=linux/amd64 mcr.microsoft.com/dotnet/sdk:11.0 AS build
 WORKDIR /src
 COPY global.json ./
 COPY api/Directory.Build.props api/
@@ -23,7 +23,7 @@ RUN rm -f api/Blueboard.Api/local.settings.json \
  && dotnet publish api/Blueboard.Api -c Release -o /out/api \
  && dotnet publish api/Blueboard.Tools -c Release -o /out/tools
 
-FROM --platform=linux/amd64 mcr.microsoft.com/dotnet/sdk:10.0 AS coretools
+FROM --platform=linux/amd64 mcr.microsoft.com/dotnet/sdk:11.0 AS coretools
 ARG CORE_TOOLS_VERSION
 ARG CORE_TOOLS_SHA256
 RUN apt-get update && apt-get install -y --no-install-recommends unzip && rm -rf /var/lib/apt/lists/* \
