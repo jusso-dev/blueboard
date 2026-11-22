@@ -279,10 +279,11 @@ erDiagram
 | Function App | `blueboard-api-<suffix>` | Flex Consumption (FC1), .NET 10 isolated, 2 GB instances, max 40; CORS: the web origin only; basic-auth publishing off | `blueboard-id-api` | REST, MCP, broker, poller, recovery |
 | App Service plan | `blueboard-plan` | FlexConsumption / FC1 | n/a | Hosts the Function App |
 | Storage account | `blueboardst<suffix>` | Standard LRS, `allowSharedKeyAccess: false`, TLS 1.2 | API identity has Blob Owner, Queue + Table Contributor | Functions host storage, deployment package |
-| PostgreSQL Flexible Server | `blueboard-pg-<suffix>` | v16, Standard_B1ms, 32 GB, 14-day backups, **Entra auth only** | Entra admin = `blueboard-id-api` | Board state, search |
+| PostgreSQL Flexible Server | `blueboard-pg-<suffix>` | v16, Standard_B1ms, 32 GB with autogrow, 14-day backups, **Entra auth only** | Entra admin = `blueboard-id-api` (migrations); requests as `blueboard-id-db` | Board state, search |
 | Application Insights | `blueboard-ai-<suffix>` | workspace-based, local auth disabled | API identity: Monitoring Metrics Publisher | Traces, exceptions, requests |
 | Log Analytics workspace | `blueboard-logs-<suffix>` | PerGB2018, 90 days | n/a | App Insights storage |
 | User-assigned MI | `blueboard-id-api` | n/a | n/a | Graph + Defender app permissions, Postgres admin, storage |
+| User-assigned MI | `blueboard-id-db` | n/a | n/a | PostgreSQL role for requests only (`blueboard_app`, append-only `audit_log`); no Azure permissions |
 | App registration | created by `entra-app.sh` | App roles in `infra/board-api-app-roles.json`, scope `Board.Access`, SPA redirect `/redirect`, no secret, assignment required | n/a | Token audience, roles, browser sign-in |
 
 ## Production hardening

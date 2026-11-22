@@ -76,6 +76,24 @@ public sealed class Setup(Db db, Settings settings, Policy policy, MsClient ms, 
             var files = Directory.Exists(dir) ? Directory.GetFiles(dir, "*.sql").Select(Path.GetFileName).OfType<string>().Order(StringComparer.Ordinal).ToList() : [];
             var pending = files.Where(f => !applied.Contains(f)).ToList();
             if (files.Count == 0) return new("database", name, CheckStatus.Warning, "Reachable, but no migration files ship with this build, so currency can't be checked.");
+            if (pending.Count == 0)
+            {
+                // db/migrations/009: requests should run as a member of blueboard_app that can't rewrite audit_log.
+                await using var roleCmd = db.Command("""
+                    select current_user::text,
+                           case when exists (select 1 from pg_roles where rolname = 'blueboard_app')
+                                then pg_has_role(current_user, 'blueboard_app', 'member') else false end,
+                           has_table_privilege(current_user, 'audit_log', 'UPDATE')
+                    """);
+                await using var rr = await roleCmd.ExecuteReaderAsync(ct);
+                await rr.ReadAsync(ct);
+                var (role, member, canUpdate) = (rr.GetString(0), rr.GetBoolean(1), rr.GetBoolean(2));
+                return member && !canUpdate
+                    ? new("database", name, CheckStatus.Ok, $"Reachable. All {files.Count} migrations applied. Requests run as {role} (blueboard_app: audit_log is append-only).")
+                    : new("database", name, CheckStatus.Warning,
+                        $"Reachable. All {files.Count} migrations applied, but requests run as {role}, which owns the schema: a bug or stolen token could change tables. audit_log still refuses updates and deletes.",
+                        "Deploy with the separate database identity (main.bicep dbRuntimeRole=true, the default), or set PG_MIGRATE_USER and a PGUSER that is a member of blueboard_app. See docs/SECURITY.md.");
+            }
             return pending.Count == 0
                 ? new("database", name, CheckStatus.Ok, $"Reachable. All {files.Count} migrations applied.")
                 : new("database", name, CheckStatus.Failed, $"Reachable, but {pending.Count} migration(s) not applied: {string.Join(", ", pending)}.",
@@ -84,7 +102,7 @@ public sealed class Setup(Db db, Settings settings, Policy policy, MsClient ms, 
         catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
         {
             return new("database", name, CheckStatus.Failed, $"Not reachable ({ex.GetType().Name}).",
-                "Check PGHOST / DATABASE_URL, the PostgreSQL firewall or private endpoint, and that the board identity is the server's Entra admin (infra/main.bicep).");
+                "Check PGHOST / DATABASE_URL, the PostgreSQL firewall or private endpoint, and that PGUSER exists on the server (blueboard-id-db is created by the migration identity, the Entra admin, on first start; see docs/OPERATIONS.md § Database roles).");
         }
     }
 

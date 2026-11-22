@@ -19,6 +19,9 @@ public sealed class TestBoard : IAsyncLifetime
     public const string SkipReason = "set BLUEBOARD_TEST_DATABASE_URL to run integration tests";
 
     private readonly string _dbName = $"bbtest_{Guid.NewGuid():N}"[..20];
+    /// <summary>Login role the board connects as in tests: a member of blueboard_app, owner of nothing.</summary>
+    public const string RuntimeRole = "bbtest_runtime";
+    private static readonly SemaphoreSlim MigrateGate = new(1, 1);
     public Settings Settings { get; private set; } = null!;
     public Db Db { get; private set; } = null!;
     public Audit Audit { get; private set; } = null!;
@@ -44,13 +47,26 @@ public sealed class TestBoard : IAsyncLifetime
         await using (var admin = new NpgsqlConnection(server.ConnectionString))
         {
             await admin.OpenAsync();
-            await using var c = new NpgsqlCommand($"create database {_dbName}", admin);
-            await c.ExecuteNonQueryAsync();
+            await using (var c = new NpgsqlCommand($"create database {_dbName}", admin)) await c.ExecuteNonQueryAsync();
+            // The board runs as a login role with no ownership, as in Azure (db/migrations/009); the server URL's
+            // user (a superuser in CI) applies the migrations and owns the schema.
+            await using (var c = new NpgsqlCommand($$"""
+                do $$ begin
+                  if not exists (select 1 from pg_roles where rolname = '{{RuntimeRole}}') then
+                    create role {{RuntimeRole}} login password '{{RuntimeRole}}';
+                  end if;
+                exception when duplicate_object or unique_violation then null;
+                end $$
+                """, admin)) await c.ExecuteNonQueryAsync();
         }
-        var url = new UriBuilder(ServerUrl) { Path = "/" + _dbName }.Uri.ToString();
-        Settings = new Settings { DatabaseUrl = url, DevAuth = true, ClaimLeaseSeconds = 600 };
+        var ownerUrl = new UriBuilder(ServerUrl) { Path = "/" + _dbName }.Uri.ToString();
+        var url = new UriBuilder(ownerUrl) { UserName = RuntimeRole, Password = RuntimeRole }.Uri.ToString();
+        Settings = new Settings { DatabaseUrl = url, MigrateDatabaseUrl = ownerUrl, DevAuth = true, ClaimLeaseSeconds = 600 };
         Db = new Db(Settings);
-        await new Migrator(Db).RunAsync(Path.Combine(AppContext.BaseDirectory, "migrations"));
+        // Role grants are server-wide; test classes start in parallel, so they migrate one at a time.
+        await MigrateGate.WaitAsync();
+        try { await new Migrator(Db, Settings).RunAsync(Path.Combine(AppContext.BaseDirectory, "migrations")); }
+        finally { MigrateGate.Release(); }
         Audit = new Audit(Db);
         Board = new BoardService(Db, Audit, Settings);
         System = new SystemPrincipal(Db);
@@ -91,6 +107,14 @@ public sealed class TestBoard : IAsyncLifetime
         await using var r = await cmd.ExecuteReaderAsync();
         if (!await r.ReadAsync()) throw new InvalidOperationException($"no principal {handle}");
         return new Principal(r.GetGuid(0), r.GetString(1), r.GetString(2), r.GetString(3), r.GetFieldValue<string[]>(4));
+    }
+
+    /// <summary>Runs SQL as the schema owner (the migration role), not the board's runtime role.</summary>
+    public async Task OwnerExecAsync(string sql)
+    {
+        await using var owner = Db.ForMigrations(Settings);
+        await using var c = owner.Command(sql);
+        await c.ExecuteNonQueryAsync();
     }
 
     public async Task<long> ScalarAsync(string sql, params (string, object?)[] args)

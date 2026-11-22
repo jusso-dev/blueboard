@@ -6,8 +6,10 @@ using Npgsql;
 namespace Blueboard.Api.Data;
 
 /// <summary>
-/// Npgsql data source. In Azure the password is an Entra access token for the Function App's
-/// managed identity (Azure Database for PostgreSQL, password auth disabled).
+/// Npgsql data source. In Azure the password is an Entra access token for a managed identity (Azure Database for
+/// PostgreSQL, password auth disabled). The board serves requests as PGUSER (token for PG_CLIENT_ID); migrations run
+/// as a different, schema-owning role when PG_MIGRATE_USER is set (<see cref="ForMigrations"/>), so the role that
+/// serves requests can't alter tables or rewrite audit_log (db/migrations/009).
 /// </summary>
 public sealed class Db : IAsyncDisposable
 {
@@ -15,19 +17,16 @@ public sealed class Db : IAsyncDisposable
     private readonly NpgsqlDataSource _source;
 
     public Db(Settings settings, TokenCredential? credential = null)
+        : this(Build(settings.DatabaseUrl, settings.PgHost, settings.PgUser, settings.PgDatabase), settings.PgEntraAuth,
+            credential ?? (settings.PgEntraAuth ? Credential(settings.PgClientId) : null))
     {
-        var csb = settings.DatabaseUrl is { } url
-            ? FromUrl(url)
-            : new NpgsqlConnectionStringBuilder
-            {
-                Host = settings.PgHost ?? throw new InvalidOperationException("set DATABASE_URL or PGHOST"),
-                Username = settings.PgUser,
-                Database = settings.PgDatabase,
-                SslMode = SslMode.Require,
-            };
+    }
+
+    private Db(NpgsqlConnectionStringBuilder csb, bool entra, TokenCredential? credential)
+    {
         csb.MaxPoolSize = 20;
         var builder = new NpgsqlDataSourceBuilder(csb.ConnectionString);
-        if (settings.PgEntraAuth)
+        if (entra)
         {
             var cred = credential ?? new DefaultAzureCredential();
             builder.UsePeriodicPasswordProvider(
@@ -37,6 +36,45 @@ public sealed class Db : IAsyncDisposable
         }
         _source = builder.Build();
     }
+
+    /// <summary>True when migrations connect as a different role from the one that serves requests.</summary>
+    public static bool SeparateMigrationRole(Settings s) => s.MigrateDatabaseUrl is not null || s.PgMigrateUser is not null;
+
+    /// <summary>
+    /// A data source for applying migrations: DATABASE_MIGRATE_URL (local, tests), or PG_MIGRATE_USER on PGHOST with
+    /// the default identity's token (AZURE_CLIENT_ID, the PostgreSQL Entra admin). Without either, the runtime settings.
+    /// </summary>
+    public static Db ForMigrations(Settings s, TokenCredential? credential = null, string? database = null)
+    {
+        if (s.MigrateDatabaseUrl is { } url) return new Db(WithDatabase(FromUrl(url), database), false, null);
+        if (s.PgMigrateUser is { } user)
+            return new Db(WithDatabase(Build(null, s.PgHost, user, s.PgDatabase), database), s.PgEntraAuth,
+                credential ?? (s.PgEntraAuth ? new DefaultAzureCredential() : null));
+        return new Db(WithDatabase(Build(s.DatabaseUrl, s.PgHost, s.PgUser, s.PgDatabase), database), s.PgEntraAuth,
+            credential ?? (s.PgEntraAuth ? Credential(s.PgClientId) : null));
+    }
+
+    private static NpgsqlConnectionStringBuilder WithDatabase(NpgsqlConnectionStringBuilder csb, string? database)
+    {
+        if (database is not null) csb.Database = database;
+        return csb;
+    }
+
+    private static NpgsqlConnectionStringBuilder Build(string? url, string? host, string? user, string database) =>
+        url is not null
+            ? FromUrl(url)
+            : new NpgsqlConnectionStringBuilder
+            {
+                Host = host ?? throw new InvalidOperationException("set DATABASE_URL or PGHOST"),
+                Username = user,
+                Database = database,
+                SslMode = SslMode.Require,
+            };
+
+    /// <summary>The token source for a user-assigned identity by client id, or the default chain.</summary>
+    private static TokenCredential Credential(string? clientId) => clientId is null
+        ? new DefaultAzureCredential()
+        : new DefaultAzureCredential(new DefaultAzureCredentialOptions { ManagedIdentityClientId = clientId });
 
     public NpgsqlDataSource Source => _source;
 

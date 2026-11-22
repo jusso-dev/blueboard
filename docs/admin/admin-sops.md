@@ -340,7 +340,7 @@ These 14 standard operating procedures govern day-to-day administration, change 
 ### Steps
 
 1. Confirm `/setup` **Database** reports **OK** with all migrations in `db/migrations/` present in `schema_migrations`.
-2. Verify PostgreSQL Flexible Server automated backup status (14+ days; geo-redundant recommended for production) and HA state in `production` profile:
+2. Verify PostgreSQL Flexible Server automated backup status (14 days `mvp`, 35 days geo-redundant `production`) and HA state. Twice a year, run the restore drill in [OPERATIONS.md § Backup and restore](../OPERATIONS.md#backup-and-restore):
 
    ```sh
    az postgres flexible-server show -g "$RESOURCE_GROUP" -n <pg-server-name> \

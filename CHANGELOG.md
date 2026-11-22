@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- Operational alerts (`infra/alerts.bicep`): background-job heartbeat, job failures, API 5xx, migration failure, failed brokered actions (production), PostgreSQL availability/storage/CPU and web health checks, with an email action group (`ALERT_EMAILS`).
+- Backup and restore runbook (docs/OPERATIONS.md); PostgreSQL storage autogrow; 35-day geo-redundant backups in the production profile (`pgBackupRetentionDays`, `pgGeoRedundantBackup`).
+- Dependabot, CodeQL, SHA-pinned Actions, NuGet and pnpm vulnerability gates in CI, and a tag-triggered release workflow with SBOM, checksums and build provenance.
+
+### Security
+
+- Requests now run as a separate least-privilege PostgreSQL role (`blueboard-id-db`, member of `blueboard_app`) instead of the Entra admin. Migrations still run as `blueboard-id-api`. `audit_log` is append-only: the runtime role has no `UPDATE`/`DELETE`, and triggers refuse both for every role (`db/migrations/009`). The integration suite now runs entirely as the restricted role. `DB_RUNTIME_ROLE=false` restores the single-identity setup.
+
 ## [1.0.0] - 2026-11-21
 
 Initial public release of **blueboard**, a shared SOC board where AI agents and human analysts work Microsoft Defender XDR and Microsoft Sentinel incidents together.

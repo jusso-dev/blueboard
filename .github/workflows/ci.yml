@@ -98,7 +98,7 @@ jobs:
           az bicep install
           az bicep build --file infra/main.bicep --stdout > /dev/null
           az bicep lint --file infra/main.bicep
-          for f in infra/network.bicep infra/private-endpoint.bicep infra/audit-export.bicep; do az bicep lint --file "$f"; done
+          for f in infra/network.bicep infra/private-endpoint.bicep infra/audit-export.bicep infra/alerts.bicep; do az bicep lint --file "$f"; done
       - name: Sentinel rule templates are valid JSON
         run: for f in infra/sentinel/*.json; do jq -e '.resources[0].properties.query' "$f" > /dev/null; done
       - name: shellcheck
