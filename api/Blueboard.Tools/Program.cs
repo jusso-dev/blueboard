@@ -7,7 +7,8 @@ using Blueboard.Api.Data;
 using Blueboard.Api.Graph;
 using Blueboard.Api.Ops;
 
-// blueboard migrate                 apply db/migrations (DATABASE_URL, or PGHOST + PG_ENTRA_AUTH=true)
+// blueboard migrate                 apply db/migrations (DATABASE_URL, or PGHOST + PG_ENTRA_AUTH=true; as
+//                                   DATABASE_MIGRATE_URL / PG_MIGRATE_USER when set, see db/migrations/009)
 // blueboard seed-dev [--sample]     local principals with roles, plus optional sample incidents (refused in Azure)
 // blueboard policy-check [file]     validate a policy file (default BLUEBOARD_POLICY_FILE); exit 1 on error
 // blueboard doctor [--json]         the setup checklist (same checks as /api/setup); exit 1 if any check failed
@@ -57,7 +58,7 @@ await using var db = new Db(settings);
 switch (cmd)
 {
     case "migrate":
-        var applied = await new Migrator(db).RunAsync(Path.Combine(AppContext.BaseDirectory, "migrations"));
+        var applied = await new Migrator(db, settings).RunAsync(Path.Combine(AppContext.BaseDirectory, "migrations"));
         Console.WriteLine(applied.Count == 0 ? "up to date" : $"applied {string.Join(", ", applied)}");
         break;
 

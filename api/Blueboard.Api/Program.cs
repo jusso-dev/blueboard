@@ -44,7 +44,7 @@ builder.Services.AddSingleton<Ingest>();
 builder.Services.AddSingleton<WebhookService>(sp => new WebhookService(
     sp.GetRequiredService<Db>(), sp.GetRequiredService<Audit>(), sp.GetRequiredService<BoardService>(),
     sp.GetRequiredService<SystemPrincipal>(), settings, sp.GetRequiredService<ILogger<WebhookService>>()));
-builder.Services.AddSingleton<Migrator>();
+builder.Services.AddSingleton(sp => new Migrator(sp.GetRequiredService<Db>(), settings));
 // Outbound notifications and audit export: no redirects (a redirect could leave the host allowlist), short timeouts,
 // and no HttpClient request logging (it would write the webhook URL, which is a secret, to the logs).
 static HttpMessageHandler NoRedirects() => new SocketsHttpHandler { AllowAutoRedirect = false, ConnectTimeout = TimeSpan.FromSeconds(10) };

@@ -24,7 +24,9 @@
 //
 // Identities (no stored secrets anywhere):
 //   id-api   Function App: Graph + Defender application permissions (infra/grant-permissions.sh),
-//            PostgreSQL Entra admin, host storage data roles, Application Insights publisher.
+//            PostgreSQL Entra admin (applies migrations at start-up), host storage data roles, Application Insights publisher.
+//   id-db    Function App: the PostgreSQL role every request runs as (dbRuntimeRole, on by default). A member of
+//            blueboard_app with no ownership: it can't change tables, and audit_log is append-only (db/migrations/009).
 
 targetScope = 'resourceGroup'
 
@@ -101,6 +103,19 @@ param sentinelWorkspaceResourceId string = ''
 @description('publish_ti_indicator: assign Microsoft Sentinel Contributor on that workspace to the board identity. Needs Owner or User Access Administrator on the workspace.')
 param assignSentinelContributor bool = false
 
+@description('Serve requests as a separate, least-privilege PostgreSQL role (id-db) instead of the Entra admin. Migrations still run as the admin (id-api).')
+param dbRuntimeRole bool = true
+@description('PostgreSQL automated backup retention in days (7 to 35).')
+@minValue(7)
+@maxValue(35)
+param pgBackupRetentionDays int = profile == 'production' ? 35 : 14
+@description('Geo-redundant PostgreSQL backups (to the paired Australian region). Fixed when the server is created: on an existing server keep the value it was created with, or the deployment fails.')
+param pgGeoRedundantBackup bool = profile == 'production'
+@description('Email addresses that receive operational alerts (Function errors, stalled ingest, audit export, database health). Empty: alert rules are created with no recipients.')
+param alertEmails array = []
+@description('Create the operational alert rules and action group (infra/alerts.bicep).')
+param alertsEnabled bool = true
+
 var isProd = profile == 'production'
 // Australia East has availability zones; Australia Southeast doesn't, so HA there is same-zone.
 var hasZones = location == 'australiaeast'
@@ -135,6 +150,12 @@ resource appInsights 'Microsoft.Insights/components@2020-02-02' = {
 // ── identities ───────────────────────────────────────────────────────────────────────────────
 resource idApi 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
   name: '${namePrefix}-id-api'
+  location: location
+}
+
+// The PostgreSQL role requests run as (dbRuntimeRole). It holds no Azure or Microsoft permissions at all.
+resource idDb 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = if (dbRuntimeRole) {
+  name: '${namePrefix}-id-db'
   location: location
 }
 
@@ -192,9 +213,9 @@ resource pg 'Microsoft.DBforPostgreSQL/flexibleServers@2024-08-01' = {
   sku: isProd ? { name: 'Standard_D2ds_v5', tier: 'GeneralPurpose' } : { name: 'Standard_B1ms', tier: 'Burstable' }
   properties: union({
     version: '16'
-    storage: { storageSizeGB: 32 }
     authConfig: { activeDirectoryAuth: 'Enabled', passwordAuth: 'Disabled', tenantId: tenantId }
-    backup: { backupRetentionDays: 14, geoRedundantBackup: 'Disabled' }
+    storage: { storageSizeGB: 32, autoGrow: 'Enabled' }
+    backup: { backupRetentionDays: pgBackupRetentionDays, geoRedundantBackup: pgGeoRedundantBackup ? 'Enabled' : 'Disabled' }
     highAvailability: isProd ? { mode: hasZones ? 'ZoneRedundant' : 'SameZone' } : { mode: 'Disabled' }
   }, isProd ? { network: { publicNetworkAccess: 'Disabled' } } : {})
 }
@@ -235,7 +256,7 @@ resource api 'Microsoft.Web/sites@2024-04-01' = {
   name: '${namePrefix}-api-${suffix}'
   location: location
   kind: 'functionapp,linux'
-  identity: { type: 'UserAssigned', userAssignedIdentities: { '${idApi.id}': {} } }
+  identity: { type: 'UserAssigned', userAssignedIdentities: dbRuntimeRole ? { '${idApi.id}': {}, '${idDb.id}': {} } : { '${idApi.id}': {} } }
   properties: union({
     serverFarmId: plan.id
     httpsOnly: true
@@ -298,6 +319,16 @@ var notifySettings = union(notifySecretSettings, {
   WEBHOOK_ALLOWED_HOSTS: webhookAllowedHosts
   WEBHOOK_SIGNING_KEY: isProd && !empty(webhookSigningKey) ? '@Microsoft.KeyVault(VaultName=${vaultName};SecretName=webhook-signing-key)' : webhookSigningKey
 })
+// Requests run as id-db (a member of blueboard_app); migrations run as id-api, the Entra admin, which creates the
+// id-db role from its object id on first start (db/migrations/009, Data/Migrator.cs).
+var dbSettings = dbRuntimeRole
+  ? {
+      PGUSER: idDb!.name
+      PG_CLIENT_ID: idDb!.properties.clientId
+      PG_RUNTIME_PRINCIPAL_ID: idDb!.properties.principalId
+      PG_MIGRATE_USER: idApi.name
+    }
+  : { PGUSER: idApi.name }
 var productionSettings = isProd
   ? {
       // Read through a Key Vault reference with the Function App's identity (keyVaultReferenceIdentity below).
@@ -322,14 +353,13 @@ resource apiSettings 'Microsoft.Web/sites/config@2024-04-01' = {
     AZURE_CLIENT_ID: idApi.properties.clientId
     PGHOST: pg.properties.fullyQualifiedDomainName
     PGDATABASE: 'blueboard'
-    PGUSER: idApi.name
     PG_ENTRA_AUTH: 'true'
     AZURE_TENANT_ID: tenantId
     BOARD_API_AUDIENCE: boardApiAudience
     BOARD_API_CLIENT_ID: boardApiClientId
     INGEST_ENABLED: string(ingestEnabled)
     BROKER_EXECUTE: string(brokerExecute)
-  }, productionSettings, notifySettings, tiSettings)
+  }, dbSettings, productionSettings, notifySettings, tiSettings)
   dependsOn: isProd ? [kvSecretsRole, kvPolicySecret] : []
 }
 
@@ -545,3 +575,19 @@ output apiName string = api.name
 output apiHostname string = api.properties.defaultHostName
 output apiIdentityPrincipalId string = idApi.properties.principalId
 output pgServerName string = pg.name
+output dbIdentityName string = dbRuntimeRole ? idDb!.name : idApi.name
+
+// ── operational alerts ───────────────────────────────────────────────────────────────────────
+module alerts 'alerts.bicep' = if (alertsEnabled) {
+  name: 'alerts'
+  params: {
+    location: location
+    namePrefix: namePrefix
+    appInsightsId: appInsights.id
+    logsWorkspaceId: logs.id
+    pgServerId: pg.id
+    webSiteId: web.id
+    emails: alertEmails
+    auditExportEnabled: isProd
+  }
+}

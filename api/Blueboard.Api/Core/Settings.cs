@@ -8,6 +8,20 @@ public sealed record Settings
     public string? PgUser { get; init; }
     public string PgDatabase { get; init; } = "blueboard";
     public bool PgEntraAuth { get; init; }
+    /// <summary>
+    /// Client id of the user-assigned identity the board queries PostgreSQL with (PGUSER, blueboard-id-db). Empty: the
+    /// default identity (AZURE_CLIENT_ID).
+    /// </summary>
+    public string? PgClientId { get; init; }
+    /// <summary>
+    /// Database role that applies migrations and owns the tables: the PostgreSQL Entra admin (blueboard-id-api, token
+    /// from the default identity). When set, PGUSER is a least-privilege member of blueboard_app (db/migrations/009).
+    /// </summary>
+    public string? PgMigrateUser { get; init; }
+    /// <summary>Entra object id of the PGUSER identity, so migrations can create its database role if it's missing.</summary>
+    public string? PgRuntimePrincipalId { get; init; }
+    /// <summary>Local and tests: postgres:// URL migrations use instead of DATABASE_URL (a role that owns the schema).</summary>
+    public string? MigrateDatabaseUrl { get; init; }
 
     public string? TenantId { get; init; }
     /// <summary>App ID URI of the board API, e.g. api://blueboard-prod. Agent tokens must carry this audience.</summary>
@@ -79,6 +93,10 @@ public sealed record Settings
             PgUser = Env("PGUSER"),
             PgDatabase = Env("PGDATABASE") ?? "blueboard",
             PgEntraAuth = Flag("PG_ENTRA_AUTH"),
+            PgClientId = Env("PG_CLIENT_ID"),
+            PgMigrateUser = Env("PG_MIGRATE_USER"),
+            PgRuntimePrincipalId = Env("PG_RUNTIME_PRINCIPAL_ID"),
+            MigrateDatabaseUrl = Env("DATABASE_MIGRATE_URL"),
             TenantId = Env("AZURE_TENANT_ID"),
             ApiAudience = Env("BOARD_API_AUDIENCE"),
             ApiClientId = Env("BOARD_API_CLIENT_ID"),

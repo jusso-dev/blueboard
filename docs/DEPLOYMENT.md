@@ -191,7 +191,7 @@ Non-secret outputs (client ID, principal IDs, host names) are saved to `infra/ou
 | Web App + App Service plan (Linux, B1) | Serves the React build through `web/host` (.NET 10) with CSP and HSTS. HTTPS only, TLS 1.2, FTP and basic-auth publishing off. **No identity, no secrets** |
 | Function App + Flex Consumption plan | .NET 10 isolated, max 40 instances, deployment package in blob storage (identity auth), CORS for the web origin only, basic-auth publishing off |
 | Storage account | Functions host storage. `allowSharedKeyAccess: false`, so the API identity uses data roles |
-| PostgreSQL Flexible Server 16 | `passwordAuth: Disabled`. `blueboard-id-api` is the Entra admin |
+| PostgreSQL Flexible Server 16 | `passwordAuth: Disabled`. `blueboard-id-api` is the Entra admin and applies migrations; requests run as `blueboard-id-db` ([OPERATIONS.md § Database roles](OPERATIONS.md#database-roles)) |
 | Application Insights + Log Analytics | Local auth disabled: the API publishes with its managed identity |
 | Managed identity | `blueboard-id-api` (Function App). The Web App has none |
 

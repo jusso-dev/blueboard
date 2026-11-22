@@ -143,14 +143,73 @@ BB_ENV=prod BB_PROFILE=production POLICY_FILE=policy.json ./infra/up.sh
 | API cold starts | Scale from zero | One **always-ready** `http` instance |
 | Web App | B1 (or `WEB_SKU`) | P0v3 |
 | Audit log | PostgreSQL only | Also shipped to **`BlueboardAudit_CL`** in Log Analytics |
+| PostgreSQL backups | 14 days, locally redundant | **35 days, geo-redundant** (to the paired Australian region) |
+
+Both profiles: storage autogrow on, requests run as the least-privilege database role (`blueboard-id-db`, see [Database roles](#database-roles)), and the operational alerts below.
 
 Everything stays in the one Australian region you choose. Changing the policy: update the `policy-json` secret in Key Vault (or re-run `up.sh` with a new `POLICY_FILE`), then restart the Function App. The Setup page shows the counts from the policy now in force.
 
 Front Door and WAF stay optional and documented in [architecture.md](architecture.md#production-hardening).
 
+Geo-redundant backup is fixed when the PostgreSQL server is created. Choose it on the first deployment (the production profile does). For an existing server, keep `pgGeoRedundantBackup` at the value it was created with, or the deployment fails. To change it, restore to a new server ([Backup and restore](#backup-and-restore)).
+
 **Not yet deployed live.** Both profiles build and lint (`az bicep build`, `az bicep lint`, run in CI), and the compiled `mvp` template has the same outputs as before, but the production profile hasn't been deployed to a subscription. Run `az deployment group what-if` with your parameters before the first production deployment, and check afterwards that `az postgres flexible-server show -g <rg> -n <server> --query network.publicNetworkAccess` says `Disabled`.
 
 ---
+
+## Operational alerts
+
+`infra/alerts.bicep` (both profiles, `alertsEnabled=true` by default) creates alert rules for whether the board is up and healthy. The Sentinel rules further down cover security events. Give recipients with `ALERT_EMAILS=soc-oncall@example.com,platform@example.com ./infra/deploy.sh` (remembered for later runs). With no recipients the rules still fire in the portal under Azure Monitor → Alerts.
+
+| Rule | Severity | Fires when | First check |
+|---|---|---|---|
+| `heartbeat` | 1 | No successful `recover-actions` run (every minute) in 15 minutes | `/api/healthz`, Function App state, PostgreSQL |
+| `job-failures` | 2 | A timer job (ingest, notifications, audit export, TI) fails 3+ times in 15 minutes, split by job | Setup page: last ingest / export error |
+| `api-5xx` | 2 | More than 10 HTTP 5xx responses from the REST API or MCP in 15 minutes | Application Insights → Failures |
+| `migration-failed` | 1 | The Function App logs `database migration failed` at start-up | Setup page: Database; `blueboard migrate` |
+| `action-failed` | 2 | An approved action failed when it ran (production profile, from `BlueboardAudit_CL`) | The incident thread; Defender Action center |
+| `pg-down` | 0 | PostgreSQL `is_db_alive` drops below 1 | Azure portal → PostgreSQL → Resource health |
+| `pg-storage` | 2 | Database storage above 85% (autogrow is on, but watch growth) | Table sizes; `ti_fetch_cache` and `webhook_deliveries` |
+| `pg-cpu` | 3 | Database CPU above 85% for 30 minutes | Heavy search or report queries; scale the SKU |
+| `web-health` | 1 | App Service health checks on the web app's `/healthz` fail | Web App → Diagnose and solve problems |
+
+Thresholds suit a single SOC. Tune them in the portal or in `infra/alerts.bicep`. All of them auto-resolve.
+
+## Database roles
+
+The Function App has two user-assigned identities:
+
+- **`blueboard-id-api`** is the PostgreSQL Entra admin. The board uses it only to apply `db/migrations` at start-up, and it owns the tables. It also holds the Graph and Defender permissions.
+- **`blueboard-id-db`** is the role every request and job uses (`PGUSER`). It holds no Azure or Microsoft permissions. It is a member of `blueboard_app` (`db/migrations/009`), so it can read and write board tables, can only `SELECT` and `INSERT` on `audit_log`, can't touch `schema_migrations`, and owns nothing, so it can't alter or drop a table or a trigger.
+
+`audit_log` also has triggers that refuse `UPDATE`, `DELETE` and `TRUNCATE` for every role, the owner included. On first start after deployment, the migrator creates the `blueboard-id-db` role from its object id (`pgaadauth_create_principal_with_oid`) and grants it `blueboard_app`. The Setup page's **Database** check shows which role requests run as, and warns if that role owns the schema.
+
+`DB_RUNTIME_ROLE=false ./infra/deploy.sh` goes back to a single identity (requests as the Entra admin). Keep that only as a break-glass option: the append-only triggers still apply, but the owner can drop them.
+
+## Backup and restore
+
+PostgreSQL Flexible Server takes automated backups: daily snapshots plus transaction logs, for point-in-time restore to any second in the retention window (14 days in `mvp`, 35 in `production`, `pgBackupRetentionDays` to change it). A restore always creates a **new server**. The running one is never overwritten.
+
+**Restore (drill this once before go-live, then twice a year):**
+
+1. Pause the broker on the Setup page so nothing runs while you switch.
+2. Restore to a new server at the time you need (UTC):
+
+   ```sh
+   az postgres flexible-server restore -g "$RESOURCE_GROUP" \
+     --source-server <pg-server-name> --name <pg-server-name>-restored \
+     --restore-time 2026-11-22T03:15:00Z
+   # production with geo-redundant backup, if the region is down:
+   # az postgres flexible-server geo-restore -g <rg> --source-server <id> --name <new> --location australiasoutheast
+   ```
+
+   The restored server keeps the source's networking. In `production`, create a private endpoint for it in the same subnet and DNS zone (`infra/private-endpoint.bicep`). It also keeps the Entra admin and the `blueboard-id-db` role.
+3. Point the board at it: set `PGHOST` on the Function App to the new server's FQDN (`az functionapp config appsettings set ... --settings PGHOST=<fqdn>`). Leave `PGUSER` and the other settings as they are.
+4. Check the Setup page: **Database** should be OK, with all migrations applied. Then resume the broker.
+5. Reconcile the audit trail. Rows written after the restore point exist only in Sentinel (`BlueboardAudit_CL | where AuditId > <max id in the restored audit_log>`). Export them for the record. The board doesn't re-import them.
+6. For a lasting move, redeploy so `main.bicep` manages the new server, or rename back and retire the old one once you're sure.
+
+What a restore can't bring back: incidents re-sync from Defender on the next ingest, so nothing is lost there. Board messages, claims and actions after the restore point are gone, apart from their audit copy in Sentinel. Actions already executed in Defender or Entra stay done: check the Defender Action center for anything run after the restore point.
 
 ## Audit log in Microsoft Sentinel
 
