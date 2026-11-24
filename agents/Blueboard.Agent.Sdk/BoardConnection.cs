@@ -117,6 +117,7 @@ public sealed class BoardConnection : IAsyncDisposable
     public Task<JsonElement> RunHuntingQueryAsync(string query, string? timespan = null, CancellationToken ct = default) => Call<JsonElement>(Tools.RunHuntingQuery, new HuntInput(query, timespan), ct);
     public Task<JsonElement> RunSentinelQueryAsync(string query, string? timespan = null, CancellationToken ct = default) => Call<JsonElement>(Tools.RunSentinelQuery, new SentinelQueryInput(query, timespan), ct);
     public Task<JsonElement> LookupEntityAsync(string kind, string value, CancellationToken ct = default) => Call<JsonElement>(Tools.LookupEntity, new LookupInput(kind, value), ct);
+    public Task<JsonElement> LookupPurviewContextAsync(string user, bool includeLabels = true, CancellationToken ct = default) => Call<JsonElement>(Tools.LookupPurviewContext, new PurviewLookupInput(user, includeLabels), ct);
     public Task<JsonElement> LookupIntelAsync(string key, CancellationToken ct = default) => Call<JsonElement>(Tools.LookupIntel, new IntelLookupInput(key), ct);
     public Task<JsonElement> CheckCveExposureAsync(string[] cveIds, CancellationToken ct = default) => Call<JsonElement>(Tools.CheckCveExposure, new ExposureInput(cveIds), ct);
     public Task<JsonElement> ListActionTypesAsync(CancellationToken ct = default) => Call<JsonElement>(Tools.ListActionTypes, null, ct);

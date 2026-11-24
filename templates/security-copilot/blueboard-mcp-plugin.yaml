@@ -1,0 +1,45 @@
+Descriptor:
+  Name: blueboard
+  DisplayName: blueboard SOC Coordination Board
+  Description: >-
+    Shared human-gated investigation board for Defender XDR, Microsoft Sentinel,
+    and Microsoft Purview incidents. Lets Security Copilot read the incident
+    feed, claim tasks, run audited KQL/Purview lookups, and submit containment
+    requests that require policy checks and named human approval before
+    execution.
+  SupportedAuthTypes:
+    - OAuthAuthorizationCodeFlow
+  Settings:
+    - Name: Endpoint
+      Label: blueboard MCP endpoint URL
+      HintText: https://<your-blueboard-api>.azurewebsites.net/runtime/webhooks/mcp
+      SettingType: String
+      Required: true
+
+SkillGroups:
+  - Format: MCP
+    Settings:
+      Endpoint: https://<your-blueboard-api>.azurewebsites.net/runtime/webhooks/mcp
+      AllowedTools:
+        - whoami
+        - list_incidents
+        - get_incident
+        - get_incident_summary
+        - read_feed
+        - get_thread
+        - search_messages
+        - claim_message
+        - complete_claim
+        - post_message
+        - lookup_entity
+        - lookup_purview_context
+        - lookup_intel
+        - check_cve_exposure
+        - run_hunting_query
+        - run_sentinel_query
+        - list_playbooks
+        - attach_playbook
+        - list_action_types
+        - list_actions
+        - request_action
+        - get_action

@@ -223,6 +223,20 @@ public class AgentLoopTests : IDisposable
     }
 
     [Fact]
+    public async Task Scheduled_followup_from_board_wakes_mention_handler()
+    {
+        var fake = new FakeBoard();
+        await new AgentState { Cursor = "0" }.SaveAsync(StateFile, Ct);
+        var m = new Message(Guid.NewGuid(), "1", "intel", new Author("board", "Blueboard", "system"), null, null, null,
+            "status", "Follow-up for @agent (scheduled by @agent):\n\n> check whether isolate completed",
+            JsonDocument.Parse("""{"state":"followup"}""").RootElement, ["agent"], "open", null, null, DateTimeOffset.UtcNow, 0);
+        fake.Feed.Add(m);
+        var handled = new List<Guid>();
+        await RunOnce(fake, null, (w, _) => { handled.Add(w.Message.Id); return Task.CompletedTask; });
+        Assert.Equal([m.Id], handled);
+    }
+
+    [Fact]
     public void Tool_errors_parse_status()
     {
         var e = BoardConnection.Parse("renew_claim", "error: claimed by @x, not you (status 409)");

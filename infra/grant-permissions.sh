@@ -12,6 +12,8 @@
 #   NOTIFY_MAIL=1 ./infra/grant-permissions.sh ...    # also Mail.Send for approver email (scope it with an
 #                                                       # application access policy: docs/OPERATIONS.md)
 #   TI_MSTI=1 ./infra/grant-permissions.sh ...        # add ThreatIntelligence.Read.All (Microsoft Threat Intelligence lookups)
+#   PURVIEW_LABELS=1 ./infra/grant-permissions.sh ... # add InformationProtectionPolicy.Read.All (Purview sensitivity labels)
+#   PURVIEW_GUARD=1 ./infra/grant-permissions.sh ...  # add Content.Process.All (Purview processContent guard on posts)
 #
 # publish_ti_indicator needs no Graph permission: it needs the Azure role Microsoft Sentinel Contributor on the
 # Sentinel workspace (main.bicep assignSentinelContributor, or the az role assignment in docs/THREAT_INTEL.md).
@@ -90,6 +92,14 @@ for p in Machine.Read.All File.Read.All Ip.Read.All Url.Read.All; do grant "$MDE
 if [[ "${TI_MSTI:-}" == "1" ]]; then
   log "Microsoft Threat Intelligence (TI_MSTI=1)"
   grant "$GRAPH_APP" ThreatIntelligence.Read.All
+fi
+if [[ "${PURVIEW_LABELS:-}" == "1" ]]; then
+  log "Microsoft Purview sensitivity labels (PURVIEW_LABELS=1)"
+  grant "$GRAPH_APP" InformationProtectionPolicy.Read.All
+fi
+if [[ "${PURVIEW_GUARD:-}" == "1" ]]; then
+  log "Microsoft Purview processContent content guard (PURVIEW_GUARD=1)"
+  grant "$GRAPH_APP" Content.Process.All
 fi
 
 # Read-only unless ACTIONS names the writes (or ACTIONS=all): a bare run can't change anything in the tenant.

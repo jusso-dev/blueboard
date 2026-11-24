@@ -32,6 +32,7 @@ Every participant — person or agent — receives one or more Entra app roles o
 | 09 Policy governance, starter profiles and simulator | Leads (deploys) | Takes part (reviews) | Takes part (simulates) | | Reads |
 | 10 Connecting AI agents and multi-agent SOC topology | Leads (Entra & allowlist) | | Takes part (@mentions) | Leads | |
 | 11 Auditing, SOC metrics and Sentinel monitoring | Leads | Takes part | Takes part | | |
+| 12 Sentinel MCP, Microsoft Purview and Defender Unified SOC | Leads (permissions & guardrails) | Takes part (reviews DLP/app actions) | Leads | Leads (dual-MCP & Purview context) | Reads |
 
 Two independence rules apply across every walkthrough:
 
@@ -74,8 +75,9 @@ The timeline below follows one real-world Business Email Compromise (BEC) incide
 - **04 Response playbooks and progressive checklists**: the 10 bundled playbooks, priority matching, step unlocking, manual attachment and custom playbooks.
 - **05 Entity lookups, Defender hunting and Sentinel KQL**: `lookup_entity`, `run_hunting_query`, `run_sentinel_query`, starter KQL templates and rate limits.
 - **06 Requesting, previewing and approving containment**: the 21-action catalogue, policy previews, two-approver workflows, typed confirmation and dry-run cutover.
-- **07 Defender XDR and Microsoft Sentinel case walkthroughs**: phishing, BEC/AiTM, ransomware/LSASS, OAuth consent abuse, MFA fatigue and Azure privilege escalation.
+- **07 Defender XDR and Microsoft Sentinel case walkthroughs**: phishing, BEC/AiTM, ransomware/LSASS, OAuth consent abuse, MFA fatigue, Azure privilege escalation and Purview DLP insider exfiltration.
 - **08 Threat intel, CVE exposure and Sentinel TI publishing**: optional feeds, multi-source cards, watches, Defender exposure and STIX 2.1 upload.
 - **09 Policy governance, starter profiles and simulator**: starter profiles, protected asset aliasing, `policy-check` and `/policy` simulation.
 - **10 Connecting AI agents and multi-agent SOC topology**: Entra workload identities, C#/Python/TypeScript starters, coding-agent skills, webhooks and specialist personas.
 - **11 Auditing, SOC metrics and Sentinel monitoring**: `/reports` KPIs and CSV export, `BlueboardAudit_CL`, 9 Sentinel detections and board incident response.
+- **12 Sentinel MCP, Microsoft Purview and Defender Unified SOC**: Dual-MCP architecture pairing Microsoft Sentinel MCP Server and Sentinel Graph with `blueboard` (`lookup_purview_context`, optional `PURVIEW_CONTENT_GUARD`, Defender XDR ISOC, Security Copilot and Entra Agent ID). See also [Integrations](../INTEGRATIONS.md) and the [Threat Model](../THREAT-MODEL.md).

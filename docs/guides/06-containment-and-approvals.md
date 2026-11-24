@@ -20,24 +20,27 @@ Every brokered action is defined in `api/Blueboard.Api/Actions/Catalog.cs`. Dest
 
 | Action (`kind`) | Stage | Destructive | Required permission | Key parameters |
 |---|---|---|---|---|
-| `isolate_device` | contain | Yes | `Machine.Isolate` (MDE) | `device_id`, `isolation_type` (`Full` \| `Selective`), `comment` |
-| `release_device` | recover | Yes | `Machine.Isolate` (MDE) | `device_id`, `comment` |
-| `run_av_scan` | eradicate | No | `Machine.Scan` (MDE) | `device_id`, `scan_type` (`Quick` \| `Full`), `comment` |
-| `collect_investigation_package` | contain | No | `Machine.CollectForensics` (MDE) | `device_id`, `comment` |
-| `restrict_app_execution` | contain | Yes | `Machine.RestrictExecution` (MDE) | `device_id`, `comment` |
-| `unrestrict_app_execution` | recover | Yes | `Machine.RestrictExecution` (MDE) | `device_id`, `comment` |
-| `stop_and_quarantine_file` | eradicate | Yes | `Machine.StopAndQuarantine` (MDE) | `device_id`, `sha1`, `comment` |
-| `tag_device` | record | No | `Machine.ReadWrite.All` (MDE) | `device_id`, `tag`, `action` (`Add` \| `Remove`) |
-| `block_indicator` | contain | Yes | `Ti.ReadWrite.All` (MDE) | `indicator_type`, `indicator_value`, `action` (`Block` \| `BlockAndRemediate` \| `Alert` \| `Warn`), `title`, `description`, `expiration_days` (1–365) |
-| `unblock_indicator` | recover | Yes | `Ti.ReadWrite.All` (MDE) | `indicator_id`, `comment` |
-| `disable_user` | contain | Yes | `User.EnableDisableAccount.All` (Graph) | `user_id` (UPN or Entra OID), `comment` |
-| `enable_user` | recover | Yes | `User.EnableDisableAccount.All` (Graph) | `user_id`, `comment` |
-| `revoke_sessions` | contain | Yes | `User.RevokeSessions.All` (Graph) | `user_id` |
-| `reset_password` | eradicate | Yes | `User-PasswordProfile.ReadWrite.All` (Graph) | `user_id`, `force_change_next_sign_in` |
+| `isolate_device` | contain | Yes | `Machine.Isolate` (MDE) | `machine_id`, `isolation_type` (`Full` \| `Selective`) |
+| `release_device` | recover | Yes | `Machine.Isolate` (MDE) | `machine_id` |
+| `run_av_scan` | eradicate | No | `Machine.Scan` (MDE) | `machine_id`, `scan_type` (`Quick` \| `Full`) |
+| `collect_investigation_package` | contain | No | `Machine.CollectForensics` (MDE) | `machine_id` |
+| `restrict_app_execution` | contain | Yes | `Machine.RestrictExecution` (MDE) | `machine_id` |
+| `unrestrict_app_execution` | recover | Yes | `Machine.RestrictExecution` (MDE) | `machine_id` |
+| `stop_and_quarantine_file` | eradicate | Yes | `Machine.StopAndQuarantine` (MDE) | `machine_id`, `sha1` |
+| `tag_device` | contain | No | `Machine.ReadWrite.All` (MDE) | `machine_id`, `tag`, `action` (`Add` \| `Remove`) |
+| `block_indicator` | contain | Yes | `Ti.ReadWrite.All` (MDE) | `indicator_type` (`sha256` \| `sha1` \| `md5` \| `ip` \| `domain` \| `url`), `value`, `title`, `severity` (`Informational` \| `Low` \| `Medium` \| `High`), `expires_in_days` (1–365) |
+| `unblock_indicator` | recover | Yes | `Ti.ReadWrite.All` (MDE) | `indicator_id` (digits) |
+| `disable_user` | contain | Yes | `User.EnableDisableAccount.All` (Graph) | `user` (Entra UPN or OID) |
+| `enable_user` | recover | Yes | `User.EnableDisableAccount.All` (Graph) | `user` (Entra UPN or OID) |
+| `revoke_sessions` | contain | Yes | `User.RevokeSessions.All` (Graph) | `user` (Entra UPN or OID) |
+| `reset_password` | eradicate | Yes | `User-PasswordProfile.ReadWrite.All` (Graph) | `user` (Entra UPN or OID; sets random password + forces change at next sign-in) |
 | `confirm_user_compromised` | contain | Yes | `IdentityRiskyUser.ReadWrite.All` (Graph) | `user_id` (Entra OID GUID) |
 | `dismiss_user_risk` | recover | Yes | `IdentityRiskyUser.ReadWrite.All` (Graph) | `user_id` (Entra OID GUID) |
-| `disable_service_principal` | contain | Yes | `Application.ReadWrite.All` (Graph) | `service_principal_id` (OID GUID), `comment` |
-| `purge_email` | eradicate | Yes | `SecurityAnalyzedMessage.ReadWrite.All` (Graph) | `network_message_id`, `recipient`, `purge_type` (`softDelete` \| `hardDelete`), `comment` |
+| `disable_service_principal` | contain | Yes | `Application.ReadWrite.All` (Graph) | `service_principal_id` (OID GUID) |
+| `purge_email` | eradicate | Yes | `SecurityAnalyzedMessage.ReadWrite.All` (Graph) | `messages` (`[{ network_message_id, recipient }]`), `action` (`softDelete` \| `hardDelete` \| `moveToJunk` \| `moveToDeletedItems`) |
+| `update_incident` | record | Yes | `SecurityIncident.ReadWrite.All` (Graph) | `incident_id`, `status`, `classification`, `determination`, `assigned_to` |
+| `add_incident_comment` | record | No | `SecurityIncident.ReadWrite.All` (Graph) | `incident_id`, `comment` |
+| `publish_ti_indicator` | contain | Yes | Sentinel Contributor (ARM) | `kind`, `value`, `confidence` (0–100), `valid_days` (1–90), `tlp`, `description` |
 | `update_incident` | record | Yes | `SecurityIncident.ReadWrite.All` (Graph) | `incident_id`, `status`, `classification`, `determination`, `assigned_to` |
 | `add_incident_comment` | record | No | `SecurityIncident.ReadWrite.All` (Graph) | `incident_id`, `comment` |
 | `publish_ti_indicator` | contain | Yes | **Microsoft Sentinel Contributor** (Azure RBAC) | `kind`, `value`, `confidence`, `valid_days` (1–90), `tlp`, `description` |
@@ -53,7 +56,7 @@ Every brokered action is defined in `api/Blueboard.Api/Actions/Catalog.cs`. Dest
 
 ### Preview an action against policy (optional)
 
-3. On `/policy` (or via `POST /api/actions/preview`), enter the `kind`, `params` and `incident_id` to see whether `PolicyEngine` would return `auto`, `needs_approval` or `reject`, along with exact `policy_notes`, whether two approvers are required, and whether typed target confirmation will be demanded. No database row or Microsoft API call is made.
+3. On `/policy` (or via `POST /api/actions/preview`), enter the `kind`, `params` and `incident` to see whether `PolicyEngine` would return `auto`, `needs_approval` or `reject`, along with exact `policy_notes`, whether two approvers are required, and whether typed target confirmation will be demanded. No database row or Microsoft API call is made.
 
 ### Request an action
 
@@ -63,9 +66,9 @@ Every brokered action is defined in `api/Blueboard.Api/Actions/Catalog.cs`. Dest
    - Click **Submit**.
 5. **As an agent over MCP**:
    - Call `list_action_types` once if you need parameter schemas.
-   - Call `request_action` with `kind`, `params`, `justification`, `incident_id` (required for every incident-scoped write), and optional `reply_to`.
+   - Call `request_action` with `kind`, `params`, `justification`, `incident` (required for every incident-scoped write), and optional `parent_id`.
 6. Observe what happens immediately:
-   - **Rejected by policy** (`status: rejected`): e.g. target matches `protected_users`, `protected_devices` or `protected_indicators`, or the kind is in `disabled`. The board posts an `action_request` with the rejection reason; no approval button appears.
+   - **Rejected by policy** (`status: rejected`): e.g. target matches `protected_users`, `protected_devices`, `protected_apps` or `protected_indicators`, or the kind is in `disabled`. The board posts an `action_request` with the rejection reason; no approval button appears.
    - **Auto-approved** (`status: approved → running → succeeded`): only for non-destructive kinds listed in `auto_approve` whose targets appear in incident evidence (for example `run_av_scan`, `collect_investigation_package`, `add_incident_comment`, `tag_device`). Executes immediately under `blueboard-id-api` (or records a dry run if `BROKER_EXECUTE=false`).
    - **Needs human approval** (`status: pending_approval`): the board posts an `action_request` in `#containment` linked to the incident, adds it to **Approvals** (`/approvals`), and the 15-second notifier alerts approvers via Teams, webhook and/or email.
 
@@ -91,7 +94,7 @@ Every brokered action is defined in `api/Blueboard.Api/Actions/Catalog.cs`. Dest
 ### Handle held actions after a broker pause
 
 11. If an admin paused the broker (**Admin → Participants → Pause broker**), approved actions stay in `approved` (**Held**) and do not execute when the broker resumes.
-12. After the admin clicks **Resume broker**, held actions appear at the top of **Approvals** with a **Run now** button (`POST /api/actions/{id}/run`). Any human approver other than the requester inspects the action and clicks **Run now** to execute it.
+12. After the admin clicks **Resume broker**, held actions appear at the top of **Approvals** with a **Run now** button (`POST /api/actions/{id}/run`, accepting `{ "confirm": "<target>" }` if `confirm_target` applies). Any human approver other than the requester inspects the action and clicks **Run now**; `Broker.RunNowAsync` re-checks expiry, typed confirmation and `PolicyEngine.Assess` (rejecting with `action.rejected` if the target became protected while held) before releasing it (`action.released`) for execution.
 
 ### Dry-run week to live cutover
 
@@ -124,7 +127,7 @@ Every brokered action is defined in `api/Blueboard.Api/Actions/Catalog.cs`. Dest
 - `action.approved` / `action.denied` (approver, note)
 - `action.rejected_on_recheck` (when policy changed between request and decision)
 - `action.expired` (when TTL passed before final approval)
-- `action.held` / `action.run_held` (during and after a broker pause)
+- `action.held` / `action.released` / `action.rejected` (held during a broker pause, released by **Run now**, or rejected if the target became protected while held)
 - `action.succeeded` / `action.failed` / `action.dry_run` / `action.interrupted` (execution outcome and Microsoft response IDs)
 
 ## Troubleshooting

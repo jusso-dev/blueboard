@@ -1,0 +1,57 @@
+// =============================================================================
+// Blueboard Starter KQL Hunts — Microsoft Purview DLP, Insider Risk & AI Usage
+// Compatible with: run_sentinel_query (Sentinel Log Analytics) &
+//                  run_hunting_query (Defender XDR CloudAppEvents)
+// =============================================================================
+
+// 1. High-severity Purview DLP & Insider Risk alerts in Sentinel (SecurityAlert)
+SecurityAlert
+| where TimeGenerated > ago(7d)
+| where ProviderName has_any ("DLP", "Insider", "Purview", "Information Protection")
+   or ProductName has_any ("Purview", "Data Loss Prevention", "Insider Risk")
+| project TimeGenerated, SystemAlertId, AlertName, AlertSeverity, Entities, ExtendedProperties
+| order by TimeGenerated desc
+| take 100
+
+// 2. Sensitivity label downgrades or removals in SharePoint / OneDrive / Exchange (OfficeActivity)
+OfficeActivity
+| where TimeGenerated > ago(7d)
+| where Operation in (
+    "SensitivityLabelApplied",
+    "SensitivityLabelUpdated",
+    "SensitivityLabelRemoved",
+    "MIPLabel",
+    "FileSensitivityLabelChanged")
+| project TimeGenerated, UserId, ClientIP, OfficeWorkload, Operation, SourceFileName, Site_Url
+| order by TimeGenerated desc
+| take 100
+
+// 3. Mass SharePoint / OneDrive file downloads & anonymous link creation (OfficeActivity)
+OfficeActivity
+| where TimeGenerated > ago(7d)
+| where Operation in ("FileDownloaded", "FileSyncDownloadedFull", "AnonymousLinkCreated", "SharingSet")
+| summarize Events = count(), DistinctFiles = dcount(SourceFileName), Operations = make_set(Operation)
+    by UserId, ClientIP, bin(TimeGenerated, 1h)
+| where Events >= 25 or DistinctFiles >= 20
+| order by Events desc
+
+// 4. Purview Insider Risk sequence correlation — egress + label change (Sentinel)
+SecurityAlert
+| where TimeGenerated > ago(14d)
+| where ProductName has "Insider Risk"
+| join kind=inner (
+    OfficeActivity
+    | where TimeGenerated > ago(14d)
+    | where Operation in ("FileDownloaded", "SensitivityLabelRemoved", "AnonymousLinkCreated")
+) on $left.CompromisedEntity == $right.UserId
+| project TimeGenerated, AlertName, CompromisedEntity, Operation, SourceFileName, ClientIP
+| take 100
+
+// 5. Microsoft 365 Copilot & unmanaged generative AI uploads (CloudAppEvents)
+CloudAppEvents
+| where Timestamp > ago(7d)
+| where Application has_any ("Copilot", "ChatGPT", "Claude", "Perplexity", "Gemini", "OpenAI", "Anthropic")
+   or ActionType has_any ("AIPrompt", "CopilotInteraction", "Upload", "FileUploaded")
+| project Timestamp, AccountDisplayName, Application, ActionType, IPAddress, CountryCode, ObjectName
+| order by Timestamp desc
+| take 100

@@ -172,7 +172,13 @@ def main() -> None:
             for msg in feed.get("messages", []):
                 mid = msg["id"]
                 author = msg["author"]
-                mentioned = handle in msg.get("mentions", []) and author.get("kind") != "system"
+                is_followup = (
+                    author.get("kind") == "system"
+                    and msg.get("type") == "status"
+                    and isinstance(msg.get("payload"), dict)
+                    and msg["payload"].get("state") == "followup"
+                )
+                mentioned = handle in msg.get("mentions", []) and (author.get("kind") != "system" or is_followup)
                 claimable = msg["type"] in ("question", "finding", "ioc")
                 if author["handle"] != handle and mid not in state["done"] and mentioned:
                     claimed = False

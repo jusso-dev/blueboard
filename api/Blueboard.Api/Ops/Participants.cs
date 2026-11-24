@@ -57,12 +57,22 @@ public sealed class Participants(Db db, Audit audit, BoardService board, SystemP
             returning id
             """).With("e", enabled).With("r", reason).With("by", me.Id).With("h", handle))
         {
-            if (await cmd.ExecuteScalarAsync(ct) is null)
+            if (await cmd.ExecuteScalarAsync(ct) is not Guid pid)
             {
                 await using var ex = db.Command("select 1 from principals where handle = @h and kind <> 'system'").With("h", handle);
                 throw await ex.ExecuteScalarAsync(ct) is not null
                     ? BoardException.Conflict($"@{handle} is already {(enabled ? "enabled" : "disabled")}")
                     : BoardException.NotFound("principal");
+            }
+            if (!enabled)
+            {
+                await using var release = db.Command("""
+                    update messages set claim_state = 'open', claimed_by = null, claim_expires_at = null
+                    where claimed_by = @pid and claim_state = 'claimed';
+                    update agent_subscriptions set enabled = false, disabled_reason = 'principal disabled by admin'
+                    where principal_id = @pid and enabled;
+                    """).With("pid", pid);
+                await release.ExecuteNonQueryAsync(ct);
             }
             await audit.WriteAsync(me.Id, enabled ? "principal.enabled" : "principal.disabled", handle, new { reason }, ct);
         }

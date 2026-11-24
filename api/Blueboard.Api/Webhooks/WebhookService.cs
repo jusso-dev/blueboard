@@ -32,16 +32,17 @@ public sealed class WebhookService
     private readonly Settings _settings;
     private readonly HttpClient _http;
     private readonly Func<string, CancellationToken, Task<IPAddress[]>> _resolve;
+    private readonly RateLimiter? _limiter;
     private readonly ILogger _log;
 
-    public WebhookService(Db db, Audit audit, BoardService board, SystemPrincipal system, Settings settings, ILogger<WebhookService>? log = null)
-        : this(db, audit, board, system, settings, new HttpClient(OutboundGuard.Handler()) { Timeout = OutboundGuard.Timeout }, OutboundGuard.ResolvePublicAsync, log) { }
+    public WebhookService(Db db, Audit audit, BoardService board, SystemPrincipal system, Settings settings, ILogger<WebhookService>? log = null, RateLimiter? limiter = null)
+        : this(db, audit, board, system, settings, new HttpClient(OutboundGuard.Handler()) { Timeout = OutboundGuard.Timeout }, OutboundGuard.ResolvePublicAsync, log, limiter) { }
 
     /// <summary>Tests pass an in-process receiver and a fake resolver; production uses the guarded handler and DNS.</summary>
     public WebhookService(Db db, Audit audit, BoardService board, SystemPrincipal system, Settings settings, HttpClient http,
-        Func<string, CancellationToken, Task<IPAddress[]>> resolve, ILogger? log = null)
+        Func<string, CancellationToken, Task<IPAddress[]>> resolve, ILogger? log = null, RateLimiter? limiter = null)
     {
-        (_db, _audit, _board, _system, _settings, _http, _resolve) = (db, audit, board, system, settings, http, resolve);
+        (_db, _audit, _board, _system, _settings, _http, _resolve, _limiter) = (db, audit, board, system, settings, http, resolve, limiter);
         _log = log ?? NullLogger.Instance;
     }
 
@@ -52,6 +53,7 @@ public sealed class WebhookService
     public async Task<Subscription> SubscribeAsync(Principal p, SubscribeInput input, CancellationToken ct = default)
     {
         p.Require(Roles.Poster);
+        if (_limiter is not null) await _limiter.TakeAsync(p, "claim", ct);
         if (!Enabled) throw BoardException.Forbidden("webhooks are not enabled on this board (WEBHOOK_ALLOWED_HOSTS and WEBHOOK_SIGNING_KEY)");
         var host = OutboundGuard.CheckUrl(input.Url, _settings.WebhookAllowedHosts);
         // Resolve now as well as at every delivery: refuse a host that points inside the network today.
@@ -156,6 +158,7 @@ public sealed class WebhookService
     public async Task<Followup> ScheduleFollowupAsync(Principal p, FollowupInput input, CancellationToken ct = default)
     {
         p.Require(Roles.Poster);
+        if (_limiter is not null) await _limiter.TakeAsync(p, "post", ct);
         var m = await _board.GetAsync(input.MessageId, ct) ?? throw BoardException.NotFound("message");
         var root = m.ParentId ?? m.Id;
         await using (var count = _db.Command("select count(*) from followups where principal_id = @p and fired_at is null").With("p", p.Id))
@@ -174,9 +177,12 @@ public sealed class WebhookService
         return f;
     }
 
+    internal static string SafeFollowupBody(string handle, string note) =>
+        $"Follow-up for @{handle} (scheduled by @{handle}):\n\n> {note.Replace("@", "@\u200b").Replace("\n", "\n> ")}";
+
     /// <summary>
-    /// Posts every due follow-up exactly once: the row is claimed (skip locked) and its reminder posted in one
-    /// transaction, so two instances can't both post it and a crash before commit leaves it due for the next run.
+    /// Posts every due follow-up for enabled principals once: the row is claimed (skip locked) and its reminder posted
+    /// in one transaction. Disabled principals' pending follow-ups are suppressed without posting.
     /// </summary>
     public async Task<int> FireDueFollowupsAsync(CancellationToken ct = default)
     {
@@ -186,9 +192,9 @@ public sealed class WebhookService
         {
             await using var conn = await _db.OpenAsync(ct);
             await using var tx = await conn.BeginTransactionAsync(ct);
-            Guid id, root; string note, handle, channel;
+            Guid id, root; string note, handle, channel; bool enabled;
             await using (var pick = new NpgsqlCommand("""
-                select f.id, f.message_id, f.note, p.handle, c.name
+                select f.id, f.message_id, f.note, p.handle, p.enabled, c.name
                 from followups f join principals p on p.id = f.principal_id
                 join messages m on m.id = f.message_id join channels c on c.id = m.channel_id
                 where f.fired_at is null and f.due_at <= now() order by f.due_at limit 1 for update of f skip locked
@@ -196,10 +202,17 @@ public sealed class WebhookService
             await using (var r = await pick.ExecuteReaderAsync(ct))
             {
                 if (!await r.ReadAsync(ct)) break;
-                (id, root, note, handle, channel) = (r.GetGuid(0), r.GetGuid(1), r.GetString(2), r.GetString(3), r.GetString(4));
+                (id, root, note, handle, enabled, channel) = (r.GetGuid(0), r.GetGuid(1), r.GetString(2), r.GetString(3), r.GetBoolean(4), r.GetString(5));
+            }
+            if (!enabled)
+            {
+                await using (var suppress = new NpgsqlCommand("update followups set fired_at = now() where id = @id", conn, tx).With("id", id))
+                    await suppress.ExecuteNonQueryAsync(ct);
+                await tx.CommitAsync(ct);
+                continue;
             }
             var msg = await _board.PostInTransactionAsync(conn, tx, sys, new PostInput(channel,
-                $"Follow-up for @{handle} (scheduled by @{handle}):\n\n> {note.Replace("\n", "\n> ")}",
+                SafeFollowupBody(handle, note),
                 "status", Json.Element(new { state = "followup", followup_id = id }), root), system: true, ct);
             await using (var done = new NpgsqlCommand("update followups set fired_at = now(), posted_message_id = @m where id = @id", conn, tx).With("m", msg).With("id", id))
                 await done.ExecuteNonQueryAsync(ct);
@@ -247,7 +260,7 @@ public sealed class WebhookService
                 from messages m
                 join channels c on c.id = m.channel_id
                 join agent_subscriptions s on s.enabled and (s.channel is null or s.channel = c.name) and m.created_at >= s.created_at
-                join principals sp on sp.id = s.principal_id
+                join principals sp on sp.id = s.principal_id and sp.enabled
                 cross join lateral (values
                   ('incident.new',     m.type = 'incident' and m.parent_id is null and m.author_id = @board),
                   ('incident.updated', m.type = 'status' and m.payload->>'state' = 'source_updated' and m.author_id = @board),
@@ -271,6 +284,7 @@ public sealed class WebhookService
             join channels c on c.id = m.channel_id
             join agent_subscriptions s on s.enabled and s.principal_id = m.claimed_by and 'claim.expired' = any(s.events)
               and (s.channel is null or s.channel = c.name)
+            join principals sp on sp.id = s.principal_id and sp.enabled
             where m.claim_state = 'claimed' and m.claim_expires_at < now() and m.claim_expires_at > now() - interval '1 hour'
               and m.claim_expires_at >= s.created_at
             on conflict do nothing
@@ -293,7 +307,8 @@ public sealed class WebhookService
         await using (var cmd = _db.Command("""
             select d.id, d.event, d.message_id, d.seq, d.attempts, s.id, s.url, s.host, s.secret_salt, s.principal_id
             from webhook_deliveries d join agent_subscriptions s on s.id = d.subscription_id
-            where d.status = 'pending' and d.next_attempt_at <= now() and s.enabled
+            join principals p on p.id = s.principal_id
+            where d.status = 'pending' and d.next_attempt_at <= now() and s.enabled and p.enabled
             order by d.created_at limit 100
             """))
         await using (var r = await cmd.ExecuteReaderAsync(ct))

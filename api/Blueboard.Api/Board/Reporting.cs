@@ -43,7 +43,7 @@ public sealed class Reporting(Db db)
               extract(epoch from (select min(m.created_at) from messages m join principals p on p.id = m.author_id
                 where m.incident_id = inc.id and m.type in ('finding','ioc','verdict') and p.kind <> 'system') - inc.first_seen_at)::float8,
               extract(epoch from (select min(m.created_at) from messages m where m.incident_id = inc.id and m.type = 'verdict') - inc.first_seen_at)::float8,
-              extract(epoch from (select min(a.updated_at) from actions a where a.incident_id = inc.id and a.status = 'succeeded' and a.kind = any(@ck)) - inc.first_seen_at)::float8,
+              extract(epoch from (select min(coalesce(a.finished_at, a.updated_at)) from actions a where a.incident_id = inc.id and a.status = 'succeeded' and a.kind = any(@ck)) - inc.first_seen_at)::float8,
               (select count(*)::int from messages m where m.incident_id = inc.id),
               (select count(*)::int from actions a where a.incident_id = inc.id)
             from inc order by inc.first_seen_at desc limit 500
@@ -118,8 +118,9 @@ public sealed class Reporting(Db db)
         {
             if (v is null) return "";
             var s = Convert.ToString(v, System.Globalization.CultureInfo.InvariantCulture) ?? "";
-            if (s.Length > 0 && "=+-@\t\r".Contains(s[0])) s = "'" + s; // formula injection guard
-            return s.IndexOfAny([',', '"', '\n']) >= 0 ? $"\"{s.Replace("\"", "\"\"")}\"" : s;
+            var trimmed = s.TrimStart();
+            if (s.Length > 0 && ("=+-@\t\r\n".Contains(s[0]) || (trimmed.Length > 0 && "=+-@".Contains(trimmed[0])))) s = "'" + s; // formula injection guard
+            return s.IndexOfAny([',', '"', '\n', '\r']) >= 0 ? $"\"{s.Replace("\"", "\"\"")}\"" : s;
         }
         static object? Round(double? v) => v is null ? null : Math.Round(v.Value);
         var sb = new StringBuilder("incident,name,severity,status,first_seen_at,enrichment_s,verdict_s,containment_s,messages,actions\n");

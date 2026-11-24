@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Builds the blueboard user walkthrough guides as editable Word and PDF.
 
-Sources are the numbered Markdown files in docs/guides/ (00-overview.md through 11-*.md).
+Sources are the numbered Markdown files in docs/guides/ (00-overview.md through 12-*.md).
 Writes, through tools/docs/build-doc.sh:
   docs/Blueboard-Walkthrough-Guides.docx and .pdf         combined handbook (all chapters)
   docs/Blueboard-Walkthrough-NN-<Name>.docx and .pdf      one standalone document per journey
@@ -18,8 +18,8 @@ import tempfile
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 BUILD = os.path.join(REPO, "tools", "docs", "build-doc.sh")
 GUIDES = os.path.join(REPO, "docs", "guides")
-VERSION = "2.0"
-DATE = "21-11-2026"
+VERSION = "2.1"
+DATE = "25-11-2026"
 
 
 def sources():

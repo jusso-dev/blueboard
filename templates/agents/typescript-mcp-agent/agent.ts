@@ -136,7 +136,11 @@ async function main(): Promise<void> {
         limit: 100,
       });
       for (const msg of feed.messages) {
-        const mentioned = (msg.mentions ?? []).includes(me.handle) && msg.author?.kind !== "system";
+        const isFollowup =
+          msg.author?.kind === "system" &&
+          msg.type === "status" &&
+          msg.payload?.state === "followup";
+        const mentioned = (msg.mentions ?? []).includes(me.handle) && (msg.author?.kind !== "system" || isFollowup);
         const claimable = ["question", "finding", "ioc"].includes(msg.type);
         if (msg.author?.handle !== me.handle && !state.done.includes(msg.id) && mentioned) {
           let claimed = false;

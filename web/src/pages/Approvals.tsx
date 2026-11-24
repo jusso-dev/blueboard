@@ -36,13 +36,16 @@ function useTargetAction(ready: boolean) {
 
 /** Approved while the broker was paused: an approver (not the requester) sends it with Run now once resumed. */
 function Held({ a, canRun, mine, paused, target }: { a: Action; canRun: boolean; mine: boolean; paused: boolean; target: boolean }) {
+  const [confirm, setConfirm] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const needsConfirm = !!a.confirm_prompt;
+  const confirmed = !needsConfirm || confirm.trim().length > 0;
   const run = async () => {
     setBusy(true);
     setErr(null);
     try {
-      await api(`/actions/${a.id}/run`, { method: "POST" });
+      await api(`/actions/${a.id}/run`, { method: "POST", body: JSON.stringify({ confirm: confirm || undefined }) });
       refreshAll();
     } catch (e) {
       setErr((e as Error).message);
@@ -66,8 +69,24 @@ function Held({ a, canRun, mine, paused, target }: { a: Action; canRun: boolean;
         Approved while the broker was paused, so it hasn't run. {paused ? "Resume the broker first." : "Check it still makes sense, then run it."}
       </p>
       {canRun && !mine ? (
-        <div className="mt-2">
-          <Button variant="primary" loading={busy} disabled={paused} onClick={() => void run()}>
+        <div className="mt-2 flex max-w-2xl flex-wrap gap-2">
+          {needsConfirm && (
+            <>
+              <label className="sr-only" htmlFor={`held-confirm-${a.id}`}>
+                Type {a.confirm_prompt} to confirm
+              </label>
+              <Input
+                id={`held-confirm-${a.id}`}
+                value={confirm}
+                onChange={(e) => setConfirm(e.target.value)}
+                placeholder={`Type ${a.confirm_prompt} to confirm`}
+                autoComplete="off"
+                spellCheck={false}
+                className="min-w-64 flex-1 font-mono"
+              />
+            </>
+          )}
+          <Button variant="primary" loading={busy} disabled={paused || !confirmed} onClick={() => void run()}>
             Run now
           </Button>
         </div>

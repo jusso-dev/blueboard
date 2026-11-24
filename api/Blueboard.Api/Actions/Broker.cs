@@ -80,7 +80,8 @@ public sealed class Broker(Db db, Audit audit, BoardService board, MsClient ms, 
         for (var i = 0; i < list.Count; i++)
         {
             var a = list[i];
-            if (!ActionStatus.Open.Contains(a.Status) || !policy.ConfirmsTarget(a.Kind)) continue;
+            var needsConfirm = ActionStatus.Open.Contains(a.Status) || (a.Status == "approved" && a.HeldAt is not null);
+            if (!needsConfirm || !policy.ConfirmsTarget(a.Kind)) continue;
             IncidentContext? inc = null;
             if (a.IncidentId is { } iid && !incidents.TryGetValue(iid, out inc)) incidents[iid] = inc = await LoadIncidentAsync(iid, a.RequestedBy, ct);
             list[i] = a with { ConfirmPrompt = ConfirmNames(a, inc).FirstOrDefault() };
@@ -325,19 +326,19 @@ public sealed class Broker(Db db, Audit audit, BoardService board, MsClient ms, 
         await using (var tx = await conn.BeginTransactionAsync(ct))
         {
             await using (var up = new NpgsqlCommand("""
-                update actions set status = 'rejected', policy_notes = array_append(policy_notes, @why), updated_at = now()
-                where id = @id and status = any(@open)
-                """, conn, tx).With("why", $"rejected when re-checked at approval: {reason}").With("id", a.Id).With("open", ActionStatus.Open))
+                update actions set status = 'rejected', held_at = null, policy_notes = array_append(policy_notes, @why), updated_at = now()
+                where id = @id and (status = any(@open) or (status = 'approved' and held_at is not null) or status = 'running')
+                """, conn, tx).With("why", $"rejected when re-checked: {reason}").With("id", a.Id).With("open", ActionStatus.Open))
                 if (await up.ExecuteNonQueryAsync(ct) == 0) return;
             await board.PostInTransactionAsync(conn, tx, sys, new PostInput("containment",
-                $"**{Catalog.Get(a.Kind).Title}** is now **rejected by policy**: {reason}. @{a.RequestedBy}'s request was re-checked when @{p.Handle} tried to approve it.",
+                $"**{Catalog.Get(a.Kind).Title}** is now **rejected by policy**: {reason}. @{a.RequestedBy}'s request was re-checked before running (triggered by @{p.Handle}).",
                 "status", Json.Element(new { state = "action_rejected", action_id = a.Id }), a.RequestMessageId, a.IncidentId?.ToString()), system: true, ct);
             await tx.CommitAsync(ct);
         }
         await audit.WriteAsync(p.Id, "action.rejected_on_recheck", a.Id.ToString(), new { reason }, ct);
     }
 
-    /// <summary>Expire one open action whose time is up: status, a reply in its thread that @mentions the requester, an audit row.</summary>
+    /// <summary>Expire one open or held action whose time is up: status, a reply in its thread that @mentions the requester, an audit row.</summary>
     private async Task<bool> ExpireOneAsync(Guid id, CancellationToken ct)
     {
         var sys = await system.GetAsync(ct);
@@ -347,8 +348,8 @@ public sealed class Broker(Db db, Audit audit, BoardService board, MsClient ms, 
         await using (var tx = await conn.BeginTransactionAsync(ct))
         {
             await using (var up = new NpgsqlCommand("""
-                update actions set status = 'expired', updated_at = now()
-                where id = @id and status = any(@open) and expires_at <= now() returning id
+                update actions set status = 'expired', held_at = null, updated_at = now()
+                where id = @id and (status = any(@open) or (status = 'approved' and held_at is not null)) and expires_at <= now() returning id
                 """, conn, tx).With("id", id).With("open", ActionStatus.Open))
                 if (await up.ExecuteScalarAsync(ct) is null) return false;
             await board.PostInTransactionAsync(conn, tx, sys, new PostInput("containment",
@@ -393,16 +394,50 @@ public sealed class Broker(Db db, Audit audit, BoardService board, MsClient ms, 
         return state;
     }
 
-    /// <summary>Run an action that was approved while the broker was paused. A human approver who isn't the requester.</summary>
-    public async Task<ActionRow> RunNowAsync(Principal p, Guid id, CancellationToken ct = default)
+    /// <summary>Pure policy guard checked at execution time so delayed, held or recovered actions cannot bypass new protections.</summary>
+    internal static PolicyDecision GuardExecutionPolicy(ActionDef def, JsonObject prms, IncidentContext? incident, Policy policy) =>
+        PolicyEngine.Evaluate(def, prms, incident, policy);
+
+    /// <summary>
+    /// Run an action that was approved while the broker was paused. Re-checks expiry, typed target confirmation and
+    /// current policy before releasing so post-pause policy additions cannot be bypassed.
+    /// </summary>
+    public async Task<ActionRow> RunNowAsync(Principal p, Guid id, CancellationToken ct = default, string? confirm = null)
     {
         if (!p.IsHuman || !p.Has(Roles.Approver)) throw BoardException.Forbidden("only human approvers can run held actions");
         var pause = await GetPauseAsync(ct);
         if (pause.Paused) throw BoardException.Conflict($"broker paused by @{pause.By}");
         var a = await GetAsync(id, ct) ?? throw BoardException.NotFound("action");
         if (a.RequestedBy == p.Handle) throw BoardException.Forbidden("you cannot run your own request");
-        await using (var cmd = db.Command("update actions set held_at = null, updated_at = now() where id = @id and status = 'approved' and held_at is not null returning id").With("id", id))
-            if (await cmd.ExecuteScalarAsync(ct) is null) throw BoardException.Conflict(a.Status == "approved" ? "action is not held" : $"action is {a.Status}");
+        if (a.Status != "approved" || a.HeldAt is null) throw BoardException.Conflict(a.Status == "approved" ? "action is not held" : $"action is {a.Status}");
+        if (a.ExpiresAt is { } exp && exp <= DateTimeOffset.UtcNow)
+        {
+            await ExpireOneAsync(id, ct);
+            throw BoardException.Conflict("action is expired");
+        }
+
+        var def = Catalog.Get(a.Kind);
+        var incident = a.IncidentId is { } iid ? await LoadIncidentAsync(iid, a.RequestedBy, ct) : null;
+        if (policy.ConfirmsTarget(a.Kind))
+        {
+            var names = ConfirmNames(a, incident);
+            if (confirm is null || !names.Contains(confirm.Trim(), StringComparer.OrdinalIgnoreCase))
+                throw new BoardException($"type the target ({names.FirstOrDefault()}) to confirm running this held action");
+        }
+        var now = PolicyEngine.Assess(def, def.Validate(a.Params), incident, policy);
+        if (now.Outcome == Outcome.Reject)
+        {
+            await RejectOnRecheckAsync(p, a, now.Notes[0], ct);
+            throw BoardException.Conflict($"policy now rejects this action: {now.Notes[0]}");
+        }
+
+        await using (var cmd = db.Command("update actions set held_at = null, updated_at = now() where id = @id and status = 'approved' and held_at is not null and (expires_at is null or expires_at > now()) returning id").With("id", id))
+            if (await cmd.ExecuteScalarAsync(ct) is null)
+            {
+                var latest = (await GetAsync(id, ct))!;
+                if (latest.ExpiresAt is { } lexp && lexp <= DateTimeOffset.UtcNow) { await ExpireOneAsync(id, ct); throw BoardException.Conflict("action is expired"); }
+                throw BoardException.Conflict(latest.Status == "approved" ? "action is not held" : $"action is {latest.Status}");
+            }
         await audit.WriteAsync(p.Id, "action.released", id.ToString(), null, ct);
         await ExecuteAsync(id, ct);
         return (await GetAsync(id, ct))!;
@@ -427,6 +462,7 @@ public sealed class Broker(Db db, Audit audit, BoardService board, MsClient ms, 
             }
         var a = (await GetAsync(id, ct))!;
         var def = Catalog.Get(a.Kind);
+        var incident = a.IncidentId is { } iid ? await LoadIncidentAsync(iid, a.RequestedBy, ct) : null;
         var approvers = a.Approvals is { Length: > 0 } list ? string.Join(" and ", list) : a.DecidedBy;
         var comment = $"blueboard action {id} for incident {a.IncidentGraphId ?? "n/a"}, requested by {a.RequestedBy}"
                       + (approvers is null ? " (auto-approved)" : $", approved by {approvers}") + $": {a.Justification}";
@@ -438,6 +474,12 @@ public sealed class Broker(Db db, Audit audit, BoardService board, MsClient ms, 
         try
         {
             prms = def.Validate(a.Params); // never run a write from unchecked stored JSON
+            var recheck = GuardExecutionPolicy(def, prms, incident, policy);
+            if (recheck.Outcome == Outcome.Reject)
+            {
+                await RejectOnRecheckAsync(await system.GetAsync(ct), a, recheck.Notes[0], ct);
+                return;
+            }
             prepared = def.Prepare?.Invoke(prms, new ActionContext(id, a.IncidentGraphId, a.IncidentId, a.RequestedBy, a.DecidedBy, a.Justification, settings.Ti, DateTimeOffset.UtcNow));
             result = settings.BrokerExecute
                 ? await def.Run(ms, prepared ?? prms, comment, ct)

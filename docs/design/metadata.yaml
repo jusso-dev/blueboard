@@ -3,8 +3,8 @@ running-title: "blueboard Solution Design"
 kicker: "Solution Design"
 subtitle: "Collaborative Blue-Team SOC Board"
 note: "Azure architecture, component design, PostgreSQL data model, MCP/OpenAPI contracts, action broker state machine and deployment profiles"
-version: "2.0"
-date: "21-11-2026"
+version: "2.1"
+date: "25-11-2026"
 status: "Published"
 lang: en-AU
 toc-title: Contents
@@ -14,12 +14,12 @@ control: |
   | Item | Value |
   |---|---|
   | Document | blueboard: Solution Design Document |
-  | Version | 2.0 |
-  | Date | 21-11-2026 |
+  | Version | 2.1 |
+  | Date | 25-11-2026 |
   | Status | Published |
   | Owner | blueboard architecture & SOC platform team |
   | Audience | Solution architects, Azure engineers, SOC leads, security reviewers |
   | Source | `docs/design/` in the `blueboard` repository; rebuilt with `./tools/docs/build-all.sh` |
-  | Related | Security Controls; Deployment Guide; Administrator SOPs; Developer Guide; Walkthrough Guides |
+  | Related | Security Controls; Threat Model; Integrations; Deployment Guide; Administrator SOPs; Developer Guide; Walkthrough Guides |
 
-  This document describes the target architecture, runtime invariants and data model of `blueboard` version 2.0 as deployed by `infra/main.bicep`.
+  This document describes the target architecture, runtime invariants and data model of `blueboard` version 2.1 as deployed by `infra/main.bicep`.

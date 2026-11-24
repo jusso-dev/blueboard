@@ -7,8 +7,8 @@ This guide takes an Australian Azure subscription (`australiaeast` or `australia
 | Item | Value |
 |---|---|
 | Document | blueboard Deployment Guide |
-| Version | 2.0 |
-| Date | 21-11-2026 |
+| Version | 2.1 |
+| Date | 25-11-2026 |
 | Status | Published |
 | Owner | blueboard SOC platform team |
 | Audience | Azure platform engineers, Entra ID administrators, SOC leads |
@@ -95,7 +95,7 @@ For least-privilege Azure RBAC, condition the deployer's **Role Based Access Con
 ## 3. Before you deploy: policy and preflight
 
 1. Choose a starter policy from `templates/policies/` (`starter-readonly.json`, `starter-balanced-soc.json`, or `starter-strict-regulated.json`) and copy it to `policy.json` (git-ignored).
-2. Populate `protected_users` (UPN + Entra OID), `protected_devices` (MDE ID + FQDN) and `protected_indicators` (corporate domains, IdPs, CDNs, resolvers).
+2. Populate `protected_users` (UPN + Entra OID), `protected_devices` (MDE ID + FQDN), `protected_apps` (Entra SP ObjectId / AppId / display name) and `protected_indicators` (corporate domains, IdPs, CDNs, resolvers).
 3. Validate offline:
 
    ```sh
@@ -214,11 +214,12 @@ By default blueboard polls Microsoft Graph for incidents on a timer. For sub-5-s
 | `BB_PROFILE` | `mvp` | Yes | `mvp` or `production` |
 | `RESOURCE_GROUP` | `rg-blueboard-<env>` | Yes | Target Azure resource group |
 | `LOCATION` | `australiaeast` | Yes | `australiaeast` or `australiasoutheast` only |
-| `POLICY_FILE` | `policy.example.json` | Path only | Action policy JSON (refused with `BROKER_EXECUTE=true` if example file) |
+| `POLICY_FILE` | `policy.example.json` | Path only | Action policy JSON loaded into `BLUEBOARD_POLICY_JSON` and parsed directly in memory at start-up with zero temporary files written to disk (refused with `BROKER_EXECUTE=true` if example file) |
 | `BROKER_EXECUTE` | `false` | **Never** | Must be passed explicitly on every deploy that enables live writes |
 | `ACTIONS` | *(empty — read-only)* | Yes | Space-separated list of brokered actions (or `all`) for `grant-permissions.sh` |
 | `SENTINEL_WORKSPACE_ID` | *(unset)* | Yes | Log Analytics Workspace GUID for `run_sentinel_query` & `publish_ti_indicator` |
 | `ASSIGN_SENTINEL_CONTRIBUTOR` | `false` | Yes | Grants **Microsoft Sentinel Contributor** on Sentinel workspace for `publish_ti_indicator` |
+| `PURVIEW_CONTENT_GUARD` | `off` | Environment | `off \| audit \| block` — optional Microsoft Purview `processContent` DLP check on outbound board posts (`PURVIEW_GUARD=1` in `grant-permissions.sh`); deterministic PEM/JWT/token leak blocking always runs |
 | `NOTIFY_TEAMS_WEBHOOK_URL` | *(unset)* | **Never** | Teams Workflows / incoming webhook URL (`@secure()`) |
 | `NOTIFY_WEBHOOK_URL` / `NOTIFY_WEBHOOK_SECRET` | *(unset)* | **Never** | Generic HTTPS webhook & ≥ 32-char HMAC secret (`@secure()`) |
 | `NOTIFY_ALLOWED_HOSTS` | *(unset)* | Yes | Comma-separated exact HTTPS hostnames for notification webhooks |

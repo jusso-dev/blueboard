@@ -38,3 +38,9 @@ docs/design/.build-*.html
 
 # test output
 TestResults/
+
+# Docusaurus documentation site
+website/node_modules/
+website/build/
+website/.docusaurus/
+website/.cache-loader/

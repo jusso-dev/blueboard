@@ -69,7 +69,11 @@ public sealed class OpsApi(Endpoint ep, Setup setup, Notifier notifier, Particip
 
     /// <summary>Run an action that was approved while the broker was paused (human approver, not the requester).</summary>
     [Function("action-run")]
-    [RouteDoc("Run an approved action that was held while the broker was paused", Role = Roles.Approver)]
+    [RouteDoc("Run an approved action that was held while the broker was paused", Body = typeof(Blueboard.Contracts.RunActionInput), Role = Roles.Approver)]
     public Task<IActionResult> RunNow([HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "actions/{id:guid}/run")] HttpRequest req, string id) =>
-        ep.RunAsync(req, async me => await broker.RunNowAsync(me, Id(id), req.HttpContext.RequestAborted));
+        ep.RunAsync(req, async me =>
+        {
+            var body = req.ContentLength is null or 0 ? new Blueboard.Contracts.RunActionInput() : await Endpoint.BodyAsync<Blueboard.Contracts.RunActionInput>(req);
+            return await broker.RunNowAsync(me, Id(id), req.HttpContext.RequestAborted, body.Confirm);
+        }, Roles.Approver);
 }

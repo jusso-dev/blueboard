@@ -7,8 +7,8 @@ This guide explains how to build, run, test and safely extend **blueboard**. Eve
 | Item | Value |
 |---|---|
 | Document | blueboard Developer Guide |
-| Version | 2.0 |
-| Date | 21-11-2026 |
+| Version | 2.1 |
+| Date | 25-11-2026 |
 | Status | Published |
 | Owner | blueboard engineering team |
 | Audience | C#/.NET engineers, TypeScript/React engineers, AI agent builders, detection engineers |
@@ -24,7 +24,7 @@ This guide explains how to build, run, test and safely extend **blueboard**. Eve
 6. [Adding a new MCP tool and Agent SDK method](#6-adding-a-new-mcp-tool-and-agent-sdk-method)
 7. [Database migrations and transactional invariants](#7-database-migrations-and-transactional-invariants)
 8. [Playbooks, KQL templates and incident fixtures](#8-playbooks-kql-templates-and-incident-fixtures)
-9. [Building the architecture diagram and PDF/Word documentation suite](#9-building-the-architecture-diagram-and-pdfword-documentation-suite)
+9. [Building the banner, architecture diagram, docs site and PDF/Word suite](#9-building-the-banner-architecture-diagram-docs-site-and-pdfword-suite)
 10. [Release and pull-request checklist](#10-release-and-pull-request-checklist)
 
 ## 1. Repository layout
@@ -32,10 +32,10 @@ This guide explains how to build, run, test and safely extend **blueboard**. Eve
 | Path | Responsibility |
 |---|---|
 | `api/Blueboard.Contracts/` | Shared C# request/response records, webhook signature helper (`WebhookSignature`), and tool metadata — single source of truth for MCP schemas, OpenAPI 3.1 (`/api/openapi.json`) and validation |
-| `api/Blueboard.Api/` | C# .NET 10 isolated Azure Functions app: `Actions/` (catalogue, policy, broker), `Auth/` (Entra JWT validator, principal), `Board/` (feed, claims, summaries, playbooks, search, reporting), `Data/` (Npgsql, migrations, audit, rate limiter), `Graph/` (`MsClient`, ingest, entity extraction, enrichment), `Http/` (REST endpoints, OpenAPI), `Intel/` (TI fetcher, sources, KQL/STIX builders), `Jobs/` (timer triggers), `Mcp/` (30 MCP tools), `Ops/` (setup/doctor checks, notifier, permissions), `Webhooks/` (`OutboundGuard`, delivery, follow-ups) |
+| `api/Blueboard.Api/` | C# .NET 10 isolated Azure Functions app: `Actions/` (catalogue, policy, broker), `Auth/` (Entra JWT validator, principal), `Board/` (feed, claims, summaries, playbooks, search, reporting, `PurviewContentGuard`), `Data/` (Npgsql, migrations, audit, rate limiter), `Graph/` (`MsClient`, ingest, entity extraction, enrichment, Purview alerts & labels), `Http/` (REST endpoints, OpenAPI), `Intel/` (TI fetcher, sources, KQL/STIX builders), `Jobs/` (timer triggers), `Mcp/` (31 MCP tools), `Ops/` (setup/doctor checks, notifier, permissions), `Webhooks/` (`OutboundGuard`, delivery, follow-ups) |
 | `api/Blueboard.Api.Tests/` | xUnit v3 unit & PostgreSQL integration tests (policy, alias matching, parameter validation, token guard, permissions sync, Defender/Sentinel enrichment, playbooks, reporting, webhooks) |
 | `api/Blueboard.Tools/` | Offline & operational CLI: `migrate`, `seed-dev`, `policy-check`, `playbooks`, `doctor` |
-| `agents/Blueboard.Agent.Sdk/` | Typed .NET 10 MCP client covering all 30 tools, cursor/claim/lease loop (`AgentLoop`), `WorkItem` helpers, and webhook HMAC verifier |
+| `agents/Blueboard.Agent.Sdk/` | Typed .NET 10 MCP client covering all 31 tools (including `lookup_purview_context`), cursor/claim/lease loop (`AgentLoop`), `WorkItem` helpers, and webhook HMAC verifier |
 | `agents/Blueboard.Agent.Sdk.Tests/` | xUnit v3 tests for SDK loop, claim leasing and helpers |
 | `agents/Blueboard.EnrichmentAgent/` | Reference Claude enrichment agent (Microsoft Foundry or Anthropic API + `AGENT_MODE=scripted` for local demo) |
 | `agents/Blueboard.AgentTemplate/` | Minimal copy-paste C# starter agent |
@@ -175,12 +175,12 @@ Adding a brokered action touches **six** coordinated files — an xUnit test fai
 - **KQL templates (`templates/kql/*.kql`)**: keep queries scoped with time filters, explicit `project` columns and `take` / `summarize` so Defender and Sentinel quotas are respected.
 - **Incident fixtures (`templates/incidents/*.json`)**: use strictly RFC 2606 / RFC 5737 fictitious domains (`contoso.com`, `*.example`) and documentation IPs (`192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24`). Never commit real customer identifiers or secrets.
 
-## 9. Building the architecture diagram and PDF/Word documentation suite
+## 9. Building the banner, architecture diagram, docs site and PDF/Word suite
 
-The repository includes turnkey scripts and reusable agent skills (`skills/azure-architecture-diagram/SKILL.md` and `skills/publish-docs/SKILL.md`) for reproducing both the official Microsoft Azure icon architecture diagram and the full PDF/Word documentation pack (`pandoc`, `weasyprint`, `rsvg-convert` and Python 3 stdlib — no third-party Python packages required):
+The repository includes turnkey scripts and reusable agent skills (`skills/azure-architecture-diagram/SKILL.md` and `skills/publish-docs/SKILL.md`) for reproducing the README hero banner (`scripts/build-banner.py`), the official Microsoft Azure icon architecture diagram (`scripts/build-architecture-diagram.sh`), the full PDF/Word documentation suite (`pandoc`, `weasyprint`, `rsvg-convert` and Python 3 stdlib), and the Docusaurus 3.10 site (`website/`):
 
 ```sh
-# One-command full rebuild + verification (diagram + all 18 PDFs & 18 DOCXs)
+# One-command full rebuild + verification (diagram + all 19 PDFs & 19 DOCXs)
 ./tools/docs/publish-all.sh
 
 # Reproduce only the official-icon Azure architecture diagram (.drawio, .svg, .png)
@@ -191,15 +191,17 @@ The repository includes turnkey scripts and reusable agent skills (`skills/azure
 
 # Verify existing diagram, PDFs, DOCXs and relative Markdown links without rebuilding
 ./tools/docs/publish-all.sh --check-only
+
+# Build the Docusaurus static site locally
+(cd website && npm ci && npm run typecheck && npm run build)
 ```
 
-Build outputs are written directly to `docs/architecture/azure-architecture.{drawio,svg,png}` and `docs/Blueboard-*.{pdf,docx}`. Temporary build artefacts (`reference.docx`, intermediate HTML) are cleaned up automatically.
+Build outputs are written directly to `docs/architecture/azure-architecture.{drawio,svg,png}` and `docs/Blueboard-*.{pdf,docx}` (plus static HTML output in `website/build/`). Temporary build artefacts (`reference.docx`, intermediate HTML) are cleaned up automatically.
 
 ## 10. Release and pull-request checklist
 
-- [ ] `dotnet test --solution api/Blueboard.slnx` passes with 0 warnings and 0 failures.
-- [ ] `dotnet test --project agents/Blueboard.Agent.Sdk.Tests/Blueboard.Agent.Sdk.Tests.csproj` passes.
+- [ ] `dotnet test --project api/Blueboard.Api.Tests -c Release` and `dotnet test --project agents/Blueboard.Agent.Sdk.Tests -c Release` pass with 0 warnings and 0 failures (plus DB integration tests when Postgres is available).
 - [ ] `dotnet run --project api/Blueboard.Tools -- playbooks` and `policy-check` pass on all bundled playbooks and starter policies.
-- [ ] `az bicep build --file infra/main.bicep` and `shellcheck -x -P infra infra/*.sh` pass.
+- [ ] `az bicep build --file infra/main.bicep`, `shellcheck -x -e SC1091 -s bash infra/*.sh`, `(cd web && pnpm typecheck && pnpm test && pnpm build)` and `(cd website && npm run typecheck && npm run build)` pass.
 - [ ] Any new action is synchronised across `Catalog.cs`, `Permissions.cs`, `grant-permissions.sh`, `Reporting.cs`, `mock-msapi` and tests.
-- [ ] Any security-relevant change is reflected in `docs/security/01-security.md` and `docs/design/01-solution-design.md`, and `./tools/docs/build-all.sh` succeeds cleanly.
+- [ ] Any security-relevant change is reflected in `docs/SECURITY.md`, `docs/THREAT-MODEL.md`, `docs/security/01-security.md` and `docs/design/01-solution-design.md`, and `./tools/docs/build-all.sh` succeeds cleanly.

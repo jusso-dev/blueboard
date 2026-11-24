@@ -206,6 +206,10 @@ public sealed class BoardTools(Authenticator auth, BoardService board, Search se
     public Task<string> LookupEntity([McpToolTrigger(Tools.LookupEntity, Tools.LookupEntityDoc)] ToolInvocationContext ctx) =>
         Call<LookupInput>(ctx, async (me, l) => await enrich.LookupAsync(me, l.Kind, l.Value));
 
+    [Function(nameof(LookupPurviewContext))]
+    public Task<string> LookupPurviewContext([McpToolTrigger(Tools.LookupPurviewContext, Tools.LookupPurviewContextDoc)] ToolInvocationContext ctx) =>
+        Call<PurviewLookupInput>(ctx, async (me, q) => await enrich.LookupPurviewAsync(me, q.User, q.IncludeLabels));
+
     [Function(nameof(ListActionTypes))]
     public Task<string> ListActionTypes([McpToolTrigger(Tools.ListActionTypes, Tools.ListActionTypesDoc)] ToolInvocationContext ctx) =>
         Call(ctx, _ => Task.FromResult<object?>(Broker.CatalogInfo(policy)));

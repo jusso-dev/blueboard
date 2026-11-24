@@ -64,8 +64,16 @@ public static class OutboundGuard
         {
             if (ip.IsIPv6LinkLocal || ip.IsIPv6SiteLocal || ip.IsIPv6Multicast || ip.IsIPv6UniqueLocal || ip.IsIPv6Teredo) return false;
             var b = ip.GetAddressBytes();
-            if (b[0] == 0x20 && b[1] == 0x01 && b[2] == 0x0d && b[3] == 0xb8) return false; // 2001:db8::/32 documentation
-            if (b[0] == 0x00 && b[1] == 0x64 && b[2] == 0xff && b[3] == 0x9b) return false; // 64:ff9b::/96 NAT64 (could reach IPv4 internals)
+            // Only global unicast (2000::/3) is ever public; this also excludes ::/96 IPv4-compatible, 64:ff9b::/96 NAT64, 100::/64 discard, etc.
+            if ((b[0] & 0xE0) != 0x20) return false;
+            if (b[0] == 0x20 && b[1] == 0x02) return false; // 2002::/16 6to4 (can embed RFC1918/loopback IPv4)
+            if (b[0] == 0x20 && b[1] == 0x01)
+            {
+                if (b[2] == 0x00 && b[3] == 0x00) return false; // 2001::/32 Teredo
+                if (b[2] == 0x00 && b[3] == 0x02 && b[4] == 0x00 && b[5] == 0x00) return false; // 2001:2::/48 benchmarking
+                if (b[2] == 0x0d && b[3] == 0xb8) return false; // 2001:db8::/32 documentation
+                if (b[2] == 0x00 && (b[3] & 0xF0) is 0x10 or 0x20) return false; // 2001:10::/28, 2001:20::/28 ORCHID/ORCHIDv2
+            }
             return true;
         }
         return false;

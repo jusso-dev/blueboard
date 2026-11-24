@@ -107,7 +107,7 @@ export function MessageRow({
       </header>
 
       <div className="mt-1">
-        <Markdown text={m.snippet ?? m.body} />
+        <Markdown text={m.snippet ?? m.body} highlight={Boolean(m.snippet)} />
 
         {iocs.length > 0 && (
           <table className="mt-2 w-full max-w-2xl text-xs">

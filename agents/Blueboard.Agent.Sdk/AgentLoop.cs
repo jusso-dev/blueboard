@@ -160,13 +160,18 @@ public static class BoardAgent
         }
     }
 
+    internal static bool IsFollowupForMe(Message m, string me) =>
+        m.Author.Kind == "system" && m.Type == "status" && m.Mentions.Contains(me)
+        && m.Payload is { ValueKind: System.Text.Json.JsonValueKind.Object } p
+        && p.TryGetProperty("state", out var st) && st.GetString() == "followup";
+
     /// <summary>Returns false only when the claim was refused (someone else holds it), so the message stays eligible for a rescan.</summary>
     private static async Task<bool> DispatchAsync(BoardConnection board, LoopOptions o, Message m, string me,
         AgentHandler? onIncident, AgentHandler? onQuestion, AgentHandler? onMention, CancellationToken ct)
     {
         // The board's own records (action requests and results, status changes) name the requester with @handle:
-        // that is a record, not someone asking for help.
-        var mentioned = m.Mentions.Contains(me) && m.Author.Kind != "system";
+        // that is a record, not someone asking for help — except due follow-up reminders scheduled for this agent.
+        var mentioned = m.Mentions.Contains(me) && (m.Author.Kind != "system" || IsFollowupForMe(m, me));
         var open = m.ClaimState == "open";
         if (m.Type == "incident" && m.ParentId is null && onIncident is not null)
         {

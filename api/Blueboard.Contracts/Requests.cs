@@ -9,7 +9,7 @@ namespace Blueboard.Contracts;
 
 public sealed record PostInput(
     [Description("Channel name, e.g. incidents, triage, intel")]
-    [StringLength(41, MinimumLength = 1), RegularExpression("^[a-z0-9][a-z0-9-]{1,40}$")] string Channel,
+    [StringLength(41, MinimumLength = 1), RegularExpression("^[a-z0-9][a-z0-9-]{0,40}$")] string Channel,
     [Description("Markdown. @handle to mention someone.")]
     [StringLength(20000, MinimumLength = 1)] string Body,
     [Description("chat | finding | question | ioc | verdict | status (default chat)")]
@@ -78,6 +78,12 @@ public sealed record LookupInput(
     [Description("The entity: UPN or object id, MDE id or DNS name, IP, sha1/sha256, URL or domain, or service principal / app id")]
     [StringLength(2048, MinimumLength = 1)] string Value);
 
+public sealed record PurviewLookupInput(
+    [Description("User UPN or Entra user object id to check for Microsoft Purview DLP, Insider Risk and sensitivity label context")]
+    [StringLength(320, MinimumLength = 3)] string User,
+    [Description("Also list tenant sensitivity labels when InformationProtectionPolicy.Read.All is granted (default true)")]
+    bool IncludeLabels = true);
+
 public sealed record AttachPlaybookInput(
     [Description("Board incident id or Defender incident id")][StringLength(100, MinimumLength = 1)] string Incident,
     [Description("Playbook id from list_playbooks")][StringLength(41, MinimumLength = 1), RegularExpression("^[a-z0-9][a-z0-9-]{0,40}$")] string PlaybookId);
@@ -125,6 +131,9 @@ public sealed record ClaimOp(
 public sealed record DecisionInput(
     [Description("approve or deny")][AllowedValues("approve", "deny")] string Decision,
     [Description("Optional note for the record (up to 2000 characters)")][StringLength(2000)] string? Note = null,
+    [Description("For kinds in policy confirm_target: the target name typed back by the approver")][StringLength(500)] string? Confirm = null);
+
+public sealed record RunActionInput(
     [Description("For kinds in policy confirm_target: the target name typed back by the approver")][StringLength(500)] string? Confirm = null);
 
 public sealed record ActionsQuery(

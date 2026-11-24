@@ -82,7 +82,7 @@ This walkthrough explains how to enable blueboard's optional threat intelligence
     ```json
     {
       "kind": "publish_ti_indicator",
-      "incident_id": "1004",
+      "incident": "1004",
       "params": {
         "kind": "domain",
         "value": "login-contoso-verify.example",

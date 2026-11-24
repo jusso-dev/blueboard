@@ -7,8 +7,8 @@ These 14 standard operating procedures govern day-to-day administration, change 
 | Item | Value |
 |---|---|
 | Document | blueboard Administrator Standard Operating Procedures (SOPs) |
-| Version | 2.0 |
-| Date | 21-11-2026 |
+| Version | 2.1 |
+| Date | 25-11-2026 |
 | Status | Published |
 | Owner | blueboard SOC platform team |
 | Audience | Board administrators (`Board.Admin`), Entra ID administrators, SOC leads, Azure operators |
@@ -65,7 +65,7 @@ These 14 standard operating procedures govern day-to-day administration, change 
 
 ### Steps
 
-1. Create a User-Assigned Managed Identity (Azure workloads) or Entra App Registration with Workload Identity Federation (Kubernetes / GitHub Actions). **Never create a client secret.**
+1. Create an **Entra Agent ID** (recommended for autonomous SOC workers with Conditional Access and sponsor accountability), User-Assigned Managed Identity (Azure workloads), or Entra App Registration with Workload Identity Federation (Kubernetes / GitHub Actions). **Never create a client secret.**
 2. Assign only the roles that specialist requires:
 
    ```sh
@@ -74,9 +74,9 @@ These 14 standard operating procedures govern day-to-day administration, change 
    ```
 
    (`assign-roles.sh` refuses `Board.Approve` and `Board.Admin` on service principals.)
-3. Start the agent pointing at `https://<api-host>/runtime/webhooks/mcp` with audience `api://blueboard-<env>/.default`.
+3. Start the agent pointing at `https://<api-host>/runtime/webhooks/mcp` with audience `api://blueboard-<env>/.default` (or pair with Microsoft Sentinel MCP using `templates/mcp/dual-mcp-sentinel-blueboard.json`).
 4. **Immediate cut-off of a misbehaving agent**:
-   - On **Admin → Participants**, click **Disable** and record the reason (`POST /api/manage/participants/{handle}`). The agent's next MCP call returns `principal disabled`.
+   - On **Admin → Participants**, click **Disable** and record the reason (`POST /api/manage/participants/{handle}`). Blueboard immediately releases the principal's open claims, disables its active webhook subscriptions and returns `principal disabled` on the very next MCP, webhook or follow-up check.
    - Disable the service principal in Entra ID (*Enabled for users to sign-in = No*) or remove its `Board.*` role assignments.
    - If using workload identity federation, delete and recreate the federated identity credential.
 
@@ -128,7 +128,7 @@ These 14 standard operating procedures govern day-to-day administration, change 
 
 ### Verification
 
-- Confirm `broker.paused`, `broker.resumed` and `action.run_held` events appear in `audit_log` / `BlueboardAudit_CL`.
+- Confirm `broker.paused`, `broker.resumed` and `action.released` events appear in `audit_log` / `BlueboardAudit_CL`.
 
 ## 5. SOP-05: Dry-run week review and `BROKER_EXECUTE=true` cutover
 
@@ -139,7 +139,7 @@ These 14 standard operating procedures govern day-to-day administration, change 
 ### Steps
 
 1. Open **Reports** (`/reports`) and review the **Dry-run** section covering the past 7+ days: verify policy rejection rate, false-positive proposals, approval wait times, and exact dry-run payloads.
-2. Confirm `blueboard policy-check policy.json` exits 0 with populated `protected_users`, `protected_devices` and `protected_indicators`.
+2. Confirm `blueboard policy-check policy.json` exits 0 with populated `protected_users`, `protected_devices`, `protected_apps` and `protected_indicators`.
 3. Verify **Setup** (`/setup`) shows every enabled action has its required Microsoft permission granted (no *"Not granted: brokered actions will fail"* errors).
 4. Enable live execution:
 
@@ -318,7 +318,7 @@ These 14 standard operating procedures govern day-to-day administration, change 
 
 ### Steps
 
-1. Create `playbooks/<slug>.md` with YAML frontmatter (`id`, `name`, `priority`, `categories`, `title_contains`, `service_sources`, `severities`) and `## <step-id>: <title>` sections with optional `depends_on:` and `channel:`.
+1. Create `playbooks/<slug>.md` with YAML frontmatter (`id`, `title`, `priority`, `match.titles`, `match.techniques`, `steps` with optional `stage` and `after` dependencies) and `## <step-id>: <title>` sections explaining the investigation procedure.
 2. Validate offline:
 
    ```sh

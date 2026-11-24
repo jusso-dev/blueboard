@@ -26,6 +26,11 @@
     "office.com",
     "azure.com"
   ],
+  "protected_apps": [
+    "blueboard-api",
+    "blueboard-web",
+    "Microsoft Sentinel MCP"
+  ],
   "require_target_in_incident": true,
   "require_two_approvers": [
     "disable_user",

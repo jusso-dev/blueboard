@@ -116,6 +116,7 @@ def check_deliverables(combined_only: bool) -> tuple[int, int]:
 def check_markdown_links() -> int:
     md_files = (
         ["README.md"]
+        + sorted(glob.glob("docs/*.md"))
         + sorted(glob.glob("docs/guides/*.md"))
         + sorted(glob.glob("docs/admin/*.md"))
         + sorted(glob.glob("docs/security/*.md"))

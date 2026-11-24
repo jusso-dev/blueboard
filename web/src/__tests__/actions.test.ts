@@ -20,6 +20,7 @@ const entities: IncidentEntities = {
   files: [{ sha256: "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08", sha1: null, name: "update.exe" }],
   emails: [{ network_message_id: "abcdefgh12", recipient: "ana@contoso.com", sender: "x@evil.example", subject: "Invoice" }],
   mitre: ["T1059.001"],
+  cloud_apps: [{ app_id: "aa11bb22-cc33-44dd-88ee-ff0011223344", object_id: "bb22cc33-dd44-45ee-99ff-001122334455", display_name: "DocViewer Sync", kind: "oauth_app" }],
 };
 
 const schema = (props: Record<string, object>, required: string[]) => ({ type: "object", properties: props, required });
@@ -29,6 +30,8 @@ const catalog: CatalogEntry[] = [
   { kind: "run_av_scan", title: "Run AV scan", stage: "eradicate", destructive: false, target: "device", mode: "auto", params: schema({ machine_id: { type: "string" } }, ["machine_id"]) },
   { kind: "release_device", title: "Release", stage: "recover", destructive: true, target: "device", mode: "disabled", params: schema({ machine_id: { type: "string" } }, ["machine_id"]) },
   { kind: "disable_user", title: "Disable user", stage: "contain", destructive: true, target: "user", mode: "two_approvers", params: schema({ user: { type: "string" } }, ["user"]) },
+  { kind: "disable_service_principal", title: "Disable service principal", stage: "contain", destructive: true, target: "app", mode: "two_approvers",
+    params: schema({ service_principal_id: { type: "string" } }, ["service_principal_id"]) },
   { kind: "block_indicator", title: "Block indicator", stage: "contain", destructive: true, target: "indicator", mode: "approval",
     params: schema({ indicator_type: { type: "string", enum: ["ip", "domain"] }, value: { type: "string" }, title: { type: "string" }, expires_in_days: { type: "integer", default: 30 } }, ["indicator_type", "value", "title"]) },
 ];
@@ -41,8 +44,20 @@ describe("targetsFromEntities", () => {
     expect(devices).toEqual([{ type: "device", label: "ws-042.contoso.com", params: { machine_id: DEVICE } }]);
   });
 
-  it("uses the UPN for users", () => {
-    expect(targets.find((t) => t.type === "user")).toEqual({ type: "user", label: "ana@contoso.com", params: { user: "ana@contoso.com" } });
+  it("includes both UPN and user_id for Entra user protection actions", () => {
+    expect(targets.find((t) => t.type === "user")).toEqual({
+      type: "user",
+      label: "ana@contoso.com",
+      params: { user: "ana@contoso.com", user_id: "11111111-1111-1111-1111-111111111111" },
+    });
+  });
+
+  it("exposes OAuth / cloud apps as separate app targets", () => {
+    expect(targets.find((t) => t.type === "app")).toEqual({
+      type: "app",
+      label: "DocViewer Sync",
+      params: { service_principal_id: "bb22cc33-dd44-45ee-99ff-001122334455" },
+    });
   });
 
   it("offers IPs, domains, URLs and file hashes as indicators with the right type", () => {
@@ -74,12 +89,13 @@ describe("action picker", () => {
   it("lists only kinds for the target type that policy hasn't disabled", () => {
     expect(actionsFor(catalog, "device").map((a) => a.kind)).toEqual(["isolate_device", "run_av_scan"]);
     expect(actionsFor(catalog, "user").map((a) => a.kind)).toEqual(["disable_user"]);
+    expect(actionsFor(catalog, "app").map((a) => a.kind)).toEqual(["disable_service_principal"]);
     expect(actionsFor(catalog, "email")).toEqual([]);
   });
 
   it("merges schema defaults with the evidence and drops unknown keys", () => {
     expect(initialParams(catalog[0]!.params, { machine_id: DEVICE, junk: 1 })).toEqual({ machine_id: DEVICE, isolation_type: "Full" });
-    expect(initialParams(catalog[4]!.params, { indicator_type: "ip", value: "203.0.113.50", title: "t" })).toEqual({
+    expect(initialParams(catalog[5]!.params, { indicator_type: "ip", value: "203.0.113.50", title: "t" })).toEqual({
       indicator_type: "ip", value: "203.0.113.50", title: "t", expires_in_days: 30,
     });
   });
@@ -87,7 +103,7 @@ describe("action picker", () => {
 
 describe("generated form", () => {
   const html = renderToStaticMarkup(
-    createElement(SchemaFields, { schema: catalog[4]!.params, values: { indicator_type: "ip", value: "203.0.113.50" }, onChange: () => {}, idPrefix: "f" }),
+    createElement(SchemaFields, { schema: catalog[5]!.params, values: { indicator_type: "ip", value: "203.0.113.50" }, onChange: () => {}, idPrefix: "f" }),
   );
 
   it("labels every field and marks required ones", () => {

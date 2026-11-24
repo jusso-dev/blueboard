@@ -3,13 +3,13 @@ id: data-exfiltration-cloud
 title: Cloud data exfiltration & mass download
 priority: 10
 match:
-  titles: ["mass download", "exfiltration", "unusual file share", "anomalous download", "SharePoint download", "OneDrive download"]
-  techniques: ["T1567", "T1530", "T1048"]
+  titles: ["mass download", "exfiltration", "unusual file share", "anomalous download", "SharePoint download", "OneDrive download", "purview", "dlp", "insider risk", "sensitivity label"]
+  techniques: ["T1567", "T1567.002", "T1530", "T1048"]
 steps:
   - id: scope-volume
     stage: triage
-    title: Quantify downloaded/shared files, sites and sensitivity labels
-    detail: Query CloudAppEvents and OfficeActivity (FileDownloaded, FileSyncDownloadedFull, AnonymousLinkCreated, SharingSet) over the last 7 days. Post file counts, sites, sensitivity labels and destination IPs/devices as a finding.
+    title: Quantify downloaded/shared files, Purview DLP/IRM context and sensitivity labels
+    detail: Call lookup_purview_context on affected users and query CloudAppEvents / OfficeActivity (FileDownloaded, SensitivityLabelRemoved, AnonymousLinkCreated, SharingSet) over the last 7 days. Post file counts, sites, sensitivity labels and destination IPs/apps as a finding.
   - id: verify-account-device
     stage: investigate
     title: Determine whether activity is account compromise or insider action

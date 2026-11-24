@@ -372,7 +372,7 @@ def build(icon_dir: Path) -> Diagram:
 
     d.header(
         "blueboard Solution Architecture on Azure (Australia East / Australia Southeast)",
-        "Zero-secret Entra ID auth · 30 MCP tools & OpenAPI 3.1 · 21 policy-gated Defender XDR, Entra & Sentinel actions · Production private-network profile",
+        "Zero-secret Entra ID & Entra Agent ID auth · 31 MCP tools & OpenAPI 3.1 · 21 policy-gated Defender/Entra/Sentinel actions · Purview DLP & Sentinel MCP ready",
         30, 16,
     )
 
@@ -420,11 +420,11 @@ def build(icon_dir: Path) -> Diagram:
         46, 282, 258, 116, stroke=BLUE,
     )
     roster = d.card(
-        "aca", "Specialist AI Agents",
-        ["Azure Container Apps / AKS / VMs",
-         "Triage · Sentinel Hunter · TI ·",
-         "Containment · Incident Commander",
-         "Managed Identity (app-only JWT)",
+        "aca", "AI Agents · Entra Agent ID",
+        ["Container Apps · Security Copilot",
+         "Triage · Sentinel Hunter · Purview ·",
+         "Threat Intel · Containment · Comms",
+         "Dual-MCP (blueboard + Sentinel MCP)",
          "Signed push webhooks (HMAC)"],
         46, 440, 258, 134, stroke=BLUE,
     )
@@ -465,10 +465,10 @@ def build(icon_dir: Path) -> Diagram:
     api = d.card(
         "func", "Azure Functions · blueboard-api (Flex Consumption FC1)",
         ["<b>.NET 10 isolated</b> · 2 GB instances (max 40) · 1 always-ready http instance in production",
-         "<b>REST + OpenAPI 3.1</b> /api/* (CORS: Web App origin only) · <b>MCP</b> /runtime/webhooks/mcp (<b>30 tools</b>)",
-         "<b>Action Broker</b>: 21 Defender/Entra/Sentinel actions · policy.json · 1- or 2-approver · typed confirm · dry-run",
-         "<b>Enrichment & TI</b>: 7-kind lookup_entity · MDE KQL · Sentinel KQL · optional token-free TI feeds (KEV/EPSS/NVD/OSV)",
-         "<b>Advisory-locked Timers</b>: incident poller · stuck-action recovery · approver notifier · webhooks · audit export",
+         "<b>REST + OpenAPI 3.1</b> /api/* (CORS: Web App origin only) · <b>MCP</b> /runtime/webhooks/mcp (<b>31 tools</b>)",
+         "<b>Action Broker</b>: 21 Defender/Entra/Sentinel actions · policy.json · 1-/2-approver · post-pause recheck",
+         "<b>Enrichment & Purview</b>: lookup_entity · lookup_purview_context · MDE/Sentinel KQL · token-free TI feeds",
+         "<b>Advisory-locked Timers</b>: incident poller · recovery · notifier · webhooks · audit · secret/Purview guard",
          "<b>AuthN/Z</b>: Entra JWT checked per call · per-principal Postgres rate limits · identity: blueboard-id-api"],
         384, 410, 812, 186, stroke=BLUE, badge="TCB · Managed Identity", badge_color=BLUE, top=True,
     )
@@ -560,15 +560,15 @@ def build(icon_dir: Path) -> Diagram:
         sublabel="Origin-locked token guard in MsClient.BuildUri",
     )
     graph = d.card(
-        None, "Microsoft Graph Security API",
-        ["/security/incidents · runHuntingQuery",
-         "Users, roles, SPs, risky users, MDO purge"],
+        None, "Microsoft Graph Security & Purview",
+        ["incidents · alerts_v2 · runHuntingQuery",
+         "Purview Labels / processContent · Entra"],
         RX + 18, 282, 290, 86, stroke=READ,
     )
     xdr = d.card(
-        None, "Microsoft Defender XDR",
-        ["Unified incidents · alerts · MDO ·",
-         "MDE · MDI · Advanced Hunting"],
+        None, "Defender XDR & Microsoft Purview",
+        ["Unified SOC · MDE/MDO/MDI · Purview",
+         "DLP · Insider Risk · Sensitivity Labels"],
         RX + 332, 282, 290, 86, stroke="#94A3B8",
     )
     mdeapi = d.card(
@@ -584,11 +584,10 @@ def build(icon_dir: Path) -> Diagram:
         RX + 332, 392, 290, 86, stroke="#94A3B8",
     )
     sentinel = d.card(
-        "sentinel", "Microsoft Sentinel",
-        ["api.loganalytics.io (run_sentinel_query KQL)",
-         "STIX 2.1 TI upload · BlueboardAudit_CL",
-         "9 scheduled board-integrity analytics rules"],
-        RX + 18, 504, 604, 96, stroke=BLUE, badge="SIEM + SOAR", badge_color=BLUE,
+        "sentinel", "Microsoft Sentinel + Sentinel MCP",
+        ["api.loganalytics.io (run_sentinel_query) · Sentinel MCP (/triage, /graph, /data-exploration)",
+         "STIX 2.1 TI upload · BlueboardAudit_CL · 9 scheduled board-integrity rules"],
+        RX + 18, 504, 604, 96, stroke=BLUE, badge="SIEM + MCP + Graph", badge_color=BLUE,
     )
     logic = d.card(
         "logic", "Sentinel Automation Rule (Azure Logic App)",
@@ -624,9 +623,9 @@ def build(icon_dir: Path) -> Diagram:
         items=[
             ("1", BLUE, "Analysts → Web App:", "HTTPS static React SPA + /config.json (no identity or secrets)"),
             ("2", BLUE, "Analysts → Function App:", "HTTPS /api/* with delegated Entra JWT (scope Board.Access)"),
-            ("3", BLUE, "Agents ↔ MCP & Webhooks:", "/runtime/webhooks/mcp (app-only JWT, 30 tools) + HMAC wake-ups"),
+            ("3", BLUE, "Agents ↔ MCP & Webhooks:", "/runtime/webhooks/mcp (Entra/Agent ID JWT, 31 tools) + HMAC wake-ups"),
             ("4", VNET_COLOR, "Private Data & Vault:", "VNet + Private Endpoints → Postgres (Entra), Key Vault & Storage"),
-            ("5", READ, "Read-Only Ingest & Hunts:", "Graph incidents, entity lookups, MDE & Sentinel Log Analytics KQL"),
+            ("5", READ, "Read-Only Ingest & Hunts:", "Graph incidents, Purview DLP/IRM/Labels, MDE & Sentinel KQL"),
             ("6", WRITE, "Brokered Containment:", "21 Defender/Entra/Sentinel writes ONLY after policy + human approval"),
             ("7", SYNC, "Audit Export → Sentinel:", "1-min DCE/DCR export to BlueboardAudit_CL + 9 analytics rules"),
             ("8", SYNC, "Sentinel Real-Time Sync:", "Automation Rule Logic App triggers POST /api/incidents/{id}/sync"),

@@ -11,15 +11,18 @@ public static class Payloads
     private static readonly string[] IocVerdicts = ["malicious", "suspicious", "benign", "unknown"];
     private static readonly string[] Classifications = ["truePositive", "falsePositive", "informationalExpectedActivity", "unknown"];
 
-    public static JsonElement Validate(string type, JsonElement payload)
+    public const int MaxPayloadBytes = 65_536;
+
+    public static JsonElement Validate(string type, JsonElement payload, bool system = false)
     {
         if (payload.ValueKind != JsonValueKind.Object) throw new BoardException($"invalid {type} payload: must be an object");
+        if (payload.GetRawText().Length > MaxPayloadBytes) throw new BoardException("payload must be at most 64 KB");
         return type switch
         {
             "ioc" => Ioc(payload),
             "verdict" => Verdict(payload),
             "finding" => Finding(payload),
-            "status" => Status(payload),
+            "status" => Status(payload, system),
             _ => payload,
         };
     }
@@ -66,11 +69,20 @@ public static class Payloads
         return p;
     }
 
-    private static JsonElement Status(JsonElement p)
+    private static JsonElement Status(JsonElement p, bool system)
     {
-        if (Str(p, "state") is not { Length: > 0 and <= 100 }) throw new BoardException("invalid status payload: state required");
+        if (Str(p, "state") is not { Length: > 0 and <= 100 } state) throw new BoardException("invalid status payload: state required");
+        if (!system && IsReservedStatusState(state))
+            throw new BoardException($"status state '{state}' is reserved for the board");
         return p;
     }
+
+    internal static bool IsReservedStatusState(string state) =>
+        state.StartsWith("action_", StringComparison.OrdinalIgnoreCase)
+        || state.StartsWith("broker_", StringComparison.OrdinalIgnoreCase)
+        || state.StartsWith("principal_", StringComparison.OrdinalIgnoreCase)
+        || state.Equals("source_updated", StringComparison.OrdinalIgnoreCase)
+        || state.Equals("followup", StringComparison.OrdinalIgnoreCase);
 
     private static string? Str(JsonElement e, string name) =>
         e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;

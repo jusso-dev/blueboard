@@ -29,9 +29,10 @@ builder.Services.AddSingleton<Authenticator>();
 // Strict: an unknown key or kind in policy.json stops the worker here with the reason, rather than running on defaults.
 builder.Services.AddSingleton(Policy.Load(settings));
 builder.Services.AddSingleton<RateLimiter>();
+builder.Services.AddHttpClient<MsClient>();
+builder.Services.AddSingleton<PurviewContentGuard>();
 builder.Services.AddSingleton<BoardService>();
 builder.Services.AddSingleton<SystemPrincipal>();
-builder.Services.AddHttpClient<MsClient>();
 builder.Services.AddSingleton<Broker>();
 builder.Services.AddSingleton<Search>();
 builder.Services.AddSingleton<Reporting>();
@@ -43,12 +44,15 @@ builder.Services.AddSingleton<IncidentQueries>();
 builder.Services.AddSingleton<Ingest>();
 builder.Services.AddSingleton<WebhookService>(sp => new WebhookService(
     sp.GetRequiredService<Db>(), sp.GetRequiredService<Audit>(), sp.GetRequiredService<BoardService>(),
-    sp.GetRequiredService<SystemPrincipal>(), settings, sp.GetRequiredService<ILogger<WebhookService>>()));
+    sp.GetRequiredService<SystemPrincipal>(), settings, sp.GetRequiredService<ILogger<WebhookService>>(),
+    sp.GetRequiredService<RateLimiter>()));
 builder.Services.AddSingleton(sp => new Migrator(sp.GetRequiredService<Db>(), settings));
-// Outbound notifications and audit export: no redirects (a redirect could leave the host allowlist), short timeouts,
-// and no HttpClient request logging (it would write the webhook URL, which is a secret, to the logs).
+// Outbound notifications and audit export: no redirects, short timeouts, no HttpClient request logging, and live
+// notification destinations are pinned through OutboundGuard's anti-DNS-rebinding handler.
 static HttpMessageHandler NoRedirects() => new SocketsHttpHandler { AllowAutoRedirect = false, ConnectTimeout = TimeSpan.FromSeconds(10) };
-builder.Services.AddHttpClient<Notifier>().ConfigurePrimaryHttpMessageHandler(NoRedirects).RemoveAllLoggers();
+builder.Services.AddHttpClient<Notifier>()
+    .ConfigurePrimaryHttpMessageHandler(() => origins.Mocked ? NoRedirects() : OutboundGuard.Handler())
+    .RemoveAllLoggers();
 builder.Services.AddHttpClient<AuditExporter>().ConfigurePrimaryHttpMessageHandler(NoRedirects).RemoveAllLoggers();
 builder.Services.AddSingleton<Setup>();
 builder.Services.AddSingleton<Participants>();

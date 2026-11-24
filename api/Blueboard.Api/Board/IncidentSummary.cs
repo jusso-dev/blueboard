@@ -139,6 +139,8 @@ public static partial class IncidentSummary
             if ((u.Upn ?? u.AadUserId) is { } id) chips.Add(new SummaryEntity("user", id, u.Upn ?? u.Name ?? id));
         foreach (var d in entities.Devices)
             if ((d.MdeDeviceId ?? d.Name) is { } id) chips.Add(new SummaryEntity("device", id, d.Name ?? id));
+        foreach (var a in entities.CloudApps)
+            if ((a.ObjectId ?? a.AppId ?? a.DisplayName) is { } id) chips.Add(new SummaryEntity("app", a.ObjectId ?? id, a.DisplayName ?? id));
 
         var pb = PlaybookProgress(playbook, ordered);
         var latest = verdicts.LastOrDefault();

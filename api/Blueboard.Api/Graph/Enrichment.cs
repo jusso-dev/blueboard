@@ -14,10 +14,11 @@ namespace Blueboard.Api.Graph;
 public sealed partial class Enrichment(Db db, Audit audit, BoardService board, MsClient ms, RateLimiter? limiter = null, Settings? settings = null)
 {
     [GeneratedRegex(@"^\s*\.", RegexOptions.Multiline)] private static partial Regex MgmtCommand();
-    [GeneratedRegex(@"//.*$", RegexOptions.Multiline)] private static partial Regex KqlComment();
-    [GeneratedRegex(@"^P(T?\d+[DHM])+$")] private static partial Regex IsoDuration();
+    [GeneratedRegex(@"\b(externaldata|http_request|http_request_post|sql_request|cosmosdb_sql_request|mysql_request|postgresql_request|azure_digital_twins_query_request)\b", RegexOptions.IgnoreCase)] private static partial Regex OutboundPlugin();
+    [GeneratedRegex(@"^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?)?$")] private static partial Regex IsoDuration();
     [GeneratedRegex("^[0-9a-f]{40}$", RegexOptions.IgnoreCase)] private static partial Regex MdeId();
     [GeneratedRegex(@"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", RegexOptions.IgnoreCase)] private static partial Regex GuidId();
+    [GeneratedRegex(@"^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[^\s/\\?#@]+@[^\s/\\?#@]+\.[^\s/\\?#@]+)$", RegexOptions.IgnoreCase)] private static partial Regex UserOrGuid();
 
     public async Task<JsonObject> GetIncidentAsync(string reference, CancellationToken ct = default)
     {
@@ -128,14 +129,116 @@ public sealed partial class Enrichment(Db db, Audit audit, BoardService board, M
         };
     }
 
-    private static string ValidateKql(string query, string? timespan)
+    internal static string ValidateKql(string query, string? timespan)
     {
         if (query is not { Length: >= 5 and <= 10000 }) throw new BoardException("query must be 5–10000 characters");
         var span = timespan ?? "P7D";
-        if (!IsoDuration().IsMatch(span)) throw new BoardException("timespan must be an ISO-8601 duration, e.g. P7D or PT12H");
-        // Advanced hunting & Log Analytics are read-only, but refuse management commands outright.
-        if (MgmtCommand().IsMatch(KqlComment().Replace(query, ""))) throw new BoardException("management commands are not allowed");
+        var dm = IsoDuration().Match(span);
+        if (!dm.Success || span.EndsWith('T') || !(dm.Groups[1].Success || dm.Groups[2].Success || dm.Groups[3].Success))
+            throw new BoardException("timespan must be an ISO-8601 duration, e.g. P7D or PT12H");
+        if (!TryMinutes(dm.Groups[1].Value, 1440, out var dMin)
+            || !TryMinutes(dm.Groups[2].Value, 60, out var hMin)
+            || !TryMinutes(dm.Groups[3].Value, 1, out var mMin)
+            || checked(dMin + hMin + mMin) is <= 0 or > 90L * 1440L)
+            throw new BoardException("timespan must be between PT1M and P90D");
+
+        // Strip strings and comments lexically so neither /* ... */ nor // can cloak .management or externaldata/http_request.
+        var stripped = StripCommentsAndStrings(query, out var unclosedComment);
+        if (unclosedComment) throw new BoardException("unclosed comment in KQL query");
+        if (MgmtCommand().IsMatch(stripped)) throw new BoardException("management commands are not allowed");
+        if (OutboundPlugin().IsMatch(stripped)) throw new BoardException("external data and outbound network plugins are not allowed in hunting queries");
         return span;
+    }
+
+    private static bool TryMinutes(string raw, long factor, out long minutes)
+    {
+        minutes = 0;
+        if (raw.Length == 0) return true;
+        if (!long.TryParse(raw, out var val) || val > 90L * 1440L) return false;
+        minutes = val * factor;
+        return true;
+    }
+
+    private static string StripCommentsAndStrings(string query, out bool unclosedComment)
+    {
+        unclosedComment = false;
+        var sb = new System.Text.StringBuilder(query.Length);
+        var i = 0;
+        while (i < query.Length)
+        {
+            var c = query[i];
+            var next = i + 1 < query.Length ? query[i + 1] : '\0';
+            // Multi-line KQL string literals: ```...``` or ~~~...~~~
+            if ((c == '`' && i + 2 < query.Length && query[i + 1] == '`' && query[i + 2] == '`')
+                || (c == '~' && i + 2 < query.Length && query[i + 1] == '~' && query[i + 2] == '~'))
+            {
+                var fence = query.Substring(i, 3);
+                sb.Append("\"\"");
+                i += 3;
+                var end = query.IndexOf(fence, i, StringComparison.Ordinal);
+                if (end < 0) break;
+                i = end + 3;
+                continue;
+            }
+            // Verbatim strings: @"...", @'...', h@"...", H@"..."
+            if ((c == '@' && (next == '"' || next == '\''))
+                || ((c is 'h' or 'H') && i + 2 < query.Length && query[i + 1] == '@' && (query[i + 2] == '"' || query[i + 2] == '\'')))
+            {
+                var qIdx = c == '@' ? i + 1 : i + 2;
+                var quote = query[qIdx];
+                sb.Append("\"\"");
+                i = qIdx + 1;
+                while (i < query.Length)
+                {
+                    if (query[i] == quote)
+                    {
+                        if (i + 1 < query.Length && query[i + 1] == quote) { i += 2; continue; }
+                        i++;
+                        break;
+                    }
+                    i++;
+                }
+                continue;
+            }
+            // Regular quoted string literals
+            if (c is '"' or '\'')
+            {
+                var quote = c;
+                sb.Append("\"\"");
+                i++;
+                while (i < query.Length)
+                {
+                    if (query[i] == '\\') { i += 2; continue; }
+                    if (query[i] == quote) { i++; break; }
+                    i++;
+                }
+                continue;
+            }
+            // Line comment //
+            if (c == '/' && next == '/')
+            {
+                sb.Append(' ');
+                i += 2;
+                while (i < query.Length && query[i] != '\n') i++;
+                continue;
+            }
+            // Block comment /* ... */
+            if (c == '/' && next == '*')
+            {
+                sb.Append(' ');
+                var end = query.IndexOf("*/", i + 2, StringComparison.Ordinal);
+                if (end < 0)
+                {
+                    unclosedComment = true;
+                    break;
+                }
+                i = end + 2;
+                continue;
+            }
+            sb.Append(c);
+            i++;
+        }
+        return sb.ToString();
     }
 
     /// <summary>
@@ -293,6 +396,98 @@ public sealed partial class Enrichment(Db db, Audit audit, BoardService board, M
             default:
                 throw new BoardException("kind must be user, device, ip, file, url, service_principal or oauth_app");
         }
+    }
+
+    /// <summary>
+    /// Read-only Microsoft Purview data security context for a user: recent Purview DLP and Insider Risk alerts from
+    /// Microsoft Graph Security (uses existing SecurityAlert.Read.All) plus tenant sensitivity labels when granted.
+    /// </summary>
+    public async Task<object> LookupPurviewAsync(Principal p, string user, bool includeLabels = true, CancellationToken ct = default)
+    {
+        p.Require(Roles.Hunter);
+        if (limiter is not null) await limiter.TakeAsync(p, "lookup", ct);
+        user = user?.Trim() ?? "";
+        if (user.Length is < 3 or > 320 || user.Any(char.IsControl) || user.IndexOfAny(['/', '\\', '?', '#']) >= 0 || !UserOrGuid().IsMatch(user))
+            throw new BoardException("user must be an Entra user UPN or object id (GUID)");
+
+        await audit.WriteAsync(p.Id, "enrich.purview_lookup", user, new { include_labels = includeLabels }, ct);
+
+        async Task<JsonElement?> Try(MsApi api, string path)
+        {
+            try { return await ms.SendAsync(api, path, ct: ct); }
+            catch (BoardException) { return null; }
+        }
+
+        var encodedUser = Uri.EscapeDataString(user);
+        var userInfo = await Try(MsApi.Graph, $"/v1.0/users/{encodedUser}?$select=id,displayName,userPrincipalName,department,jobTitle");
+        var oid = userInfo is { } u ? Str(u, "id") : null;
+        var upn = userInfo is { } uu ? Str(uu, "userPrincipalName") : null;
+        var needles = new[] { user, oid, upn }.OfType<string>().Where(x => x.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+
+        var alertsRes = await Try(MsApi.Graph, "/v1.0/security/alerts_v2?$filter=serviceSource%20eq%20%27microsoftDataLossPrevention%27%20or%20serviceSource%20eq%20%27microsoftInsiderRiskManagement%27&$top=50")
+                        ?? await Try(MsApi.Graph, "/v1.0/security/alerts_v2?$top=50");
+
+        var matchedAlerts = new List<object>();
+        if (alertsRes is { } ar && ar.TryGetProperty("value", out var av) && av.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var alert in av.EnumerateArray())
+            {
+                var src = Str(alert, "serviceSource") ?? Str(alert, "detectionSource") ?? "";
+                if (!src.Contains("DataLossPrevention", StringComparison.OrdinalIgnoreCase)
+                    && !src.Contains("InsiderRisk", StringComparison.OrdinalIgnoreCase)
+                    && !src.Contains("Purview", StringComparison.OrdinalIgnoreCase)
+                    && !src.Contains("InformationProtection", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                var raw = alert.GetRawText();
+                if (!needles.Any(n => raw.Contains(n, StringComparison.OrdinalIgnoreCase))) continue;
+                var desc = Str(alert, "description");
+                matchedAlerts.Add(new
+                {
+                    id = Str(alert, "id"),
+                    title = Str(alert, "title"),
+                    severity = Str(alert, "severity"),
+                    status = Str(alert, "status"),
+                    service_source = src,
+                    category = Str(alert, "category"),
+                    created_at = Str(alert, "createdDateTime"),
+                    description = desc is { Length: > 500 } ? desc[..500] : desc,
+                });
+                if (matchedAlerts.Count >= 20) break;
+            }
+        }
+
+        List<object>? labels = null;
+        var labelsStatus = "skipped";
+        if (includeLabels)
+        {
+            var labelsRes = await Try(MsApi.Graph, "/v1.0/security/dataSecurityAndGovernance/sensitivityLabels?$select=id,name,description,sensitivity,isActive");
+            if (labelsRes is { } lr && lr.TryGetProperty("value", out var lv) && lv.ValueKind == JsonValueKind.Array)
+            {
+                labelsStatus = "ok";
+                labels = lv.EnumerateArray().Take(50).Select(l => (object)new
+                {
+                    id = Str(l, "id"),
+                    name = Str(l, "name"),
+                    description = Str(l, "description"),
+                    sensitivity = l.TryGetProperty("sensitivity", out var sv) && sv.ValueKind == JsonValueKind.Number ? (int?)sv.GetInt32() : null,
+                    is_active = !l.TryGetProperty("isActive", out var act) || act.ValueKind != JsonValueKind.False,
+                }).ToList();
+            }
+            else
+            {
+                labelsStatus = "not_granted_or_unavailable";
+            }
+        }
+
+        return new
+        {
+            user = userInfo,
+            queried = user,
+            alert_count = matchedAlerts.Count,
+            dlp_and_insider_alerts = matchedAlerts,
+            sensitivity_labels = labels,
+            labels_status = labelsStatus,
+        };
     }
 
     private static async Task<JsonElement?> FindSpByAppIdAsync(Func<MsApi, string, Task<JsonElement?>> tryGet, string appId)

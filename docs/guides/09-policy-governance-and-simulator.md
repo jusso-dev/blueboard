@@ -56,7 +56,7 @@ Three ready-to-customise templates live in `templates/policies/`:
 
 5. Fix any errors and review every warning. `policy-check` validates:
    - Strict JSON schema — unknown keys fail immediately (and also stop the Function App from starting, so a typo like `protected_user` can never silently disable protection).
-   - Empty `protected_users`, `protected_devices` or `protected_indicators` lists (warned).
+   - Empty `protected_users`, `protected_devices`, `protected_apps` or `protected_indicators` lists (warned).
    - Destructive kinds listed in `auto_approve` (warned / ignored at runtime).
    - Unusually long expiries (`expiry_hours > 24` or any `expiry_hours_by_kind` entry `> 24` — warned).
    - Missing companion IDs or wildcard syntax errors.

@@ -8,6 +8,8 @@ public sealed record FileRef(string? Sha256, string? Sha1, string? Name, string?
 public sealed record EmailRef(string? NetworkMessageId, string? Recipient, string? Sender, string? Subject);
 public sealed record CloudAppRef(string? AppId, string? ObjectId, string? DisplayName, string? Kind = null);
 public sealed record AzureResourceRef(string? ResourceId, string? Name, string? ResourceType);
+public sealed record DataAssetRef(string Kind, string? Name, string? UrlOrPath, string? SensitivityLabel = null);
+public sealed record PurviewSignalRef(string Source, string? Title, string? Severity, string? PolicyOrLabel = null);
 
 public sealed record IncidentEntities(
     List<DeviceRef> Devices, List<UserRef> Users, List<string> Ips, List<string> Urls,
@@ -15,6 +17,8 @@ public sealed record IncidentEntities(
 {
     public List<CloudAppRef> CloudApps { get; init; } = [];
     public List<AzureResourceRef> AzureResources { get; init; } = [];
+    public List<DataAssetRef> DataAssets { get; init; } = [];
+    public List<PurviewSignalRef> PurviewSignals { get; init; } = [];
 
     /// <summary>Every identifier in the evidence, case-insensitive, for "is this target in the incident" checks.</summary>
     public HashSet<string> Keys()
@@ -28,6 +32,7 @@ public sealed record IncidentEntities(
         foreach (var m in Emails) { Add(m.NetworkMessageId); Add(m.Recipient); Add(m.Sender); }
         foreach (var a in CloudApps) { Add(a.AppId); Add(a.ObjectId); Add(a.DisplayName); }
         foreach (var r in AzureResources) { Add(r.ResourceId); Add(r.Name); }
+        foreach (var da in DataAssets) { Add(da.Name); Add(da.UrlOrPath); }
         return k;
     }
 }
@@ -47,6 +52,16 @@ public static class Entities
         {
             if (alert.TryGetProperty("mitreTechniques", out var mt) && mt.ValueKind == JsonValueKind.Array)
                 e.Mitre.AddRange(mt.EnumerateArray().Select(x => x.GetString()).OfType<string>());
+            var src = S(alert, "serviceSource") ?? S(alert, "detectionSource");
+            if (src is not null && (src.Contains("DataLossPrevention", StringComparison.OrdinalIgnoreCase)
+                || src.Contains("InsiderRisk", StringComparison.OrdinalIgnoreCase)
+                || src.Contains("Purview", StringComparison.OrdinalIgnoreCase)
+                || src.Contains("InformationProtection", StringComparison.OrdinalIgnoreCase)))
+            {
+                var ad = O(alert, "additionalData");
+                var pol = S(alert, "policyName") ?? S(ad, "PolicyName") ?? S(ad, "policyName") ?? S(alert, "sensitivityLabel") ?? S(ad, "sensitivityLabel");
+                e.PurviewSignals.Add(new PurviewSignalRef(src, S(alert, "title"), S(alert, "severity"), pol));
+            }
             if (!alert.TryGetProperty("evidence", out var evidence) || evidence.ValueKind != JsonValueKind.Array) continue;
             foreach (var ev in evidence.EnumerateArray())
             {
@@ -78,11 +93,12 @@ public static class Entities
                         var fd = O(ev, "fileDetails");
                         var alg = S(ev, "algorithm")?.ToLowerInvariant();
                         var val = S(ev, "value");
-                        e.Files.Add(new FileRef(
-                            S(fd, "sha256") ?? (alg is "sha256" or "filesha256" ? val : null),
-                            S(fd, "sha1") ?? (alg is "sha1" or "filesha1" ? val : null),
-                            S(fd, "fileName"),
-                            S(fd, "md5") ?? (alg is "md5" or "filemd5" ? val : null)));
+                        var fSha256 = S(fd, "sha256") ?? (alg is "sha256" or "filesha256" ? val : null);
+                        var fSha1 = S(fd, "sha1") ?? (alg is "sha1" or "filesha1" ? val : null);
+                        var fName = S(fd, "fileName");
+                        e.Files.Add(new FileRef(fSha256, fSha1, fName, S(fd, "md5") ?? (alg is "md5" or "filemd5" ? val : null)));
+                        if ((S(ev, "sensitivityLabel") ?? S(fd, "sensitivityLabel")) is { } flabel)
+                            e.DataAssets.Add(new DataAssetRef("file", fName ?? fSha256 ?? fSha1, S(fd, "filePath"), flabel));
                         break;
                     case "processEvidence":
                         if (S(ev, "mdeDeviceId") is { } procDev) AddDevice(e, procDev, null);
@@ -123,6 +139,25 @@ public static class Entities
                     case "azureResourceEvidence":
                         e.AzureResources.Add(new AzureResourceRef(S(ev, "resourceId"), S(ev, "resourceName"), S(ev, "resourceType")));
                         break;
+                    case "blobEvidence":
+                    case "blobContainerEvidence":
+                        var bKind = t == "blobEvidence" ? "blob" : "blob_container";
+                        var bUrl = S(ev, "url");
+                        e.DataAssets.Add(new DataAssetRef(bKind, S(ev, "name"), bUrl, S(ev, "sensitivityLabel")));
+                        if (bUrl is not null) e.Urls.Add(bUrl);
+                        if (O(ev, "blobContainer") is { ValueKind: JsonValueKind.Object } bc && S(bc, "name") is { } bcName)
+                            e.DataAssets.Add(new DataAssetRef("blob_container", bcName, S(bc, "url")));
+                        if (O(ev, "storageResource") is { ValueKind: JsonValueKind.Object } sr)
+                            e.AzureResources.Add(new AzureResourceRef(S(sr, "resourceId"), S(sr, "resourceName"), S(sr, "resourceType")));
+                        break;
+                    case "teamsMessageEvidence":
+                        var senderAddr = S(ev, "senderFromAddress");
+                        if (senderAddr is not null) e.Users.Add(new UserRef(senderAddr, null, null));
+                        e.Emails.Add(new EmailRef(S(ev, "messageId"), S(ev, "owningTenantId"), senderAddr, S(ev, "subject")));
+                        if (O(ev, "urls") is { ValueKind: JsonValueKind.Array } tUrls)
+                            e.Urls.AddRange(tUrls.EnumerateArray().Select(u => u.GetString()).OfType<string>());
+                        e.DataAssets.Add(new DataAssetRef("teams_message", S(ev, "subject") ?? S(ev, "messageId"), S(ev, "threadId"), S(ev, "sensitivityLabel")));
+                        break;
                 }
             }
         }
@@ -161,6 +196,9 @@ public static class Entities
         CloudApps = MergeCloudApps(e.CloudApps),
         AzureResources = e.AzureResources.Where(r => r.ResourceId is not null || r.Name is not null)
             .DistinctBy(r => (r.ResourceId ?? r.Name)!.ToLowerInvariant()).ToList(),
+        DataAssets = e.DataAssets.Where(a => a.Name is not null || a.UrlOrPath is not null)
+            .DistinctBy(a => $"{a.Kind}|{a.Name}|{a.UrlOrPath}".ToLowerInvariant()).ToList(),
+        PurviewSignals = e.PurviewSignals.DistinctBy(p => $"{p.Source}|{p.Title}|{p.PolicyOrLabel}".ToLowerInvariant()).ToList(),
     };
 
     /// <summary>Merges device evidence across alerts so (MdeDeviceId, null) + (MdeDeviceId, Name) keeps both fields.</summary>

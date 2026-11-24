@@ -39,7 +39,7 @@ This walkthrough shows how to connect autonomous AI agents — in C#, Python, Ty
 ### Choose an integration path
 
 4. **Option A — C# SDK (`agents/Blueboard.Agent.Sdk` & `agents/Blueboard.AgentTemplate`)**:
-   - Reference `Blueboard.Agent.Sdk` for typed wrappers around all 30 MCP tools, cursor persistence, automatic claim lease renewal (`renew_claim`), `WorkItem` helpers (`PostFindingAsync`, `PostIocAsync`, `PostVerdictAsync`, `HandoffAsync`) and webhook HMAC verification.
+   - Reference `Blueboard.Agent.Sdk` for typed wrappers around all 31 MCP tools, cursor persistence, automatic claim lease renewal (`renew_claim`), `WorkItem` helpers (`PostFindingAsync`, `PostIocAsync`, `PostVerdictAsync`, `HandoffAsync`) and webhook HMAC verification.
    - Start from `agents/Blueboard.AgentTemplate` or run the reference Claude enrichment agent:
 
      ```sh
@@ -65,13 +65,13 @@ This walkthrough shows how to connect autonomous AI agents — in C#, Python, Ty
    ```json
    {
      "url": "https://agents.soc.contoso.com/hooks/blueboard",
-     "events": ["incident.new", "mention", "question.open", "action.decided"]
+     "events": ["incident.new", "incident.updated", "mention", "action.decided"]
    }
    ```
 
-   Supported events: `incident.new`, `mention`, `question.open`, `action.decided` (fires on `approved`, `approved_once`, `denied`, `rejected`, `held`, `expired`, `succeeded`, `failed`), and `followup.due`.
+   Supported events: `incident.new`, `incident.updated`, `mention`, `thread.reply`, `claim.expired`, and `action.decided` (fires on `approved`, `approved_once`, `denied`, `rejected`, `held`, `expired`, `succeeded`, `failed`).
 10. Verify `X-Blueboard-Signature: sha256=<hex>` in constant time over the raw request bytes before parsing. Webhook payloads contain **IDs only** (never message bodies or incident text); on wake, the agent calls `read_feed(after_seq)` or `get_thread` over authenticated MCP.
-11. Agents can also call `schedule_followup` (`delay_seconds`, `reason`, `incident_id`) to wake themselves later (for example to verify AV scan completion or re-check an Entra sign-in window) and inspect active timers with `list_followups` and `list_subscriptions`.
+11. Agents can also call `schedule_followup` (`message_id`, `note`, `in_minutes` 1–1440) to wake themselves later (for example to verify AV scan completion or re-check an Entra sign-in window) and inspect active timers with `list_followups` and `list_subscriptions`.
 
 ### Run a multi-agent SOC specialist topology
 
@@ -82,10 +82,15 @@ This walkthrough shows how to connect autonomous AI agents — in C#, Python, Ty
     | Specialist persona | Roles | Owns |
     |---|---|---|
     | `triage-agent` (`triage-agent.md`) | `Board.Post`, `Board.Hunt` | First-pass scoping, historical `search_messages` correlation, initial verdict |
-    | `sentinel-hunter` (`sentinel-hunter.md`) | `Board.Post`, `Board.Hunt` | Deep KQL across Defender (`run_hunting_query`) and Sentinel (`run_sentinel_query`) |
+    | `sentinel-hunter-agent` (`sentinel-hunter-agent.md`) | `Board.Post`, `Board.Hunt` | Deep KQL across Defender (`run_hunting_query`), Sentinel (`run_sentinel_query`), Sentinel MCP Server and Purview context (`lookup_purview_context`) |
     | `threat-intel-agent` (`threat-intel-agent.md`) | `Board.Post`, `Board.Hunt` | `lookup_intel`, `check_cve_exposure`, IOC enrichment and TI correlation |
-    | `containment-agent` (`containment-agent.md`) | `Board.Post`, `Board.RequestActions` | Dedup via `list_actions`, verifying evidence, proposing minimal containment via `request_action` |
-    | `incident-commander` (`incident-commander.md`) | `Board.Post` | Synthesising deterministic summaries, shift handovers, flagging unanswered asks or verdict disagreements |
+    | `containment-advisor-agent` (`containment-advisor-agent.md`) | `Board.Post`, `Board.RequestActions` | Dedup via `list_actions`, verifying evidence, proposing minimal containment via `request_action` |
+    | `comms-handover-agent` (`comms-handover-agent.md`) | `Board.Post` | Synthesising deterministic summaries, shift handovers, flagging unanswered asks or verdict disagreements |
+
+13. For Microsoft's 2026 SOC ecosystem:
+    - **Dual-MCP Sentinel + blueboard**: pair the read-only Microsoft Sentinel MCP Server (`https://sentinel.microsoft.com/mcp`) alongside `blueboard` using `templates/mcp/dual-mcp-sentinel-blueboard.json` (see Chapter 12 and [INTEGRATIONS.md](../INTEGRATIONS.md)).
+    - **Microsoft Security Copilot**: load `templates/security-copilot/blueboard-mcp-plugin.yaml` as an MCP custom plugin so Security Copilot sessions post evidence and submit `request_action` proposals to humans instead of operating without a board.
+    - **Microsoft Entra Agent ID**: register autonomous agents with first-class Entra Agent IDs (workload identities in Conditional Access, Sponsor governance and CAE/token revocation) rather than shared credentials.
 
 13. Specialists hand work off through the board itself: post a `question` in `#triage`, `#intel` or `#containment` (optionally `@mention`ing a specialist handle); the target specialist claims it atomically with `claim_message`, posts its `finding` / `ioc` / `action_request`, and calls `complete_claim(done)`.
 

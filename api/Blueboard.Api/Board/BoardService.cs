@@ -8,7 +8,7 @@ using Npgsql;
 namespace Blueboard.Api.Board;
 
 /// <summary>Channels, messages, threads and claims. All SQL is parameterised.</summary>
-public sealed partial class BoardService(Db db, Audit audit, Settings settings, RateLimiter? limiter = null)
+public sealed partial class BoardService(Db db, Audit audit, Settings settings, RateLimiter? limiter = null, PurviewContentGuard? purview = null)
 {
     internal const string MessageSelect = """
         select m.id, m.seq::text as seq, c.name as channel,
@@ -26,8 +26,14 @@ public sealed partial class BoardService(Db db, Audit audit, Settings settings, 
         left join incidents i on i.id = m.incident_id
         """;
 
-    [GeneratedRegex(@"(?:^|[^\w@])@([a-z0-9][a-z0-9-]{1,40})")]
+    [GeneratedRegex(@"(?:^|[^\w@])@([a-z0-9][a-z0-9-]{0,40})")]
     private static partial Regex MentionRegex();
+
+    [GeneratedRegex(@"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----|Bearer\s+eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}|sk-ant-api03-[A-Za-z0-9_-]{20,}|ghp_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,}|whsec_[A-Za-z0-9_-]{24,}", RegexOptions.CultureInvariant)]
+    private static partial Regex SecretLeakRegex();
+
+    public static string? DetectSecretLeak(string? text) =>
+        string.IsNullOrEmpty(text) ? null : SecretLeakRegex().Match(text) is { Success: true } m ? m.Value[..Math.Min(16, m.Length)] : null;
 
     public static string[] ParseMentions(string body) =>
         MentionRegex().Matches(body).Select(m => m.Groups[1].Value).Distinct().ToArray();
@@ -112,6 +118,7 @@ public sealed partial class BoardService(Db db, Audit audit, Settings settings, 
     public async Task<Message> PostAsync(Principal author, PostInput input, bool system = false, CancellationToken ct = default)
     {
         if (!system && limiter is not null) await limiter.TakeAsync(author, "post", ct);
+        if (!system && purview is not null) await purview.InspectPostAsync(author, input, ct);
         Guid id;
         // Release the transaction's connection before reading the message back, so a post never holds two pooled
         // connections at once (under load that deadlocks the pool: everyone holds one and waits for another).
@@ -139,8 +146,10 @@ public sealed partial class BoardService(Db db, Audit audit, Settings settings, 
         if (string.IsNullOrWhiteSpace(input.Body) || input.Body.Length > 20000) throw new BoardException("body must be 1–20000 characters");
         if (input.Channel.Length is 0 or > 41) throw new BoardException("invalid channel");
         var payload = input.Payload is { ValueKind: not JsonValueKind.Undefined and not JsonValueKind.Null } p
-            ? Payloads.Validate(type, p)
+            ? Payloads.Validate(type, p, system)
             : (JsonElement?)null;
+        if (!system && (DetectSecretLeak(input.Body) is not null || DetectSecretLeak(payload?.GetRawText()) is not null))
+            throw new BoardException("refusing to post raw credentials, private keys or bearer tokens to the shared board");
         // Playbook steps are posted only by the board; a participant's checklist payload would forge step progress.
         if (!system && PlaybookRunner.IsChecklist(payload)) throw new BoardException("payload.checklist is reserved for the board's playbook steps");
 

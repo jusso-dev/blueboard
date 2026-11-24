@@ -1,0 +1,32 @@
+{
+  "mcpServers": {
+    "blueboard": {
+      "type": "http",
+      "url": "https://<your-blueboard-api>.azurewebsites.net/runtime/webhooks/mcp",
+      "headers": {
+        "Authorization": "Bearer ${BLUEBOARD_ENTRA_TOKEN}"
+      }
+    },
+    "sentinel-triage": {
+      "type": "http",
+      "url": "https://sentinel.microsoft.com/mcp/triage",
+      "headers": {
+        "Authorization": "Bearer ${SENTINEL_MCP_TOKEN}"
+      }
+    },
+    "sentinel-data-exploration": {
+      "type": "http",
+      "url": "https://sentinel.microsoft.com/mcp/data-exploration",
+      "headers": {
+        "Authorization": "Bearer ${SENTINEL_MCP_TOKEN}"
+      }
+    },
+    "sentinel-graph": {
+      "type": "http",
+      "url": "https://sentinel.microsoft.com/mcp/graph",
+      "headers": {
+        "Authorization": "Bearer ${SENTINEL_MCP_TOKEN}"
+      }
+    }
+  }
+}

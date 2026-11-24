@@ -22,6 +22,7 @@ public sealed record Policy
     public string[] ProtectedUsers { get; init; } = [];
     public string[] ProtectedDevices { get; init; } = [];
     public string[] ProtectedIndicators { get; init; } = [];
+    public string[] ProtectedApps { get; init; } = [];
     public bool RequireTargetInIncident { get; init; } = true;
     /// <summary>Kinds that need two different human approvers. The first approval moves the action to approved_once.</summary>
     public string[] RequireTwoApprovers { get; init; } = [];
@@ -45,7 +46,9 @@ public sealed record Policy
     [JsonIgnore] public bool Missing => false;
 
     public static Policy Load(Settings settings) =>
-        settings.PolicyFile is { } path ? LoadFile(path) with { Source = settings.PolicySource ?? path } : new Policy();
+        settings.PolicyFile is { } path ? LoadFile(path) with { Source = settings.PolicySource ?? path }
+        : settings.PolicyJson is { } json ? Parse(json, settings.PolicySource ?? "BLUEBOARD_POLICY_JSON") with { Source = settings.PolicySource ?? "app setting BLUEBOARD_POLICY_JSON" }
+        : new Policy();
 
     public static Policy LoadFile(string path)
     {
@@ -191,7 +194,7 @@ public static class PolicyEngine
     public static IReadOnlyList<string> ConfirmNames(ActionDef def, JsonObject p, IncidentContext? incident)
     {
         var targets = def.TargetsOf(p);
-        var (users, devices) = Aliases(incident is null ? null : Entities.Extract(incident.Data));
+        var (users, devices, apps) = Aliases(incident is null ? null : Entities.Extract(incident.Data));
         var names = new List<string>();
         foreach (var d in targets.Devices)
         {
@@ -199,6 +202,7 @@ public static class PolicyEngine
             names.AddRange(aliases.Where(a => a.Contains('.')).Concat(aliases.Where(a => !a.Contains('.') && a != d.ToLowerInvariant())).Append(d));
         }
         foreach (var u in targets.Users) names.AddRange(NamesFor(users, u).OrderByDescending(n => n.Contains('@')).Append(u));
+        foreach (var a in targets.AppList) names.AddRange(NamesFor(apps, a).OrderByDescending(n => !Guid.TryParse(n, out _)).Append(a));
         names.AddRange(targets.Other);
         if (names.Count == 0 && p["incident_id"] is { } inc) names.Add(inc.GetValue<string>());
         return names.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
@@ -212,9 +216,10 @@ public static class PolicyEngine
         var targets = def.TargetsOf(p);
         var pu = Lower(policy.ProtectedUsers);
         var pd = Lower(policy.ProtectedDevices);
+        var pa = Lower(policy.ProtectedApps);
         var pi = Lower(policy.ProtectedIndicators);
         var entities = incident is null ? null : Entities.Extract(incident.Data);
-        var (userAliases, deviceAliases) = Aliases(entities);
+        var (userAliases, deviceAliases, appAliases) = Aliases(entities);
 
         foreach (var u in targets.Users)
         {
@@ -228,14 +233,20 @@ public static class PolicyEngine
             if (pd.Count > 0 && !deviceAliases.ContainsKey(d.ToLowerInvariant()))
                 notes.Add($"{d} is not in the incident evidence, so its host name is unknown and the protected-device list was checked by id only");
         }
+        foreach (var a in targets.AppList)
+        {
+            if (NamesFor(appAliases, a).Any(pa.Contains)) return new(Outcome.Reject, [$"{a} is a protected application / service principal"]);
+            if (pa.Count > 0 && !appAliases.ContainsKey(a.ToLowerInvariant()))
+                notes.Add($"{a} is not in the incident evidence, so its app id and display name are unknown and the protected-app list was checked by object id only");
+        }
         foreach (var o in targets.Other)
             if (MatchesProtectedIndicator(o, pi)) return new(Outcome.Reject, [$"{o} matches a protected indicator"]);
 
         var all = targets.All.ToList();
-        if (all.Count > 0)
+        if (all.Count > 0 || def.Kind == "unblock_indicator")
         {
             if (incident is null) notes.Add("not linked to an incident: targets cannot be checked against evidence");
-            else if (policy.RequireTargetInIncident)
+            else if (policy.RequireTargetInIncident && all.Count > 0)
             {
                 var keys = entities!.Keys();
                 var missing = all.Where(t => !keys.Contains(t)).ToList();
@@ -273,10 +284,16 @@ public static class PolicyEngine
     internal static bool MatchesProtectedIndicator(string value, IReadOnlySet<string> protectedLower)
     {
         if (protectedLower.Count == 0) return false;
-        var v = value.Trim().ToLowerInvariant();
-        if (protectedLower.Contains(v.TrimEnd('.'))) return true;
+        var v = value.Trim().ToLowerInvariant().TrimEnd('.');
+        if (protectedLower.Contains(v)) return true;
         var host = HostOf(v);
-        return host is not null && protectedLower.Any(x => host == x || host.EndsWith('.' + x));
+        if (host is null) return false;
+        foreach (var entry in protectedLower)
+        {
+            var eh = entry.Contains("://") || entry.Contains('/') ? HostOf(entry) : entry;
+            if (eh is not null && (host == eh || host.EndsWith('.' + eh))) return true;
+        }
+        return false;
     }
 
     private static string? HostOf(string v)
@@ -286,12 +303,13 @@ public static class PolicyEngine
         return u.IdnHost.ToLowerInvariant().TrimEnd('.');
     }
 
-    /// <summary>Every name a target is known by in the evidence: device MDE id ↔ DNS name ↔ host name; user oid ↔ UPN.</summary>
-    private static (Dictionary<string, HashSet<string>> Users, Dictionary<string, HashSet<string>> Devices) Aliases(IncidentEntities? e)
+    /// <summary>Every name a target is known by in the evidence: device MDE id ↔ DNS name ↔ host name; user oid ↔ UPN; app object id ↔ app id ↔ display name.</summary>
+    private static (Dictionary<string, HashSet<string>> Users, Dictionary<string, HashSet<string>> Devices, Dictionary<string, HashSet<string>> Apps) Aliases(IncidentEntities? e)
     {
         var users = new Dictionary<string, HashSet<string>>();
         var devices = new Dictionary<string, HashSet<string>>();
-        if (e is null) return (users, devices);
+        var apps = new Dictionary<string, HashSet<string>>();
+        if (e is null) return (users, devices, apps);
         static void Link(Dictionary<string, HashSet<string>> map, IEnumerable<string?> names)
         {
             var all = names.OfType<string>().Where(n => n.Length > 0).Select(n => n.ToLowerInvariant()).ToList();
@@ -303,7 +321,8 @@ public static class PolicyEngine
         }
         foreach (var d in e.Devices) Link(devices, [d.MdeDeviceId, d.Name, d.Name?.Split('.')[0]]);
         foreach (var u in e.Users) Link(users, [u.AadUserId, u.Upn]);
-        return (users, devices);
+        foreach (var a in e.CloudApps) Link(apps, [a.ObjectId, a.AppId, a.DisplayName]);
+        return (users, devices, apps);
     }
 
     private static IEnumerable<string> NamesFor(Dictionary<string, HashSet<string>> map, string t) =>

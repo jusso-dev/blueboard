@@ -8,12 +8,12 @@ import { Button, cx, Empty, ErrorLine, Select, Tag } from "../components/ui";
 type PolicyView = {
   version: number;
   actions: { kind: string; title: string; target: string; destructive: boolean; mode: string; words: string; confirm_target: boolean; expiry_hours: number }[];
-  protected: { users: number; devices: number; indicators: number };
+  protected: { users: number; devices: number; indicators: number; apps?: number };
   require_target_in_incident: boolean;
   limits: { bucket: string; agent: string; human: string }[];
   pending_actions_per_incident: number;
   warnings: string[];
-  lists: { users: string[]; devices: string[]; indicators: string[] } | null;
+  lists: { users: string[]; devices: string[]; indicators: string[]; apps?: string[] } | null;
 };
 
 const MODE_TONE: Record<string, "good" | "warning" | "neutral" | "critical"> = { auto: "good", approval: "warning", two_approvers: "warning", disabled: "neutral" };
@@ -73,6 +73,7 @@ export default function PolicyPage() {
                   <Protected label="Users" n={p.protected.users} values={p.lists?.users} />
                   <Protected label="Devices" n={p.protected.devices} values={p.lists?.devices} />
                   <Protected label="Indicators" n={p.protected.indicators} values={p.lists?.indicators} />
+                  <Protected label="Apps" n={p.protected.apps ?? 0} values={p.lists?.apps} />
                 </dl>
                 {!isAdmin && <p className="label mt-2">Board admins can see the values.</p>}
                 <p className="mt-3 text-[13px] text-ink-2">

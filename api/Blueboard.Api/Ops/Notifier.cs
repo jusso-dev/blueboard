@@ -51,11 +51,13 @@ public sealed partial class Notifier(HttpClient http, Db db, Audit audit, MsClie
 
     private IEnumerable<string> ReadySinks() => Sinks().Where(s => s.Problem is null).Select(s => s.Sink);
 
-    /// <summary>Outbound guard: https only, default port, no credentials in the URL, and an exact host from NOTIFY_ALLOWED_HOSTS.</summary>
+    /// <summary>Outbound guard: https only, default port, no credentials in the URL, no IP literals, and an exact host from NOTIFY_ALLOWED_HOSTS.</summary>
     internal string? UrlProblem(string url, string name)
     {
         if (!Uri.TryCreate(url, UriKind.Absolute, out var u) || u.Scheme != Uri.UriSchemeHttps) return $"{name} must be an https URL";
         if (u.UserInfo.Length > 0 || !u.IsDefaultPort) return $"{name} must not carry credentials or a custom port";
+        var host = u.IdnHost.Trim('[', ']');
+        if (IPAddress.TryParse(host, out _)) return $"{name} must use a host name, not an IP address";
         if (!settings.NotifyAllowedHosts.Contains(u.IdnHost, StringComparer.OrdinalIgnoreCase)) return $"{u.IdnHost} is not in NOTIFY_ALLOWED_HOSTS";
         return null;
     }
@@ -239,7 +241,7 @@ public sealed partial class Notifier(HttpClient http, Db db, Audit audit, MsClie
     internal static string Subject(Notice n) =>
         OneLine($"[blueboard] {Headline(n)}: {n.Title}{(n.IncidentGraphId is null ? "" : $", incident {n.IncidentGraphId}")}", 200);
 
-    /// <summary>Plain one-line text: no control characters or line breaks, capped.</summary>
+    /// <summary>Plain one-line text: no control characters, BiDi overrides or line breaks, capped.</summary>
     internal static string OneLine(string? s, int max = 300)
     {
         if (string.IsNullOrEmpty(s)) return "";
@@ -247,6 +249,7 @@ public sealed partial class Notifier(HttpClient http, Db db, Audit audit, MsClie
         foreach (var ch in s)
         {
             if (sb.Length >= max) break;
+            if (ch is (>= '\u202A' and <= '\u202E') or (>= '\u2066' and <= '\u2069') or '\u200E' or '\u200F' or '\u061C') continue;
             sb.Append(char.IsControl(ch) ? ' ' : ch);
         }
         return sb.ToString().Trim();

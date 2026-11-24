@@ -8,10 +8,11 @@ using Blueboard.Api.Graph;
 namespace Blueboard.Api.Actions;
 
 /// <summary>Identifiers an action targets: checked against protected lists and the incident's evidence.</summary>
-public sealed record Targets(string[] Users, string[] Devices, string[] Other)
+public sealed record Targets(string[] Users, string[] Devices, string[] Other, string[]? Apps = null)
 {
     public static readonly Targets None = new([], [], []);
-    public IEnumerable<string> All => Users.Concat(Devices).Concat(Other);
+    public string[] AppList => Apps ?? [];
+    public IEnumerable<string> All => Users.Concat(Devices).Concat(AppList).Concat(Other);
 }
 
 /// <summary>One brokered write. Params arrive as JSON and are validated into a normalised object before anything runs.</summary>
@@ -196,7 +197,7 @@ public static partial class Catalog
         new("disable_service_principal", "Disable service principal / OAuth app (Entra ID)", "contain", true,
             Schema(new { service_principal_id = new { type = "string", description = "Entra service principal object id (GUID)" } }, ["service_principal_id"]),
             p => new JsonObject { ["service_principal_id"] = Req(p, "service_principal_id", GuidId(), "Entra service principal object id (GUID)", 64).ToLowerInvariant() },
-            p => new Targets([], [], [S(p, "service_principal_id")]),
+            p => new Targets([], [], [], [S(p, "service_principal_id")]),
             p => $"Disable Entra service principal {S(p, "service_principal_id")} (stops sign-ins and token issuance)",
             (ms, p, _, ct) => Send(ms, MsApi.Graph, $"/v1.0/servicePrincipals/{Enc(S(p, "service_principal_id"))}", HttpMethod.Patch, new { accountEnabled = false }, ct)),
 
@@ -406,13 +407,14 @@ public static partial class Catalog
     /// <summary>Incident-scoped kinds must be linked to, and aimed at, that same incident.</summary>
     public static readonly HashSet<string> IncidentScoped = ["update_incident", "add_incident_comment"];
 
-    /// <summary>What a kind acts on: device, user, indicator, email or incident. The UI filters its action picker by this.</summary>
+    /// <summary>What a kind acts on: device, user, app, indicator, email or incident. The UI filters its action picker by this.</summary>
     public static string TargetType(string kind) => kind switch
     {
         "isolate_device" or "release_device" or "run_av_scan" or "collect_investigation_package"
             or "restrict_app_execution" or "unrestrict_app_execution" or "stop_and_quarantine_file" or "tag_device" => "device",
         "disable_user" or "enable_user" or "revoke_sessions" or "reset_password"
-            or "confirm_user_compromised" or "dismiss_user_risk" or "disable_service_principal" => "user",
+            or "confirm_user_compromised" or "dismiss_user_risk" => "user",
+        "disable_service_principal" => "app",
         "block_indicator" or "unblock_indicator" or "publish_ti_indicator" => "indicator",
         "purge_email" => "email",
         _ => "incident",

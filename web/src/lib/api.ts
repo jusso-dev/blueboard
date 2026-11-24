@@ -54,7 +54,7 @@ export type QueueRow = {
   needs_human: boolean;
 };
 
-export type SummaryEntity = { kind: "user" | "device"; id: string; label: string };
+export type SummaryEntity = { kind: "user" | "device" | "app"; id: string; label: string };
 export type SummaryVerdict = {
   message_id: string;
   thread_id: string;
@@ -132,7 +132,7 @@ export type CatalogEntry = {
   params: JsonSchema;
   mode: PolicyMode | null;
 };
-export type TargetType = "device" | "user" | "indicator" | "email" | "incident";
+export type TargetType = "device" | "user" | "app" | "indicator" | "email" | "incident";
 export type PolicyMode = "auto" | "approval" | "two_approvers" | "disabled";
 export type JsonSchema = {
   type?: string;

@@ -3,14 +3,22 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { createElement } from "react";
 import { Markdown } from "../components/markdown";
 
-const html = (text: string) => renderToStaticMarkup(createElement(Markdown, { text }));
+const html = (text: string, highlight = false) => renderToStaticMarkup(createElement(Markdown, { text, highlight }));
 
 describe("Markdown", () => {
-  it("keeps email addresses intact and highlights real mentions", () => {
-    const out = html("1 user(s): j.doe@contoso.com · ask @analyst");
+  it("keeps email addresses intact and highlights real mentions incl. single-char handles", () => {
+    const out = html("1 user(s): j.doe@contoso.com · ask @analyst and @x");
     expect(out).toContain("1 user(s): j.doe@contoso.com · ask ");
-    expect(out.match(/text-accent/g)).toHaveLength(1);
+    expect(out.match(/text-accent/g)).toHaveLength(2);
     expect(out).toContain(">@analyst</span>");
+    expect(out).toContain(">@x</span>");
+  });
+  it("renders search highlights only when highlight is true", () => {
+    expect(html("check <<this>>")).not.toContain("<mark>");
+    expect(html("check <<this>>", true)).toContain("<mark>this</mark>");
+  });
+  it("strips Unicode BiDi override characters", () => {
+    expect(html("file_\u202Etxt.exe")).not.toContain("\u202E");
   });
   it("escapes HTML", () => {
     expect(html("<img src=x onerror=alert(1)>")).not.toContain("<img");

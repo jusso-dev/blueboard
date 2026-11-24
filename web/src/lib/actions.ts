@@ -10,6 +10,9 @@ export type IncidentEntities = {
   files: { sha256: string | null; sha1: string | null; name: string | null }[];
   emails: { network_message_id: string | null; recipient: string | null; sender: string | null; subject: string | null }[];
   mitre: string[];
+  cloud_apps?: { app_id: string | null; object_id: string | null; display_name: string | null; kind?: string | null }[];
+  data_assets?: { kind: string; name: string | null; url_or_path: string | null; sensitivity_label?: string | null }[];
+  purview_signals?: { source: string; title: string | null; severity: string | null; policy_or_label?: string | null }[];
 };
 
 /** Something on the incident an action can be aimed at. `params` pre-fills the action form. */
@@ -28,7 +31,16 @@ export function targetsFromEntities(e: IncidentEntities, incidentGraphId: string
   }
   for (const u of e.users) {
     const user = u.upn ?? u.aad_user_id;
-    if (user) out.push({ type: "user", label: u.upn ?? u.name ?? user, params: { user } });
+    if (user) {
+      const params: Record<string, unknown> = { user };
+      if (u.aad_user_id) params.user_id = u.aad_user_id;
+      out.push({ type: "user", label: u.upn ?? u.name ?? user, params });
+    }
+  }
+  for (const app of e.cloud_apps ?? []) {
+    if (app.object_id) {
+      out.push({ type: "app", label: app.display_name ?? app.object_id, params: { service_principal_id: app.object_id } });
+    }
   }
   const indicator = (indicator_type: string, value: string) =>
     out.push({ type: "indicator", label: value, params: { indicator_type, value, title: `blueboard: ${value}`.slice(0, 200) } });

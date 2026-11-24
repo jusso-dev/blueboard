@@ -1,6 +1,6 @@
 # Defender XDR and Microsoft Sentinel case walkthroughs
 
-This walkthrough provides six end-to-end Microsoft Defender XDR and Microsoft Sentinel investigation and response recipes on blueboard. Each case matches a bundled playbook in `playbooks/`, starter KQL queries in `templates/kql/`, and a reproducible incident fixture in `templates/incidents/` so your SOC can rehearse every workflow safely in dry-run mode.
+This walkthrough provides seven end-to-end Microsoft Defender XDR, Microsoft Sentinel and Microsoft Purview investigation and response recipes on blueboard. Each case matches a bundled playbook in `playbooks/` and starter KQL queries in `templates/kql/`, with reproducible fixtures in `templates/incidents/` so your SOC can rehearse every workflow safely in dry-run mode.
 
 ## Who this is for
 
@@ -24,10 +24,10 @@ SOC analysts, incident commanders, approvers and AI agent engineers building or 
 1. **Scope delivery and clicks** (`run_hunting_query` over `EmailEvents`, `EmailUrlInfo`, `UrlClickEvents`): find all recipients of the sender domain, `NetworkMessageId`, subject cluster, and whether any user clicked through.
 2. **Check endpoint execution**: if a user opened an attachment or clicked a payload URL, query `DeviceProcessEvents` and `DeviceFileEvents` for the user's device and call `lookup_entity` (`kind: "url"`, `kind: "file"`).
 3. **Check Threat Intel**: call `lookup_intel` on the sender IP, phishing URL/domain and attachment SHA-256 to check Sentinel TI and MSTI.
-4. **Post structured findings & IOCs**: post `ioc` messages (`verdict: "malicious"`) for confirmed phishing URLs, sender IPs and attachment hashes, plus a `verdict` (`true_positive`).
+4. **Post structured findings & IOCs**: post `ioc` messages (`verdict: "malicious"`) for confirmed phishing URLs, sender IPs and attachment hashes, plus a `verdict` (`truePositive`).
 5. **Propose containment** (`request_action`):
-   - `purge_email` (`network_message_id`, `recipient`, `purge_type: "softDelete"`) for every affected recipient.
-   - `block_indicator` (`Url` / `DomainName` / `FileSha256`, `action: "Block"`, `expiration_days: 90`).
+   - `purge_email` (`messages: [{ "network_message_id": "...", "recipient": "user@contoso.com" }]`, `action: "softDelete"`) for every affected recipient.
+   - `block_indicator` (`indicator_type: "url" | "domain" | "sha256"`, `value`, `title`, `expires_in_days: 90`).
    - If credentials were entered: `revoke_sessions` and `reset_password`.
    - `publish_ti_indicator` (optional, once another participant has posted a `malicious` `ioc` on the incident).
 6. **Close loop**: once approvers execute containment, request `update_incident` (`status: "resolved"`, `classification: "truePositive"`, `determination: "phishing"`) and `add_incident_comment`.
@@ -38,7 +38,7 @@ SOC analysts, incident commanders, approvers and AI agent engineers building or 
 
 - **Playbook**: `bec-aitm-token-theft` (`playbooks/bec-aitm-token-theft.md`, priority 20)
 - **KQL template**: `templates/kql/identity-aitm-token-theft.kql`
-- **Sample fixture**: `templates/incidents/bec-aitm-token-theft.json`
+- **Sample fixture**: `templates/incidents/bec-aitm-inbox-rule.json`
 
 ### Steps
 
@@ -59,11 +59,11 @@ SOC analysts, incident commanders, approvers and AI agent engineers building or 
 
 - **Playbook**: `ransomware-lateral-movement` (`playbooks/ransomware-lateral-movement.md`, priority 10)
 - **KQL template**: `templates/kql/endpoint-powershell-ransomware.kql`
-- **Sample fixture**: `templates/incidents/ransomware-lateral-movement.json`
+- **Sample data**: Trigger via live Defender incident sync or `./scripts/demo.sh up` (`templates/incidents/` ships `bec-aitm-inbox-rule.json`, `oauth-app-consent.json`, `azure-keyvault-privesc.json` and `purview-dlp-insider-exfil.json`)
 
 ### Steps
 
-1. **Verify host criticality first**: call `lookup_entity { "kind": "device", "value": "<device_id>" }` to inspect `tags`, `is_domain_admin` logon users, exposure level and existing isolation status. Never isolate a domain controller or hypervisor (policy `protected_devices` blocks them, and isolating an unlisted tier-0 server can cause an outage).
+1. **Verify host criticality first**: call `lookup_entity { "kind": "device", "value": "<machine-id-or-hostname>" }` to inspect `tags`, `is_domain_admin` logon users, exposure level and existing isolation status. Never isolate a domain controller or hypervisor (policy `protected_devices` blocks them, and isolating an unlisted tier-0 server can cause an outage).
 2. **Scope process tree and credential access** (`run_hunting_query`): query `DeviceProcessEvents`, `DeviceNetworkEvents` and `DeviceLogonEvents` for `lsass.exe` access, `vssadmin delete shadows`, `wbadmin`, encoded PowerShell, SMB/WinRM/RDP fan-out, and newly created services or scheduled tasks.
 3. **Preserve volatile forensics and contain fast**:
    - `collect_investigation_package` (typically auto-approved when target is in evidence).
@@ -72,7 +72,7 @@ SOC analysts, incident commanders, approvers and AI agent engineers building or 
    - `restrict_app_execution` for hosts suspected of staging where full network isolation would disrupt production.
    - `tag_device` (`tag: "IR-Contained"`, `action: "Add"`) to track containment across Defender.
 4. **Contain compromised accounts**: for any account whose credentials were present on the LSASS-dumped host, propose `revoke_sessions` and `disable_user` (or `reset_password`).
-5. **Block C2 and payload hashes**: propose `block_indicator` (`FileSha256`, `IpAddress`, `DomainName`) with `BlockAndRemediate` for hashes.
+5. **Block C2 and payload hashes**: propose `block_indicator` (`indicator_type: "sha256" | "ip" | "domain"`, `value`, `title`) — `Catalog` submits `BlockAndRemediate` automatically for file hashes and `Block` for network indicators.
 6. **Recovery**: after re-imaging or verified eradication and `run_av_scan` (`Full`), propose `release_device` and `unrestrict_app_execution` via human approval.
 
 ---
@@ -81,7 +81,7 @@ SOC analysts, incident commanders, approvers and AI agent engineers building or 
 
 - **Playbook**: `oauth-app-consent-abuse` (`playbooks/oauth-app-consent-abuse.md`, priority 15)
 - **KQL template**: `templates/kql/oauth-app-consent-abuse.kql`
-- **Sample fixture**: `templates/incidents/oauth-app-consent-abuse.json`
+- **Sample fixture**: `templates/incidents/oauth-app-consent.json`
 
 ### Steps
 
@@ -108,7 +108,7 @@ SOC analysts, incident commanders, approvers and AI agent engineers building or 
 2. **Check affected users**: call `lookup_entity { "kind": "user", "value": "<upn>" }` for every user who succeeded or accepted an MFA prompt.
 3. **Propose targeted containment**:
    - For confirmed compromised accounts: `confirm_user_compromised`, `revoke_sessions`, `reset_password`.
-   - For attacker infrastructure (excluding shared corporate/VPN NATs): `block_indicator` (`IpAddress`).
+   - For attacker infrastructure (excluding shared corporate/VPN NATs): `block_indicator` (`indicator_type: "ip"`).
    - Do **not** disable unaffected spray targets; post a `finding` summarising clean targets so approvers see the exact boundary.
 
 ---
@@ -117,7 +117,7 @@ SOC analysts, incident commanders, approvers and AI agent engineers building or 
 
 - **Playbook**: `azure-privilege-escalation` (`playbooks/azure-privilege-escalation.md`, priority 25)
 - **KQL template**: `templates/kql/cloud-azure-privesc.kql`
-- **Sample fixture**: `templates/incidents/azure-privilege-escalation.json`
+- **Sample fixture**: `templates/incidents/azure-keyvault-privesc.json`
 
 ### Steps
 
@@ -130,16 +130,26 @@ SOC analysts, incident commanders, approvers and AI agent engineers building or 
    - If a compromised admin workstation is implicated: `isolate_device` and `collect_investigation_package`.
 5. **Escalate break-glass or protected accounts**: if policy rejects containment because the caller is in `protected_users`, post a high-priority `question` `@mention`ing an on-call human lead so they execute out-of-band break-glass rotation.
 
+---
+
+## Case 7: Microsoft Purview DLP & Insider Risk data exfiltration
+
+- **Playbook**: `data-exfiltration-cloud` (`playbooks/data-exfiltration-cloud.md`, priority 30)
+- **KQL template**: `templates/kql/purview-dlp-insider-ai.kql`
+- **Sample fixture**: `templates/incidents/purview-dlp-insider-exfil.json`
+
+Follow **12 Sentinel MCP, Microsoft Purview and Defender Unified SOC** to inspect Purview DLP and Insider Risk alerts (`lookup_purview_context`), correlate `CloudAppEvents`, `OfficeActivity` and Defender `blobEvidence`/`teamsMessageEvidence`, and propose `revoke_sessions`, `disable_user` or `disable_service_principal` through human approval.
+
 ## What blueboard checks
 
-- Incident-scoped actions (`isolate_device`, `disable_user`, `purge_email`, `disable_service_principal`, `update_incident`, etc.) must pass `incident_id`, and `PolicyEngine` verifies targets appear in the linked incident's alerts/evidence.
-- Protected users (break-glass, Global Admins), protected devices (DCs, hypervisors, PKI) and protected indicators (corporate domains, Microsoft endpoints) are always rejected outright.
+- Incident-scoped actions (`update_incident`, `add_incident_comment`) must pass `incident_id`; entity-targeted actions should pass `incident` on `request_action` so `PolicyEngine` verifies targets appear in the linked incident's alerts/evidence.
+- Protected users (break-glass, Global Admins), protected devices (DCs, hypervisors, PKI), protected apps (`protected_apps`) and protected indicators (corporate domains, Microsoft endpoints) are always rejected outright.
 - Every KQL query executed during these cases is audited under `enrich.hunt` or `enrich.sentinel_hunt`.
 
 ## What is recorded in `audit_log`
 
 - `incident.synced` / `playbook.attached`
-- `enrich.lookup`, `enrich.hunt`, `enrich.sentinel_hunt`
+- `enrich.lookup`, `enrich.purview`, `enrich.hunt`, `enrich.sentinel_hunt`
 - `action.requested`, `action.approved_once`, `action.approved`, `action.succeeded` (or `action.dry_run`)
 
 ## Troubleshooting
@@ -148,10 +158,11 @@ SOC analysts, incident commanders, approvers and AI agent engineers building or 
 |---|---|---|
 | `confirm_user_compromised` or `disable_service_principal` rejects UPN or display name | Graph Identity Protection and Service Principal endpoints require the Entra object ID GUID | Call `lookup_entity` first to read the exact `id` GUID and pass that GUID in `params`. |
 | Policy flags *"target not in incident evidence"* on a lateral-movement host | The secondary host was discovered via KQL, not yet linked as an alert in Defender | Either link/sync the updated Defender incident (`sync_incident`) or proceed with explicit human approval and cite the KQL finding in `justification`. |
-| Playbook did not auto-attach | A higher-priority playbook matched first, or alert title/categories differed | Call `attach_playbook` (`POST /api/incidents/{id}/playbook`) with the desired playbook ID and `replace: true`. |
+| Playbook did not auto-attach | A higher-priority playbook matched first, or alert title/categories differed | Call `attach_playbook` (`POST /api/incidents/{id}/playbook`) on an incident that does not yet have a playbook attached. |
 
 ## Related guides
 
 - **04 Response playbooks and progressive checklists**, for playbook priority and custom authoring.
 - **05 Entity lookups, Defender hunting and Sentinel KQL**, for query syntax and rate limits.
 - **06 Requesting, previewing and approving containment**, for the full 21-action catalogue and approval rules.
+- **12 Sentinel MCP, Microsoft Purview and Defender Unified SOC**, for Purview DLP/IRM, Sentinel MCP and Defender XDR ISOC walkthroughs.

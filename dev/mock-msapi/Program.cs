@@ -50,6 +50,53 @@ app.MapGet("/v1.0/servicePrincipals/{id}", (string id) => Entity("servicePrincip
 app.MapGet("/v1.0/servicePrincipals", () => Results.Json(new { value = Array.Empty<object>() }));
 app.MapGet("/v1.0/servicePrincipals/{id}/oauth2PermissionGrants", () => Results.Json(new { value = Array.Empty<object>() }));
 app.MapGet("/v1.0/servicePrincipals/{id}/appRoleAssignments", () => Results.Json(new { value = Array.Empty<object>() }));
+app.MapGet("/v1.0/security/alerts_v2", () => Results.Json(new
+{
+    value = new object[]
+    {
+        new
+        {
+            id = "purview-dlp-demo-1",
+            title = "Purview DLP: Confidential Customer Export uploaded to personal cloud",
+            severity = "high",
+            status = "inProgress",
+            serviceSource = "microsoftDataLossPrevention",
+            category = "DataLossPrevention",
+            createdDateTime = DateTimeOffset.UtcNow.AddMinutes(-18).ToString("O"),
+            description = "DLP policy 'Australia Privacy Act PII' matched 42 records uploaded by m.chen@contoso.com.",
+            evidence = new object[]
+            {
+                new Dictionary<string, object> { ["@odata.type"] = "#microsoft.graph.security.userEvidence", ["userAccount"] = new { userPrincipalName = "m.chen@contoso.com", azureAdUserId = "11111111-1111-1111-1111-111111110003" } }
+            },
+        },
+        new
+        {
+            id = "purview-irm-demo-1",
+            title = "Insider Risk: Departing employee anomalous SharePoint & OneDrive downloads",
+            severity = "medium",
+            status = "new",
+            serviceSource = "microsoftInsiderRiskManagement",
+            category = "InsiderRisk",
+            createdDateTime = DateTimeOffset.UtcNow.AddHours(-2).ToString("O"),
+            description = "Sequence of bulk SharePoint downloads followed by sensitivity label downgrade for m.chen@contoso.com.",
+            evidence = new object[]
+            {
+                new Dictionary<string, object> { ["@odata.type"] = "#microsoft.graph.security.userEvidence", ["userAccount"] = new { userPrincipalName = "m.chen@contoso.com", azureAdUserId = "11111111-1111-1111-1111-111111110003" } }
+            },
+        },
+    },
+}));
+app.MapGet("/v1.0/security/dataSecurityAndGovernance/sensitivityLabels", () => Results.Json(new
+{
+    value = new[]
+    {
+        new { id = "lbl-public", name = "Public", description = "Approved for public release", sensitivity = 0, isActive = true },
+        new { id = "lbl-general", name = "General", description = "Internal business data", sensitivity = 1, isActive = true },
+        new { id = "lbl-confidential", name = "Confidential", description = "Sensitive commercial or PII records", sensitivity = 2, isActive = true },
+        new { id = "lbl-highly-confidential", name = "Highly Confidential - Crown Jewels", description = "Restricted board & incident evidence", sensitivity = 3, isActive = true },
+    },
+}));
+app.MapPost("/v1.0/security/dataSecurityAndGovernance/processContent", () => Results.Json(new { policyActions = Array.Empty<object>() }));
 app.MapPost("/v1/workspaces/{id}/query", async (HttpRequest req) =>
 {
     var body = await JsonNode.ParseAsync(req.Body);

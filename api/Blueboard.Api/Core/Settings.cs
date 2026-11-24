@@ -36,6 +36,10 @@ public sealed record Settings
     public int IngestLookbackHours { get; init; } = 24;
     public bool BrokerExecute { get; init; }
     public string? PolicyFile { get; init; }
+    /// <summary>Inline JSON policy passed via BLUEBOARD_POLICY_JSON (parsed in memory without temporary files).</summary>
+    public string? PolicyJson { get; init; }
+    /// <summary>Optional Microsoft Purview processContent data-security guard on non-system board posts: off | audit | block.</summary>
+    public string PurviewGuardMode { get; init; } = "off";
     public int ClaimLeaseSeconds { get; init; } = 600;
     /// <summary>Where the policy came from, in words, for the setup page. Null when no policy is configured.</summary>
     public string? PolicySource { get; init; }
@@ -104,7 +108,9 @@ public sealed record Settings
             IngestEnabled = Flag("INGEST_ENABLED"),
             IngestLookbackHours = Int("INGEST_LOOKBACK_HOURS", 24),
             BrokerExecute = Flag("BROKER_EXECUTE"),
-            PolicyFile = ResolvePath(Env("BLUEBOARD_POLICY_FILE")) ?? WritePolicyFromSetting(Env("BLUEBOARD_POLICY_JSON")),
+            PolicyFile = ResolvePath(Env("BLUEBOARD_POLICY_FILE")),
+            PolicyJson = Env("BLUEBOARD_POLICY_JSON"),
+            PurviewGuardMode = (Env("PURVIEW_CONTENT_GUARD") ?? "off").Trim().ToLowerInvariant(),
             ClaimLeaseSeconds = Int("CLAIM_LEASE_SECONDS", 600),
             DemoMode = Flag("DEMO_MODE"),
             GraphBaseUrl = Env("GRAPH_BASE_URL"),
@@ -139,6 +145,8 @@ public sealed record Settings
             throw new InvalidOperationException("GRAPH_BASE_URL / DEFENDER_BASE_URL are only allowed with DEMO_MODE=true and DEV_AUTH=true");
         if (s.WebhookSigningKey is { } key && (!IsBase64(key, out var bytes) || bytes < 32))
             throw new InvalidOperationException("WEBHOOK_SIGNING_KEY must be base64 of at least 32 random bytes");
+        if (s.PurviewGuardMode is not ("off" or "audit" or "block"))
+            throw new InvalidOperationException("PURVIEW_CONTENT_GUARD must be off, audit or block");
         return s;
     }
 
@@ -162,16 +170,6 @@ public sealed record Settings
             if (File.Exists(candidate)) return candidate;
             if (dir.Name == "bin") return Path.GetFullPath(Path.Combine(dir.Parent!.FullName, path));
         }
-        return path;
-    }
-
-    /// <summary>In Azure the policy arrives as a (secret) app setting; write it to a private temp file once.</summary>
-    private static string? WritePolicyFromSetting(string? json)
-    {
-        if (json is null) return null;
-        var path = Path.Combine(Path.GetTempPath(), "blueboard-policy.json");
-        File.WriteAllText(path, json);
-        if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
         return path;
     }
 }

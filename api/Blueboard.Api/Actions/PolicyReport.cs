@@ -3,10 +3,10 @@ namespace Blueboard.Api.Actions;
 /// <summary>How one action kind is treated by a policy, in plain words.</summary>
 public sealed record ActionMode(string Kind, string Title, string Target, bool Destructive, string Mode, string Words, bool ConfirmTarget, double ExpiryHours);
 
-public sealed record ProtectedCounts(int Users, int Devices, int Indicators);
+public sealed record ProtectedCounts(int Users, int Devices, int Indicators, int Apps = 0);
 
 /// <summary>Protected values. Only Board.Admin sees these; everyone else gets counts.</summary>
-public sealed record ProtectedLists(string[] Users, string[] Devices, string[] Indicators);
+public sealed record ProtectedLists(string[] Users, string[] Devices, string[] Indicators, string[]? Apps = null);
 
 public sealed record LimitRow(string Bucket, string Agent, string Human);
 
@@ -43,9 +43,9 @@ public sealed record PolicyReport(
                 mode != "disabled" && p.ConfirmsTarget(d.Kind), p.ExpiryFor(d.Kind).TotalHours);
         }).ToList();
         var limits = Blueboard.Api.Actions.Limits.Buckets.Select(b => new LimitRow(b, p.Limits.For("agent", b).ToString(), p.Limits.For("human", b).ToString())).ToList();
-        return new PolicyReport(p.Version, actions, new(p.ProtectedUsers.Length, p.ProtectedDevices.Length, p.ProtectedIndicators.Length),
+        return new PolicyReport(p.Version, actions, new(p.ProtectedUsers.Length, p.ProtectedDevices.Length, p.ProtectedIndicators.Length, p.ProtectedApps.Length),
             p.RequireTargetInIncident, limits, p.Limits.PendingActionsPerIncident, WarningsFor(p),
-            includeLists ? new ProtectedLists(p.ProtectedUsers, p.ProtectedDevices, p.ProtectedIndicators) : null);
+            includeLists ? new ProtectedLists(p.ProtectedUsers, p.ProtectedDevices, p.ProtectedIndicators, p.ProtectedApps) : null);
     }
 
     /// <summary>Things that are allowed but probably not what you meant.</summary>
@@ -61,6 +61,8 @@ public sealed record PolicyReport(
         if (p.ProtectedUsers.Length == 0) w.Add("protected_users is empty: list break-glass and Global Admin accounts");
         if (p.ProtectedDevices.Length == 0) w.Add("protected_devices is empty: list domain controllers and other critical servers");
         if (p.ProtectedIndicators.Length == 0) w.Add("protected_indicators is empty: list your own domains and Microsoft update hosts");
+        if (!p.Disabled.Contains("disable_service_principal") && p.ProtectedApps.Length == 0)
+            w.Add("protected_apps is empty: list blueboard's own app registration and critical enterprise apps");
         if (!p.RequireTargetInIncident) w.Add("require_target_in_incident is off: targets outside the incident evidence are not flagged");
         if (p.ExpiryHours > 24) w.Add($"expiry_hours is {p.ExpiryHours}: approvals of requests older than a shift may act on stale evidence");
         foreach (var (k, h) in p.ExpiryHoursByKind.Where(kv => kv.Value > 24))
@@ -79,7 +81,7 @@ public sealed record PolicyReport(
         foreach (var a in Actions)
             sb.AppendLine($"{a.Kind.PadRight(kw)}{a.Target.PadRight(11)}{a.Mode.PadRight(15)}{(a.ConfirmTarget ? "yes" : "").PadRight(9)}{a.ExpiryHours:0.##} h");
         sb.AppendLine();
-        sb.AppendLine($"protected: {Protected.Users} users, {Protected.Devices} devices, {Protected.Indicators} indicators");
+        sb.AppendLine($"protected: {Protected.Users} users, {Protected.Devices} devices, {Protected.Indicators} indicators, {Protected.Apps} apps");
         sb.AppendLine($"require_target_in_incident: {(RequireTargetInIncident ? "on" : "off")}");
         sb.AppendLine($"pending actions per incident: {PendingActionsPerIncident}");
         sb.AppendLine("rate limits (agent / human):");
