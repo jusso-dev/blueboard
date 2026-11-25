@@ -90,7 +90,7 @@ public sealed class ApprovalTests(TestBoard t) : IClassFixture<TestBoard>
         Assert.Contains("is a protected device", ex.Message);
         var row = (await after.Broker.GetAsync(a.Id, Ct))!;
         Assert.Equal("rejected", row.Status);
-        Assert.Contains(row.PolicyNotes, n => n.StartsWith("rejected when re-checked at approval"));
+        Assert.Contains(row.PolicyNotes, n => n.StartsWith("rejected when re-checked: ") && n.EndsWith("is a protected device"));
         Assert.Equal(0, await t.ScalarAsync("select count(*) from messages where type = 'action_result' and payload->>'action_id' = @id", ("id", a.Id.ToString())));
     }
 
