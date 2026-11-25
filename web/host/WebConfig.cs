@@ -37,7 +37,8 @@ public sealed record WebConfig(PublicConfig Public, Uri ApiOrigin, Uri Authority
         var authority = new Uri($"{authorityHost.TrimEnd('/')}/{tenant}");
         var scope = Env("BLUEBOARD_API_SCOPE");
         return new WebConfig(
-            new PublicConfig("entra", tenant, clientId, authority.ToString(), $"{api}/api", scope),
+            // Uri.ToString() adds a trailing slash to a bare origin, so build from the trimmed string, not the Uri.
+            new PublicConfig("entra", tenant, clientId, authority.ToString(), $"{api.ToString().TrimEnd('/')}/api", scope),
             new Uri(api.GetLeftPart(UriPartial.Authority)),
             new Uri(authority.GetLeftPart(UriPartial.Authority)));
     }

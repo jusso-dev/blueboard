@@ -35,6 +35,7 @@ public class WebHostTests
         var c = From(("BLUEBOARD_API_URL", "https://api.example"), ("BLUEBOARD_TENANT_ID", Guid.NewGuid().ToString()),
             ("BLUEBOARD_CLIENT_ID", "c"), ("BLUEBOARD_API_SCOPE", "api://x/Board.Access"));
         Assert.Equal("entra", c.Public.Mode);
+        Assert.Equal("https://api.example/api", c.Public.ApiBaseUrl);
         Assert.Contains(SecurityHeaders.For(c).ForPath("/"), h => h.Key == "Strict-Transport-Security");
     }
 }

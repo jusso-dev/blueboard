@@ -40,13 +40,15 @@ else
   log "app registration $name exists ($app_id)"
 fi
 
-az ad app update --id "$app_id" --identifier-uris "$uri" --enable-id-token-issuance false --enable-access-token-issuance false
-# App roles: fixed ids so re-running never orphans an assignment.
-az ad app update --id "$app_id" --app-roles @"$BB_ROOT/infra/board-api-app-roles.json"
-
 obj_id="$(az ad app show --id "$app_id" --query id -o tsv)"
 graph_patch() { az rest --method PATCH --uri "https://graph.microsoft.com/v1.0/applications/$obj_id" \
   --headers "Content-Type=application/json" --body "$1" -o none; }
+
+# v2 tokens first: tenants with the default identifier URI policy refuse api://<name> on a v1 app.
+graph_patch '{"api": {"requestedAccessTokenVersion": 2}}'
+az ad app update --id "$app_id" --identifier-uris "$uri" --enable-id-token-issuance false --enable-access-token-issuance false
+# App roles: fixed ids so re-running never orphans an assignment.
+az ad app update --id "$app_id" --app-roles @"$BB_ROOT/infra/board-api-app-roles.json"
 
 # The delegated scope the web app asks for. Fixed id, so re-running is a no-op. v2 access tokens.
 scope_id="8c7e7a2a-3c64-4c1e-9a55-0b8f4c1d7b01"
