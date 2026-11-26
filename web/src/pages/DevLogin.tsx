@@ -26,7 +26,7 @@ export default function DevLogin() {
             navigate("/");
             location.reload();
           }}
-          className="block w-full rounded-[var(--radius-control)] border border-control px-3 py-2 text-left text-[13px] transition-colors duration-150 hover:border-ink-2 hover:bg-paper-3"
+          className="block w-full rounded-[var(--radius-control)] border border-control px-3 py-2 text-left text-ui transition-colors duration-150 hover:border-ink-2 hover:bg-paper-3"
         >
           {p.label}
           <span className="label mt-0.5 block">

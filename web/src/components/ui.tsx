@@ -37,7 +37,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
         "inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-[var(--radius-control)] border font-medium",
         "transition-colors duration-150 ease-[var(--ease-out)] active:translate-y-px",
         "disabled:cursor-not-allowed disabled:opacity-50 disabled:active:translate-y-0",
-        size === "sm" ? "h-7 px-2.5 text-xs" : "h-8 px-3 text-[13px]",
+        size === "sm" ? "h-9 px-2.5 text-ui" : "h-9 px-3 text-ui",
         VARIANT[variant],
         className,
       )}
@@ -62,8 +62,8 @@ export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputE
       ref={ref}
       aria-invalid={invalid || undefined}
       className={cx(
-        "h-8 rounded-[var(--radius-control)] border border-control bg-paper-2 px-2.5 text-[13px] text-ink placeholder:text-faint",
-        "transition-colors duration-150 hover:border-ink-2 focus-visible:border-accent focus-visible:outline-none",
+        "h-9 min-w-0 rounded-[var(--radius-control)] border border-control bg-paper-2 px-2.5 text-ui text-ink placeholder:text-faint",
+        "transition-colors duration-150 hover:border-ink-2 focus-visible:border-accent",
         "disabled:cursor-not-allowed disabled:opacity-50 aria-[invalid]:border-critical",
         className,
       )}
@@ -76,8 +76,8 @@ export function Select({ className, children, ...rest }: SelectHTMLAttributes<HT
   return (
     <select
       className={cx(
-        "h-8 rounded-[var(--radius-control)] border border-control bg-paper-2 pl-2 pr-7 text-[13px] text-ink",
-        "transition-colors duration-150 hover:border-ink-2 focus-visible:border-accent focus-visible:outline-none disabled:opacity-50",
+        "h-9 min-w-0 rounded-[var(--radius-control)] border border-control bg-paper-2 pl-2 pr-7 text-ui text-ink",
+        "transition-colors duration-150 hover:border-ink-2 focus-visible:border-accent disabled:cursor-not-allowed disabled:opacity-50",
         className,
       )}
       {...rest}
@@ -100,7 +100,7 @@ export function Segmented<T extends string>({
   label: string;
 }) {
   return (
-    <div role="radiogroup" aria-label={label} className="inline-flex h-8 rounded-[var(--radius-control)] border border-control bg-paper-2 p-0.5">
+    <div role="radiogroup" aria-label={label} className="inline-flex h-9 max-w-full rounded-[var(--radius-control)] border border-control bg-paper-2 p-0.5">
       {options.map((o) => (
         <button
           key={o.value}
@@ -108,7 +108,7 @@ export function Segmented<T extends string>({
           aria-checked={value === o.value}
           onClick={() => onChange(o.value)}
           className={cx(
-            "rounded-[4px] px-2.5 text-xs transition-colors duration-150",
+            "whitespace-nowrap rounded-[4px] px-2.5 text-ui transition-colors duration-150",
             value === o.value ? "bg-paper-3 text-ink" : "text-muted hover:text-ink",
           )}
         >
@@ -130,7 +130,7 @@ const TONE: Record<Tone, string> = {
 
 export function Tag({ tone = "neutral", children, title }: { tone?: Tone; children: ReactNode; title?: string }) {
   return (
-    <span title={title} className={cx("inline-flex h-[18px] items-center rounded-[4px] border px-1.5 font-mono text-[10.5px] leading-none tracking-wide", TONE[tone])}>
+    <span title={title} className={cx("inline-flex min-h-5 shrink-0 items-center whitespace-nowrap rounded-[4px] border px-1.5 text-meta font-medium", TONE[tone])}>
       {children}
     </span>
   );
@@ -145,14 +145,14 @@ export function Severity({ value }: { value: string }) {
 }
 
 export function Kbd({ children }: { children: ReactNode }) {
-  return <kbd className="rounded-[4px] border border-rule px-1 font-mono text-[10px] text-faint">{children}</kbd>;
+  return <kbd className="rounded-[4px] border border-rule px-1 font-mono text-meta text-muted">{children}</kbd>;
 }
 
 export function Empty({ title, children }: { title: string; children?: ReactNode }) {
   return (
     <div className="mx-auto max-w-sm px-6 py-16 text-center">
       <p className="text-sm font-medium text-ink-2">{title}</p>
-      {children && <div className="mt-1 text-[13px] text-muted">{children}</div>}
+      {children && <div className="mt-1 text-ui text-muted">{children}</div>}
     </div>
   );
 }
@@ -196,7 +196,7 @@ const TINTS = ["bg-tint-1", "bg-tint-2", "bg-tint-3", "bg-tint-4", "bg-tint-5", 
  * the AGENT badge does). The board's own posts get a neutral tile with a line icon instead.
  */
 export function Avatar({ handle, name, kind, size = 36, className }: { handle: string; name: string; kind: string; size?: 36 | 24 | 20; className?: string }) {
-  const box = size === 36 ? "size-9 rounded-[var(--radius-control)] text-[13px]" : size === 24 ? "size-6 rounded-[4px] text-[10px]" : "size-5 rounded-[4px] text-[9px]";
+  const box = size === 36 ? "size-9 rounded-[var(--radius-control)] text-ui" : size === 24 ? "size-6 rounded-[4px] text-[10px]" : "size-5 rounded-[4px] text-[9px]";
   if (kind === "system")
     return (
       <span aria-hidden className={cx("inline-flex shrink-0 items-center justify-center bg-paper-3 text-muted", box, className)}>
@@ -214,7 +214,7 @@ export function Avatar({ handle, name, kind, size = 36, className }: { handle: s
 export function KindBadge({ kind }: { kind: string }) {
   if (kind !== "agent" && kind !== "system") return null;
   return (
-    <span className="inline-flex h-[15px] shrink-0 items-center rounded-[3px] bg-paper-3 px-1 text-[10px] font-semibold uppercase leading-none tracking-wide text-muted">
+    <span className="inline-flex h-5 shrink-0 items-center rounded-[3px] bg-paper-3 px-1.5 text-meta font-medium text-muted">
       {kind === "agent" ? "Agent" : "System"}
     </span>
   );

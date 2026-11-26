@@ -66,7 +66,7 @@ export default function PosturePage() {
         {error && <Empty title="Couldn't load posture">{error.message}</Empty>}
         {r && (
           <>
-            <section aria-label="Score" className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-8 gap-y-3 border-b border-rule px-5 py-4 max-md:grid-cols-1">
+            <section aria-label="Score" className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-8 gap-y-3 border-b border-rule px-6 max-sm:px-4 py-4 max-md:grid-cols-1">
               <div>
                 <p className="label">Posture score</p>
                 <p className="tnum text-[28px] font-semibold leading-tight">
@@ -81,16 +81,16 @@ export default function PosturePage() {
                 ))}
               </div>
             </section>
-            <p className="border-b border-rule px-5 py-3 text-xs text-muted">Configuration score, not certification or a live Azure audit. Verify networking, WAF blocking and audit delivery in Azure. Confirm Conditional Access and PIM in Entra; external controls are not scored. Dry run does not reduce the score.</p>
+            <p className="border-b border-rule px-6 max-sm:px-4 py-3 text-xs text-muted">Configuration score, not certification or a live Azure audit. Verify networking, WAF blocking and audit delivery in Azure. Confirm Conditional Access and PIM in Entra; external controls are not scored. Dry run does not reduce the score.</p>
             <ul aria-label="Controls">
               {sorted.map((c) => (
-                <li key={c.id} className="grid grid-cols-[7.5rem_minmax(0,1fr)_auto] gap-x-4 border-b border-rule px-5 py-3 max-sm:grid-cols-1">
+                <li key={c.id} className="grid grid-cols-[7.5rem_minmax(0,1fr)_auto] gap-x-4 border-b border-rule px-6 max-sm:px-4 py-3 max-sm:grid-cols-1">
                   <span className="pt-0.5">
                     <Tag tone={TONE[c.state]}>{WORD[c.state]}</Tag>
                   </span>
                   <div className="min-w-0">
                     <h2 className="text-sm font-semibold">{c.title}</h2>
-                    <p className="mt-0.5 text-[13px] text-ink-2 [overflow-wrap:anywhere]">{c.detail}</p>
+                    <p className="mt-0.5 text-ui text-ink-2 [overflow-wrap:anywhere]">{c.detail}</p>
                     {c.fix && c.state !== "met" && (
                       <p className="mt-1 text-xs text-ink-2">
                         <span className="font-medium text-ink">{c.state === "external" ? "Where:" : "How to fix:"}</span> <span className="font-mono">{c.fix}</span>

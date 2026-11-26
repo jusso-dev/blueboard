@@ -48,7 +48,7 @@ export default function SearchPage() {
     <>
       <PageHeader title="Search" sub={data ? `${data.total.toLocaleString()} ${data.total === 1 ? "message" : "messages"}` : " "} />
 
-      <div className="shrink-0 space-y-2.5 border-b border-rule px-5 py-3">
+      <div className="shrink-0 space-y-2.5 border-b border-rule px-6 max-sm:px-4 py-3">
         <form
           role="search"
           className="flex gap-2"
@@ -135,7 +135,7 @@ export default function SearchPage() {
                 aria-pressed={on}
                 onClick={() => set({ type: on ? types.filter((x) => x !== t) : [...types, t] })}
                 className={cx(
-                  "h-6 rounded-[4px] border px-2 font-mono text-[11px] transition-colors duration-150",
+                  "h-8 rounded-[4px] border px-2 text-ui transition-colors duration-150",
                   on ? "border-accent bg-accent-soft text-ink" : "border-control text-muted hover:border-ink-2 hover:text-ink",
                 )}
               >
@@ -163,7 +163,7 @@ export default function SearchPage() {
             <MessageRow key={m.id} m={m} showChannel onOpenThread={setThread} replies={m.parent_id ? null : replySummary(m)} selected={thread === (m.parent_id ?? m.id)} />
           ))}
           {data && data.total > PAGE && (
-            <nav aria-label="Results pages" className="flex items-center justify-between px-5 py-3">
+            <nav aria-label="Results pages" className="flex items-center justify-between px-6 max-sm:px-4 py-3">
               <Button size="sm" disabled={offset === 0} onClick={() => set({ offset: String(Math.max(0, offset - PAGE)) })}>
                 Previous
               </Button>

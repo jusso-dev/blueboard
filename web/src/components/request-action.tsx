@@ -137,7 +137,7 @@ function RequestActionPanel({ targets, incident, onClose }: { targets: [ActionTa
           void submit();
         }}
       >
-        <div className="flex h-12 shrink-0 items-center border-b border-rule pl-5 pr-2">
+        <div className="flex h-12 shrink-0 items-center border-b border-rule pl-6 max-sm:pl-4 pr-2">
           <h2 id={titleId} className="flex-1 text-sm font-semibold">
             Request action
           </h2>
@@ -146,7 +146,7 @@ function RequestActionPanel({ targets, incident, onClose }: { targets: [ActionTa
           </Button>
         </div>
 
-        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-4">
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 max-sm:px-4 py-4">
           {targets.length > 1 && (
             <Field label="Target" htmlFor={`${titleId}-target`}>
               <Select id={`${titleId}-target`} className="w-full" value={targetIdx} onChange={(e) => setTargetIdx(Number(e.target.value))}>
@@ -159,14 +159,14 @@ function RequestActionPanel({ targets, incident, onClose }: { targets: [ActionTa
             </Field>
           )}
           {targets.length === 1 && (
-            <p className="text-[13px] text-ink-2">
+            <p className="text-ui text-ink-2">
               <span className="label mr-2">{target.type}</span>
               <span className="[overflow-wrap:anywhere]">{target.label}</span>
             </p>
           )}
 
           {catErr && <ErrorLine>{catErr.message}</ErrorLine>}
-          {catalog && choices.length === 0 && <p className="text-[13px] text-muted">Policy allows no actions on a {target.type}.</p>}
+          {catalog && choices.length === 0 && <p className="text-ui text-muted">Policy allows no actions on a {target.type}.</p>}
           {def && (
             <>
               <Field label="Action" htmlFor={`${titleId}-kind`}>
@@ -196,7 +196,7 @@ function RequestActionPanel({ targets, incident, onClose }: { targets: [ActionTa
                   value={justification}
                   onChange={(e) => setJustification(e.target.value)}
                   aria-describedby={`${titleId}-why-hint`}
-                  className="block w-full resize-y rounded-[var(--radius-control)] border border-control bg-paper-2 px-2.5 py-2 text-[13px] text-ink placeholder:text-faint transition-colors duration-150 hover:border-ink-2 focus-visible:border-accent focus-visible:outline-none"
+                  className="block w-full resize-y rounded-[var(--radius-control)] border border-control bg-paper-2 px-2.5 py-2 text-ui text-ink placeholder:text-faint transition-colors duration-150 hover:border-ink-2 focus-visible:border-accent"
                 />
               </Field>
 
@@ -205,7 +205,7 @@ function RequestActionPanel({ targets, incident, onClose }: { targets: [ActionTa
                 {previewErr && <ErrorLine>{previewErr}</ErrorLine>}
                 {preview && (
                   <>
-                    <p className={cx("text-[13px] font-medium", rejected ? "text-critical" : preview.outcome === "auto" ? "text-good" : "text-warning")}>
+                    <p className={cx("text-ui font-medium", rejected ? "text-critical" : preview.outcome === "auto" ? "text-good" : "text-warning")}>
                       {preview.summary}
                     </p>
                     <p className="mt-0.5 text-xs text-muted">{preview.describe}</p>
@@ -232,7 +232,7 @@ function RequestActionPanel({ targets, incident, onClose }: { targets: [ActionTa
           )}
         </div>
 
-        <div className="flex shrink-0 items-center gap-2 border-t border-rule px-5 py-3">
+        <div className="flex shrink-0 items-center gap-2 border-t border-rule px-6 max-sm:px-4 py-3">
           {err ? <ErrorLine>{err}</ErrorLine> : <span className="text-xs text-muted">{def?.destructive ? "Destructive: a person must approve it." : ""}</span>}
           <Button type="submit" variant="primary" className="ml-auto" loading={busy} disabled={!def || shortJustification || rejected}>
             Request
@@ -251,7 +251,7 @@ function Field({ label, htmlFor, hint, children }: { label: string; htmlFor: str
       </label>
       {children}
       {hint && (
-        <p id={`${htmlFor}-hint`} className="mt-1 text-[11px] text-faint">
+        <p id={`${htmlFor}-hint`} className="mt-1 text-meta text-faint">
           {hint}
         </p>
       )}

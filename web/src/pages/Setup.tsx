@@ -14,13 +14,13 @@ const WORD = { ok: "OK", warning: "Warning", failed: "Failed" } as const;
 
 function Row({ c }: { c: Check }) {
   return (
-    <li className="grid grid-cols-[5.5rem_minmax(0,1fr)] gap-x-4 border-b border-rule px-5 py-3 max-sm:grid-cols-1">
+    <li className="grid grid-cols-[5.5rem_minmax(0,1fr)] gap-x-4 border-b border-rule px-6 max-sm:px-4 py-3 max-sm:grid-cols-1">
       <span className="pt-0.5">
         <Tag tone={TONE[c.status]}>{WORD[c.status]}</Tag>
       </span>
       <div className="min-w-0">
         <h2 className="text-sm font-semibold">{c.name}</h2>
-        <p className="mt-0.5 text-[13px] text-ink-2 [overflow-wrap:anywhere]">{c.detail}</p>
+        <p className="mt-0.5 text-ui text-ink-2 [overflow-wrap:anywhere]">{c.detail}</p>
         {c.lines && c.lines.length > 0 && (
           <ul className="mt-1.5 space-y-0.5 font-mono text-xs text-muted">
             {c.lines.map((l, i) => (
@@ -45,7 +45,7 @@ function Stages({ checks }: { checks: Check[] }) {
   const stages = stageStates(checks);
   const current = stages.find((s) => s.state === "current");
   return (
-    <section aria-labelledby="go-live" className="border-b border-rule px-5 py-4">
+    <section aria-labelledby="go-live" className="border-b border-rule px-6 max-sm:px-4 py-4">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h2 id="go-live" className="text-sm font-semibold">
           Go-live
@@ -83,7 +83,7 @@ function StageCard({ n, s }: { n: number; s: StageState }) {
       className={cx("rounded-[var(--radius-control)] border px-3 py-2", s.state === "current" ? "border-accent-soft bg-accent-soft/20" : "border-rule")}
     >
       <div className="flex items-center justify-between gap-2">
-        <span className="text-[13px] font-semibold">
+        <span className="text-ui font-semibold">
           <span className="font-mono text-muted">{n}</span> {s.stage.title}
         </span>
         <Tag tone={tone}>{word}</Tag>
@@ -156,14 +156,14 @@ export default function SetupPage() {
           </ul>
         )}
 
-        <section aria-labelledby="notify-test" className="px-5 py-4">
+        <section aria-labelledby="notify-test" className="px-6 max-sm:px-4 py-4">
           <h2 id="notify-test" className="text-sm font-semibold">
             Test notification
           </h2>
-          <p className="mt-0.5 max-w-2xl text-[13px] text-muted">
+          <p className="mt-0.5 max-w-2xl text-ui text-muted">
             Sends a sample notice to every configured sink (Teams, email, webhook) so you can check approvers will hear about waiting actions.
           </p>
-          <p className="mt-0.5 max-w-2xl text-[13px] text-muted">
+          <p className="mt-0.5 max-w-2xl text-ui text-muted">
             Who gets which notices, quiet hours and the board defaults are on{" "}
             <Link to="/settings/notifications" className="whitespace-nowrap text-accent underline-offset-4 hover:underline">
               Notifications

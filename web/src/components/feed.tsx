@@ -95,7 +95,7 @@ export function Composer({
   return (
     <form
       aria-label={placeholder.replace(/…$/, "")}
-      className="shrink-0 px-5 pb-1 pt-1 max-sm:px-3"
+      className="shrink-0 px-6 pb-2 pt-2 max-sm:px-4"
       onSubmit={(e) => {
         e.preventDefault();
         void submit();
@@ -112,7 +112,7 @@ export function Composer({
           {isIoc && (
             <fieldset className="flex flex-wrap items-center gap-2 border-b border-rule px-2 py-2">
               <legend className="sr-only">Indicator</legend>
-              <Select aria-label="Indicator kind" value={ioc.kind} onChange={(e) => setIoc({ ...ioc, kind: e.target.value as IocDraft["kind"] })} className="h-7 text-xs">
+              <Select aria-label="Indicator kind" value={ioc.kind} onChange={(e) => setIoc({ ...ioc, kind: e.target.value as IocDraft["kind"] })} className="text-ui">
                 {IOC_KINDS.map((k) => (
                   <option key={k} value={k}>
                     {k}
@@ -125,9 +125,9 @@ export function Composer({
                 onChange={(e) => setIoc({ ...ioc, value: e.target.value })}
                 placeholder="203.0.113.50, bad.example, a hash"
                 maxLength={2048}
-                className="h-7 min-w-0 flex-1 basis-40 font-mono text-xs"
+                className="min-w-0 flex-1 basis-40 font-mono text-ui"
               />
-              <Select aria-label="Indicator verdict" value={ioc.verdict} onChange={(e) => setIoc({ ...ioc, verdict: e.target.value as IocDraft["verdict"] })} className="h-7 text-xs">
+              <Select aria-label="Indicator verdict" value={ioc.verdict} onChange={(e) => setIoc({ ...ioc, verdict: e.target.value as IocDraft["verdict"] })} className="text-ui">
                 {IOC_VERDICTS.map((v) => (
                   <option key={v} value={v}>
                     {v}
@@ -162,14 +162,14 @@ export function Composer({
             rows={1}
             maxLength={20000}
             placeholder={isIoc ? "Why it matters (optional)" : placeholder}
-            className="composer-input block min-h-10 w-full resize-none bg-transparent px-3 py-2.5 text-sm leading-5 text-ink placeholder:text-faint focus:outline-none"
+            className="composer-input block min-h-10 w-full resize-none bg-transparent px-3 py-2.5 text-message text-ink placeholder:text-faint focus:outline-none"
           />
           <div className="flex items-center gap-1 px-1.5 pb-1.5">
             <Select
               aria-label="Message type"
               value={type}
               onChange={(e) => setType(e.target.value as never)}
-              className="h-7 border-transparent bg-transparent pl-1.5 font-mono text-[11px] text-muted hover:border-control hover:text-ink"
+              className="h-9 border-transparent bg-transparent pl-1.5 text-ui text-muted hover:border-control hover:text-ink"
             >
               {POST_TYPES.map((t) => (
                 <option key={t} value={t}>
@@ -184,7 +184,7 @@ export function Composer({
               title="Mention someone"
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => mention.insertTrigger("@")}
-              className="inline-flex size-7 items-center justify-center rounded-[4px] text-muted transition-colors duration-150 hover:bg-paper-3 hover:text-ink [@media(pointer:coarse)]:size-11"
+              className="inline-flex size-9 items-center justify-center rounded-[4px] text-muted transition-colors duration-150 hover:bg-paper-3 hover:text-ink [@media(pointer:coarse)]:size-11"
             >
               <IconAt />
             </button>
@@ -197,7 +197,7 @@ export function Composer({
               onMouseDown={(e) => e.preventDefault()}
               onClick={(e) => picker.toggle(e.currentTarget)}
               className={cx(
-                "inline-flex size-7 items-center justify-center rounded-[4px] transition-colors duration-150 hover:bg-paper-3 hover:text-ink [@media(pointer:coarse)]:size-11",
+                "inline-flex size-9 items-center justify-center rounded-[4px] transition-colors duration-150 hover:bg-paper-3 hover:text-ink [@media(pointer:coarse)]:size-11",
                 picker.anchor ? "bg-paper-3 text-ink" : "text-muted",
               )}
             >
@@ -209,7 +209,7 @@ export function Composer({
               title="Send"
               disabled={!canSend || busy}
               className={cx(
-                "ml-auto inline-flex size-7 items-center justify-center rounded-[4px] transition-colors duration-150 [@media(pointer:coarse)]:size-11",
+                "ml-auto inline-flex size-9 items-center justify-center rounded-[4px] transition-colors duration-150 [@media(pointer:coarse)]:size-11",
                 canSend ? "bg-accent text-accent-ink hover:bg-focus" : "text-faint",
                 "disabled:cursor-not-allowed",
               )}
@@ -242,7 +242,7 @@ export function Composer({
         <div className="min-w-0 flex-1">{err ? <ErrorLine>{err}</ErrorLine> : <TypingLine list={typing} />}</div>
         {/* Only while drafting, so an empty composer gives the typing line the full width. */}
         {body && (
-          <p aria-hidden className="shrink-0 text-[11px] leading-5 text-muted max-sm:hidden">
+          <p aria-hidden className="shrink-0 text-meta leading-5 text-muted max-sm:hidden">
             <span className="font-semibold text-ink-2">Shift + Return</span> to add a new line
           </p>
         )}
@@ -440,15 +440,15 @@ export function ThreadPanel({
           className="absolute inset-y-0 -left-[3px] z-10 w-[6px] cursor-col-resize touch-none transition-colors duration-150 hover:bg-accent/40 focus-visible:bg-accent/60 focus-visible:outline-none"
         />
       )}
-      <header className="flex h-12 shrink-0 items-center gap-2 border-b border-rule pl-4 pr-2 max-sm:pl-1">
+      <header className="flex min-h-14 shrink-0 items-center gap-2 border-b border-rule pl-6 pr-3 max-sm:pl-1">
         {phone && (
           <button type="button" onClick={onClose} aria-label="Back to the channel" className="inline-flex size-11 items-center justify-center rounded-[var(--radius-control)] text-muted hover:bg-paper-3 hover:text-ink">
             <IconBack />
           </button>
         )}
         <h2 className="flex min-w-0 flex-1 items-baseline gap-2">
-          <span className="text-lg font-semibold tracking-tight text-ink">Thread</span>
-          {channel && <span className="truncate text-[13px] text-muted">#{channel}</span>}
+          <span className="text-title font-semibold tracking-tight text-ink">Thread</span>
+          {channel && <span className="truncate text-ui text-muted">#{channel}</span>}
         </h2>
         {!phone && (
           <button
@@ -474,8 +474,8 @@ export function ThreadPanel({
             <div className="pt-5">
               <MessageRow m={data.root} showChannel={false} time="relative" actions="copy" rootRef={rootEl} clamp={false} />
             </div>
-            <div className="flex items-center gap-3 px-5 pb-1 pt-2 max-sm:px-3" role="separator" aria-label={`${count} ${count === 1 ? "reply" : "replies"}`}>
-              <span className="shrink-0 text-[13px] text-muted">{count === 0 ? "No replies yet" : `${count} ${count === 1 ? "reply" : "replies"}`}</span>
+            <div className="flex items-center gap-3 px-6 pb-2 pt-3 max-sm:px-4" role="separator" aria-label={`${count} ${count === 1 ? "reply" : "replies"}`}>
+              <span className="shrink-0 text-ui text-muted">{count === 0 ? "No replies yet" : `${count} ${count === 1 ? "reply" : "replies"}`}</span>
               <span aria-hidden className="h-px flex-1 bg-rule" />
             </div>
             <div role="list" aria-label="Replies">
@@ -513,7 +513,7 @@ function DaySection({ label, children }: { label: string; children: ReactNode })
     <section aria-label={label} className="relative">
       <div aria-hidden className="absolute inset-x-0 top-[1.375rem] h-px bg-rule" />
       <div role="separator" aria-label={label} className="pointer-events-none sticky top-0 z-[5] flex justify-center py-2">
-        <span className="pointer-events-auto inline-flex h-7 items-center rounded-full border border-rule-strong bg-paper px-4 text-[13px] font-semibold text-ink-2">{label}</span>
+        <span className="pointer-events-auto inline-flex h-7 items-center rounded-full border border-rule-strong bg-paper px-4 text-ui font-semibold text-ink-2">{label}</span>
       </div>
       {children}
     </section>

@@ -1,6 +1,6 @@
 import { Link, Outlet, useLocation, useNavigate, useSearchParams } from "react-router";
 import { createContext, useContext, type ReactNode } from "react";
-import { cx, Kbd, Severity } from "./ui";
+import { cx, Kbd, Select, Severity } from "./ui";
 import { ShortcutsProvider, useSearchShortcut, useShortcutDialogs } from "./shortcuts";
 import { IconBell } from "./icons";
 import { signIn, signOut } from "../lib/auth";
@@ -19,7 +19,7 @@ export function Shell() {
   return (
     <MeContext.Provider value={me ?? null}>
       <ShortcutsProvider me={me ?? null}>
-      <div className="grid h-dvh grid-cols-[232px_minmax(0,1fr)] max-md:grid-cols-1 max-md:grid-rows-[auto_minmax(0,1fr)]">
+      <div className="grid h-dvh grid-cols-[248px_minmax(0,1fr)] max-md:grid-cols-1 max-md:grid-rows-[auto_minmax(0,1fr)]">
         <Rail me={me ?? null} />
         <MobileBar />
         <main className="flex min-h-0 min-w-0 flex-col">
@@ -68,7 +68,7 @@ function StatusBanner({ admin }: { admin: boolean }) {
         <p
           key={l.label}
           className={cx(
-            "flex flex-wrap items-baseline gap-x-2 px-5 py-1.5 text-xs",
+            "flex flex-wrap items-baseline gap-x-2 px-6 py-1.5 max-sm:px-4 text-xs",
             l.tone === "critical" ? "bg-critical-soft/50 text-ink" : "bg-warning-soft/40 text-ink",
           )}
         >
@@ -85,40 +85,49 @@ function StatusBanner({ admin }: { admin: boolean }) {
   );
 }
 
-/** Below md the rail collapses to a single row of the destinations people switch between most. */
+/** All destinations stay reachable below md without a horizontally scrolling navigation bar. */
 function MobileBar() {
   const path = useLocation().pathname;
+  const navigate = useNavigate();
+  const me = useMe();
+  const { data: channels } = useLiveQuery<Channel[]>("/channels");
   const { data: pending } = useLiveQuery<Action[]>("/actions?status=open");
-  const items = [
-    { href: "/", label: "Queue", active: path === "/" || path.startsWith("/incidents") },
-    { href: "/search", label: "Search", active: path === "/search" },
-    { href: "/intel", label: "Intel", active: path.startsWith("/intel") },
-    { href: "/approvals", label: pending?.length ? `Approvals · ${pending.length}` : "Approvals", active: path === "/approvals" },
+  const groups = [
+    { label: "Board", items: [
+      { href: "/", label: "Queue" },
+      { href: "/search", label: "Search" },
+      { href: "/approvals", label: pending?.length ? `Approvals · ${pending.length}` : "Approvals" },
+      { href: "/policy", label: "Policy" },
+      { href: "/intel", label: "Threat intel" },
+      { href: "/settings/notifications", label: "Notifications" },
+    ] },
+    { label: "Channels", items: (channels ?? []).map((c) => ({ href: `/channels/${encodeURIComponent(c.name)}`, label: `# ${c.name}` })) },
+    ...(me?.roles.includes("admin") ? [{ label: "Administration", items: [
+      { href: "/admin", label: "Admin centre" },
+      { href: "/admin/posture", label: "Posture" },
+      { href: "/admin/participants", label: "Access review" },
+      { href: "/admin/audit", label: "Audit log" },
+      { href: "/setup", label: "Setup" },
+      { href: "/reports", label: "Reports" },
+    ] }] : []),
   ];
+  const known = groups.some((g) => g.items.some((i) => i.href === path));
   return (
-    <nav aria-label="Board" className="flex h-11 items-center gap-1 overflow-x-auto border-b border-rule px-3 md:hidden">
-      <span className="mr-2 font-semibold tracking-tight">blueboard</span>
-      {items.map((i) => (
-        <Link
-          key={i.href}
-          to={i.href}
-          aria-current={i.active ? "page" : undefined}
-          className={cx(
-            "whitespace-nowrap rounded-[var(--radius-control)] px-2.5 py-1.5 text-[13px] transition-colors duration-150",
-            i.active ? "bg-paper-3 text-ink" : "text-muted hover:text-ink",
-          )}
-        >
-          {i.label}
-        </Link>
-      ))}
+    <nav aria-label="Board" className="flex min-h-14 min-w-0 items-center gap-3 border-b border-rule px-4 md:hidden">
+      <Link to="/" className="shrink-0 font-semibold tracking-tight">blueboard</Link>
+      <Select aria-label="Navigate board" value={path} onChange={(e) => navigate(e.target.value)} className="min-w-0 flex-1">
+        {!known && <option value={path}>{path.startsWith("/incidents/") ? "Incident" : "Current page"}</option>}
+        {groups.map((g) => (
+          <optgroup key={g.label} label={g.label}>
+            {g.items.map((i) => <option key={i.href} value={i.href}>{i.label}</option>)}
+          </optgroup>
+        ))}
+      </Select>
       <Link
         to="/settings/notifications"
         aria-label="Notification settings"
         aria-current={path === "/settings/notifications" ? "page" : undefined}
-        className={cx(
-          "ml-auto inline-flex size-8 shrink-0 items-center justify-center rounded-[var(--radius-control)] transition-colors duration-150",
-          path === "/settings/notifications" ? "bg-paper-3 text-ink" : "text-muted hover:text-ink",
-        )}
+        className="inline-flex size-9 shrink-0 items-center justify-center rounded-[var(--radius-control)] text-muted hover:bg-paper-3 hover:text-ink"
       >
         <IconBell />
       </Link>
@@ -132,7 +141,7 @@ function NoRole({ me }: { me: Me }) {
       <div className="max-w-sm">
         <p className="text-lg font-semibold tracking-tight">blueboard</p>
         <p className="mt-2 text-sm text-ink-2">You're signed in as {me.display_name}, but you don't have access to the board yet.</p>
-        <p className="mt-1 text-[13px] text-muted">Ask a board admin to assign you the Board.Post role in Entra ID, then reload.</p>
+        <p className="mt-1 text-ui text-muted">Ask a board admin to assign you the Board.Post role in Entra ID, then reload.</p>
       </div>
     </div>
   );
@@ -159,12 +168,12 @@ function SignedOut() {
         <button
           type="button"
           onClick={() => void signIn()}
-          className="mt-4 inline-flex h-8 items-center rounded-[var(--radius-control)] bg-accent px-3 text-[13px] font-medium text-accent-ink transition-colors duration-150 hover:bg-focus"
+          className="mt-4 inline-flex h-9 items-center rounded-[var(--radius-control)] bg-accent px-3 text-ui font-medium text-accent-ink transition-colors duration-150 hover:bg-focus"
         >
           Sign in with Microsoft
         </button>
         {import.meta.env.DEV && (
-          <p className="mt-4 text-[13px] text-muted">
+          <p className="mt-4 text-ui text-muted">
             Local development:{" "}
             <Link className="text-accent underline-offset-4 hover:underline" to="/dev-login">
               pick a dev identity
@@ -183,13 +192,13 @@ function RailLink({ href, active, children, count }: { href: string; active: boo
       to={href}
       aria-current={active ? "page" : undefined}
       className={cx(
-        "group flex h-7 items-center gap-2 rounded-[var(--radius-control)] px-2 text-[13px] transition-colors duration-150",
-        active ? "bg-paper-3 text-ink" : "text-muted hover:bg-paper-2 hover:text-ink",
+        "group flex h-9 items-center gap-2 rounded-[var(--radius-control)] px-2 text-ui transition-colors duration-150",
+        active ? "bg-accent-soft/40 font-medium text-ink" : "text-muted hover:bg-paper-2 hover:text-ink",
       )}
     >
       <span className="min-w-0 flex-1 truncate">{children}</span>
       {count ? (
-        <span className="tnum min-w-4 rounded-[4px] bg-accent px-1 text-center font-mono text-[10.5px] font-semibold leading-4 text-accent-ink" aria-label={`${count} waiting`}>
+        <span className="tnum min-w-4 rounded-[4px] bg-accent px-1 text-center text-meta font-semibold leading-4 text-accent-ink" aria-label={`${count} waiting`}>
           {count}
         </span>
       ) : null}
@@ -214,7 +223,7 @@ function Rail({ me }: { me: Me | null }) {
 
   return (
     <aside className="flex min-h-0 flex-col border-r border-rule bg-paper max-md:hidden">
-      <div className="flex h-12 items-center gap-2 px-4">
+      <div className="flex h-14 shrink-0 items-center gap-2 px-5">
         <span className="font-semibold tracking-tight">blueboard</span>
         <span
           className={cx("size-1.5 rounded-full", live ? "bg-good" : "bg-faint")}
@@ -240,7 +249,7 @@ function Rail({ me }: { me: Me | null }) {
             key={path === "/search" ? params.get("q") ?? "" : "rail"}
             defaultValue={path === "/search" ? params.get("q") ?? "" : ""}
             placeholder="Search"
-            className="h-8 w-full rounded-[var(--radius-control)] border border-control bg-paper-2 pl-2.5 pr-7 text-[13px] text-ink placeholder:text-faint transition-colors duration-150 hover:border-ink-2 focus-visible:border-accent focus-visible:outline-none"
+            className="h-9 w-full rounded-[var(--radius-control)] border border-control bg-paper-2 pl-2.5 pr-7 text-ui text-ink placeholder:text-faint transition-colors duration-150 hover:border-ink-2 focus-visible:border-accent"
           />
           <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2">
             <Kbd>/</Kbd>
@@ -268,9 +277,23 @@ function Rail({ me }: { me: Me | null }) {
           <RailLink href="/settings/notifications" active={path === "/settings/notifications"}>
             Notifications
           </RailLink>
-          {isAdmin && (
-            <>
-              <p className="label px-2 pb-1 pt-3">Admin</p>
+        </div>
+
+        <div>
+          <p className="label px-2 pb-1">Channels</p>
+          <div className="space-y-px">
+            {channels?.map((c) => (
+              <RailLink key={c.name} href={`/channels/${encodeURIComponent(c.name)}`} active={channel === c.name}>
+                <span className="text-faint">#</span> {c.name}
+              </RailLink>
+            ))}
+          </div>
+        </div>
+
+        {isAdmin && (
+          <details open={path.startsWith("/admin") || path === "/setup" || path === "/reports"}>
+            <summary className="cursor-pointer rounded-[var(--radius-control)] px-2 py-2 text-meta font-medium text-muted hover:text-ink">Administration</summary>
+            <div className="mt-1 space-y-px">
               <RailLink href="/admin" active={path === "/admin"}>
                 Admin centre
               </RailLink>
@@ -289,20 +312,9 @@ function Rail({ me }: { me: Me | null }) {
               <RailLink href="/reports" active={path === "/reports"}>
                 Reports
               </RailLink>
-            </>
-          )}
-        </div>
-
-        <div>
-          <p className="label px-2 pb-1">Channels</p>
-          <div className="space-y-px">
-            {channels?.map((c) => (
-              <RailLink key={c.name} href={`/channels/${encodeURIComponent(c.name)}`} active={channel === c.name}>
-                <span className="text-faint">#</span> {c.name}
-              </RailLink>
-            ))}
-          </div>
-        </div>
+            </div>
+          </details>
+        )}
 
         <div>
           <p className="label px-2 pb-1">Recent incidents</p>
@@ -336,7 +348,7 @@ function Rail({ me }: { me: Me | null }) {
       {me && (
         <div className="flex items-end gap-2 border-t border-rule px-4 py-3">
           <div className="min-w-0 flex-1">
-            <p className="truncate text-[13px] text-ink-2">{me.display_name}</p>
+            <p className="truncate text-ui text-ink-2">{me.display_name}</p>
             <p className="label truncate">@{me.handle}</p>
           </div>
           <button type="button" onClick={() => void signOut()} className="label hover:text-accent">
@@ -351,12 +363,12 @@ function Rail({ me }: { me: Me | null }) {
 /** Page header: one title, optional subtitle, right-side controls. */
 export function PageHeader({ title, sub, children }: { title: ReactNode; sub?: ReactNode; children?: ReactNode }) {
   return (
-    <header className="flex min-h-12 shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-rule px-5 py-2">
+    <header className="flex min-h-14 shrink-0 flex-wrap items-center gap-x-4 gap-y-3 border-b border-rule px-6 py-3 max-sm:px-4">
       <div className="min-w-[min(100%,16rem)] flex-1">
-        <h1 className="truncate text-sm font-semibold tracking-tight">{title}</h1>
-        {sub && <div className="truncate text-xs text-muted">{sub}</div>}
+        <h1 className="text-title font-semibold tracking-tight">{title}</h1>
+        {sub && <div className="mt-0.5 text-ui text-muted [overflow-wrap:anywhere]">{sub}</div>}
       </div>
-      {children && <div className="flex flex-wrap items-center gap-2">{children}</div>}
+      {children && <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">{children}</div>}
     </header>
   );
 }

@@ -54,7 +54,7 @@ function Held({ a, canRun, mine, paused, target }: { a: Action; canRun: boolean;
     }
   };
   return (
-    <article id={`action-${a.id}`} tabIndex={-1} aria-current={target || undefined} className={cx("border-b border-rule px-5 py-4 focus:outline-none", target && "bg-accent-soft/30 shadow-[inset_2px_0_0_var(--color-accent)]")}>
+    <article id={`action-${a.id}`} tabIndex={-1} aria-current={target || undefined} className={cx("border-b border-rule px-6 max-sm:px-4 py-4 focus:outline-none", target && "bg-accent-soft/30 shadow-[inset_2px_0_0_var(--color-accent)]")}>
       <header className="flex flex-wrap items-center gap-2">
         <h2 className="text-sm font-semibold">{actionTitle(a.kind)}</h2>
         <Tag tone="warning">held</Tag>
@@ -66,7 +66,7 @@ function Held({ a, canRun, mine, paused, target }: { a: Action; canRun: boolean;
           <Time iso={a.created_at} />
         </span>
       </header>
-      <p className="mt-1 text-[13px] text-muted">
+      <p className="mt-1 text-ui text-muted">
         Approved while the broker was paused, so it hasn't run. {paused ? "Resume the broker first." : "Check it still makes sense, then run it."}
       </p>
       {canRun && !mine ? (
@@ -113,7 +113,7 @@ function Pending({ a, canDecide, me, target, navProps }: { a: Action; canDecide:
       id={`action-${a.id}`}
       aria-label={`${actionTitle(a.kind)} requested by @${a.requested_by}`}
       aria-current={target || undefined}
-      className={cx("border-b border-rule px-5 py-4 focus:outline-none focus-visible:outline-offset-[-2px]", target && "bg-accent-soft/30 shadow-[inset_2px_0_0_var(--color-accent)]")}
+      className={cx("border-b border-rule px-6 max-sm:px-4 py-4 focus:outline-none focus-visible:outline-offset-[-2px]", target && "bg-accent-soft/30 shadow-[inset_2px_0_0_var(--color-accent)]")}
     >
       <header className="flex flex-wrap items-center gap-2">
         <h2 className="text-sm font-semibold">{actionTitle(a.kind)}</h2>
@@ -142,7 +142,7 @@ function Pending({ a, canDecide, me, target, navProps }: { a: Action; canDecide:
         ))}
       </dl>
 
-      <p className="mt-2 max-w-3xl text-[13px] leading-relaxed text-ink-2">{a.justification}</p>
+      <p className="mt-2 max-w-3xl text-ui leading-relaxed text-ink-2">{a.justification}</p>
 
       {a.policy_notes.length > 0 && (
         <ul className="mt-2 max-w-3xl space-y-0.5">
@@ -202,15 +202,15 @@ export default function ApprovalsPage() {
         {view === "pending" && pending?.map((a) => <Pending key={a.id} a={a} canDecide={!!canDecide} me={me?.handle} target={target === a.id} navProps={nav.rowProps(a)} />)}
 
         {view === "history" && (
-          <div className="overflow-x-auto"><table className="w-full min-w-[40rem] text-left text-[13px]">
+          <div className="overflow-x-auto"><table className="w-full min-w-[40rem] text-left text-ui">
             <thead className="label sticky top-0 bg-paper">
               <tr className="border-b border-rule">
-                <th className="px-5 py-2 font-normal">Action</th>
+                <th className="px-6 max-sm:px-4 py-2 font-normal">Action</th>
                 <th className="py-2 pr-4 font-normal">Status</th>
                 <th className="py-2 pr-4 font-normal">Incident</th>
                 <th className="py-2 pr-4 font-normal">Requested by</th>
                 <th className="py-2 pr-4 font-normal">Decided by</th>
-                <th className="py-2 pr-5 text-right font-normal">When</th>
+                <th className="py-2 pr-6 max-sm:pr-4 text-right font-normal">When</th>
               </tr>
             </thead>
             <tbody>
@@ -222,7 +222,7 @@ export default function ApprovalsPage() {
                   aria-current={target === a.id || undefined}
                   className={cx("border-b border-rule hover:bg-paper-2/60 focus:outline-none", target === a.id && "bg-accent-soft/30")}
                 >
-                  <td className="px-5 py-2 text-ink">{actionTitle(a.kind)}</td>
+                  <td className="px-6 max-sm:px-4 py-2 text-ink">{actionTitle(a.kind)}</td>
                   <td className="py-2 pr-4">
                     <ActionStatusTag status={a.status} />
                   </td>
@@ -231,7 +231,7 @@ export default function ApprovalsPage() {
                   <td className={cx("py-2 pr-4", a.decided_by ? "text-ink-2" : "text-faint")}>
                     {a.approvals && a.approvals.length > 1 ? a.approvals.map((h) => `@${h}`).join(", ") : a.decided_by ? `@${a.decided_by}` : a.status === "expired" ? "nobody (expired)" : "policy"}
                   </td>
-                  <td className="py-2 pr-5 text-right">
+                  <td className="py-2 pr-6 max-sm:pr-4 text-right">
                     <Time iso={a.created_at} />
                   </td>
                 </tr>

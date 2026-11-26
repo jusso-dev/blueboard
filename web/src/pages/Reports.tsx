@@ -43,13 +43,13 @@ const RANGES = [
 /** Stat tile: label · median (the value) · p90 and sample size as context. No chart: four headline numbers. */
 function Tile({ label, stat, hint }: { label: string; stat: Stat; hint: string }) {
   return (
-    <div className="min-w-0 border-rule px-5 py-4 [&:not(:first-child)]:border-l max-lg:[&:nth-child(3)]:border-l-0 max-lg:[&:nth-child(n+3)]:border-t">
+    <div className="min-w-0 border-rule px-6 max-sm:px-4 py-4 [&:not(:first-child)]:border-l max-lg:[&:nth-child(3)]:border-l-0 max-lg:[&:nth-child(n+3)]:border-t">
       <p className="text-xs text-muted">{label}</p>
       <p className="mt-1 text-[28px] font-semibold leading-none tracking-tight text-ink">{fmtDuration(stat.median)}</p>
       <p className="label tnum mt-2">
         p90 {fmtDuration(stat.p90)} · n={stat.n}
       </p>
-      <p className="mt-1 text-[11px] text-faint">{hint}</p>
+      <p className="mt-1 text-meta text-faint">{hint}</p>
     </div>
   );
 }
@@ -58,7 +58,7 @@ function Tile({ label, stat, hint }: { label: string; stat: Stat; hint: string }
 function Meter({ label, value, total }: { label: string; value: number; total: number }) {
   const pct = total ? Math.round((value / total) * 100) : 0;
   return (
-    <div className="grid grid-cols-[8.5rem_minmax(0,1fr)_4.5rem] items-center gap-3 text-[13px]">
+    <div className="grid grid-cols-[8.5rem_minmax(0,1fr)_4.5rem] items-center gap-3 text-ui">
       <span className="text-ink-2">{label}</span>
       <span
         className="h-2 overflow-hidden rounded-full bg-accent-soft"
@@ -152,7 +152,7 @@ export default function ReportsPage() {
           type="button"
           disabled={!query}
           onClick={() => query && void download(`/reports?${query}&format=csv`, "blueboard-report.csv")}
-          className="inline-flex h-8 items-center rounded-[var(--radius-control)] border border-control bg-paper-2 px-3 text-[13px] text-ink transition-colors duration-150 hover:border-ink-2 hover:bg-paper-3 disabled:pointer-events-none disabled:opacity-50"
+          className="inline-flex h-9 items-center rounded-[var(--radius-control)] border border-control bg-paper-2 px-3 text-ui text-ink transition-colors duration-150 hover:border-ink-2 hover:bg-paper-3 disabled:pointer-events-none disabled:opacity-50"
         >
           Export CSV
         </button>
@@ -169,7 +169,7 @@ export default function ReportsPage() {
               <Tile label="Approval wait" stat={r.approval} hint="Request to human decision" />
             </section>
 
-            <section aria-label="Coverage" className="grid gap-8 border-b border-rule px-5 py-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+            <section aria-label="Coverage" className="grid gap-8 border-b border-rule px-6 max-sm:px-4 py-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
               <div className="space-y-2.5">
                 <h2 className="text-sm font-semibold">
                   Coverage <span className="label tnum ml-1">{r.incidents.total} incidents</span>
@@ -181,9 +181,9 @@ export default function ReportsPage() {
               <div>
                 <h2 className="text-sm font-semibold">Action outcomes</h2>
                 {r.actions.length === 0 ? (
-                  <p className="mt-2 text-[13px] text-muted">No actions requested in this range.</p>
+                  <p className="mt-2 text-ui text-muted">No actions requested in this range.</p>
                 ) : (
-                  <table className="mt-2 w-full max-w-sm text-[13px]">
+                  <table className="mt-2 w-full max-w-sm text-ui">
                     <tbody>
                       {r.actions.map((a) => (
                         <tr key={a.status} className="border-b border-rule last:border-0">
@@ -198,14 +198,14 @@ export default function ReportsPage() {
             </section>
 
             {r.dry_run && r.dry_run.kinds.length > 0 && (
-              <section aria-label="Dry run" className="overflow-x-auto border-b border-rule px-5 py-5">
+              <section aria-label="Dry run" className="overflow-x-auto border-b border-rule px-6 max-sm:px-4 py-5">
                 <h2 className="text-sm font-semibold">
                   Dry run <span className="label tnum ml-1">{r.dry_run.would_have_run} would have run</span>
                 </h2>
                 <p className="mt-1 text-xs text-muted">
                   What the board would have done in this range with BROKER_EXECUTE on. Evidence for the week of dry run before going live.
                 </p>
-                <table className="mt-2 w-full min-w-[36rem] max-w-3xl text-[13px]">
+                <table className="mt-2 w-full min-w-[36rem] max-w-3xl text-ui">
                   <caption className="sr-only">Dry-run outcomes by action</caption>
                   <thead className="label">
                     <tr className="border-b border-rule">
@@ -239,11 +239,11 @@ export default function ReportsPage() {
               {rows.length === 0 ? (
                 <Empty title="No incidents in this range" />
               ) : (
-                <table className="w-full min-w-[46rem] text-left text-[13px]">
+                <table className="w-full min-w-[46rem] text-left text-ui">
                   <caption className="sr-only">Response times per incident</caption>
                   <thead className="label sticky top-0 z-10 bg-paper">
                     <tr className="border-b border-rule">
-                      <th className="px-5 py-2 font-normal">Incident</th>
+                      <th className="px-6 max-sm:px-4 py-2 font-normal">Incident</th>
                       <th className="py-2 pr-4 font-normal">Severity</th>
                       {th("first_seen_at", "First seen", false)}
                       {th("enrichment_s", "Enrichment")}
@@ -255,7 +255,7 @@ export default function ReportsPage() {
                   <tbody className="tnum">
                     {rows.map((x) => (
                       <tr key={x.id} className="border-b border-rule hover:bg-paper-2/60">
-                        <td className="w-[38%] max-w-0 px-5 py-2">
+                        <td className="w-[38%] max-w-0 px-6 max-sm:px-4 py-2">
                           <Link to={`/incidents/${x.id}`} className="block truncate text-ink hover:text-accent">
                             <span className="label mr-2 text-ink-2">{x.graph_id}</span>
                             {x.display_name}
@@ -270,7 +270,7 @@ export default function ReportsPage() {
                         <td className="py-2 pr-4 text-right text-ink-2">{fmtDuration(x.enrichment_s)}</td>
                         <td className="py-2 pr-4 text-right text-ink-2">{fmtDuration(x.verdict_s)}</td>
                         <td className="py-2 pr-4 text-right text-ink-2">{fmtDuration(x.containment_s)}</td>
-                        <td className="py-2 pr-5 text-right text-muted">{x.messages}</td>
+                        <td className="py-2 pr-6 max-sm:pr-4 text-right text-muted">{x.messages}</td>
                       </tr>
                     ))}
                   </tbody>

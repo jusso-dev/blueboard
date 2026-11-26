@@ -82,7 +82,7 @@ export default function IncidentPage() {
             href={inc.web_url}
             target="_blank"
             rel="noreferrer noopener"
-            className="whitespace-nowrap text-[13px] text-accent underline-offset-4 hover:underline"
+            className="whitespace-nowrap text-ui text-accent underline-offset-4 hover:underline"
           >
             Open in Defender ↗
           </a>

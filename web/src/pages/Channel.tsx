@@ -19,11 +19,11 @@ export default function ChannelPage() {
   );
 }
 
-/** "# name" with the topic inline, truncated (full text in the tooltip). */
+/** Shared header rhythm; long channel names and topics wrap within the viewport. */
 function ChannelHeader({ name, topic }: { name: string; topic?: string }) {
   return (
-    <header className="flex h-12 shrink-0 items-center gap-3 border-b border-rule px-5 max-sm:px-3">
-      <h1 className="flex shrink-0 items-baseline gap-1 text-lg font-semibold tracking-tight text-ink">
+    <header className="flex min-h-14 shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-rule px-6 py-3 max-sm:px-4">
+      <h1 className="flex min-w-0 items-baseline gap-1 text-title font-semibold tracking-tight text-ink">
         <span aria-hidden className="font-normal text-faint">
           #
         </span>
@@ -31,7 +31,7 @@ function ChannelHeader({ name, topic }: { name: string; topic?: string }) {
         {name}
       </h1>
       {topic && (
-        <p title={topic} className="min-w-0 truncate text-[13px] text-muted">
+        <p title={topic} className="min-w-0 flex-1 basis-48 text-ui text-muted [overflow-wrap:anywhere]">
           <span className="sr-only">Topic: </span>
           {topic}
         </p>

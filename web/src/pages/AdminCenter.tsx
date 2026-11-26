@@ -9,18 +9,18 @@ type Participant = { kind: string; enabled: boolean; roles: string[]; last_seen_
 
 type Tone = "good" | "warning" | "critical" | "neutral";
 
-function Tile({ to, title, summary, status, tone, detail }: { to: string; title: string; summary: string; status?: string; tone?: Tone; detail?: string }) {
+function AdminRow({ to, title, summary, status, tone, detail }: { to: string; title: string; summary: string; status?: string; tone?: Tone; detail?: string }) {
   return (
     <Link
       to={to}
-      className="group flex min-h-32 flex-col rounded-[var(--radius-control)] border border-rule bg-paper px-4 py-3 transition-colors duration-150 hover:border-control hover:bg-paper-2 focus-visible:border-accent focus-visible:outline-none"
+      className="group grid grid-cols-[minmax(0,1fr)_auto] gap-x-6 gap-y-1 border-b border-rule px-6 py-4 transition-colors duration-150 hover:bg-paper-2 focus-visible:outline-offset-[-2px] max-sm:grid-cols-1 max-sm:px-4"
     >
-      <div className="flex items-start justify-between gap-2">
-        <h2 className="text-sm font-semibold group-hover:text-accent">{title}</h2>
-        {status && <Tag tone={tone ?? "neutral"}>{status}</Tag>}
+      <div className="contents">
+        <h2 className="text-base font-semibold group-hover:text-accent">{title}</h2>
+        {status && <span className="col-start-2 row-span-3 row-start-1 self-center max-sm:col-start-1 max-sm:row-span-1 max-sm:row-start-auto max-sm:mt-2"><Tag tone={tone ?? "neutral"}>{status}</Tag></span>}
       </div>
-      <p className="mt-1 text-[13px] text-muted">{summary}</p>
-      {detail && <p className="mt-auto pt-2 text-xs text-ink-2">{detail}</p>}
+      <p className="col-start-1 max-w-3xl text-ui text-muted">{summary}</p>
+      {detail && <p className="col-start-1 text-meta text-ink-2">{detail}</p>}
     </Link>
   );
 }
@@ -29,7 +29,7 @@ const DAY = 86_400_000;
 
 /**
  * Admin centre (Board.Admin): one place for running the board, in the shape of the Microsoft 365 / Entra admin
- * centres. Each tile shows its live state and links to the page that changes it.
+ * centres. Each row shows its live state and links to the page that changes it.
  */
 export default function AdminCenterPage() {
   const me = useMe();
@@ -59,16 +59,16 @@ export default function AdminCenterPage() {
   return (
     <>
       <PageHeader title="Admin centre" sub="Run, secure and evidence the board. Every change here is in the audit log." />
-      <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
-        <div className="grid grid-cols-3 gap-3 max-lg:grid-cols-2 max-sm:grid-cols-1">
-          <Tile
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <div>
+          <AdminRow
             to="/setup"
             title="Setup and readiness"
             summary="Health checks and the go-live stages: deployed, connected, governed, live."
             status={setup ? (failed ? `${failed} failed` : warned ? `${warned} to review` : "All OK") : undefined}
             tone={failed ? "critical" : warned ? "warning" : "good"}
           />
-          <Tile
+          <AdminRow
             to="/admin/posture"
             title="Posture"
             summary="Configured enterprise controls, their evidence limits and the next step for each gap."
@@ -76,7 +76,7 @@ export default function AdminCenterPage() {
             tone={gaps ? "warning" : "good"}
             detail={posture ? (gaps ? `${gaps} control(s) need review` : "Scored settings met; external checks remain") : undefined}
           />
-          <Tile
+          <AdminRow
             to="/admin/participants"
             title="Access review"
             summary="People and agents, their roles from Entra, last activity, and disable with a reason."
@@ -84,18 +84,18 @@ export default function AdminCenterPage() {
             tone={approvers < 2 ? "critical" : stale ? "warning" : "good"}
             detail={people ? `${enabled.length - agents} people · ${agents} agents · ${approvers} approvers` : undefined}
           />
-          <Tile to="/admin/audit" title="Audit log" summary="Every approval, action, role change, export and admin change. Filter and export CSV." detail="Append-only for the application role" />
-          <Tile to="/policy" title="Action policy" summary="Protected assets, approval rules and the simulator, before anything runs." />
-          <Tile
+          <AdminRow to="/admin/audit" title="Audit log" summary="Every approval, action, role change, export and admin change. Filter and export CSV." detail="Append-only for the application role" />
+          <AdminRow to="/policy" title="Action policy" summary="Protected assets, approval rules and the simulator, before anything runs." />
+          <AdminRow
             to="/admin/participants"
             title="Broker"
             summary="Pause every brokered write at once, or see why it is in dry run."
             status={status ? (status.broker === "paused" ? "Paused" : status.broker === "dry_run" ? "Dry run" : "Live") : undefined}
             tone={status?.broker === "paused" ? "critical" : status?.broker === "dry_run" ? "warning" : "good"}
           />
-          <Tile to="/settings/notifications" title="Notifications" summary="Who hears about approvals, questions and results, on Teams, email, webhook or ntfy." />
-          <Tile to="/reports" title="Reports" summary="Response times, coverage and dry-run evidence for the go-live decision. CSV exports are audited." />
-          <Tile
+          <AdminRow to="/settings/notifications" title="Notifications" summary="Who hears about approvals, questions and results, on Teams, email, webhook or ntfy." />
+          <AdminRow to="/reports" title="Reports" summary="Response times, coverage and dry-run evidence for the go-live decision. CSV exports are audited." />
+          <AdminRow
             to="/admin/posture"
             title="Session and lifecycle"
             summary="Idle sign-out, inactive-account disable and data retention."

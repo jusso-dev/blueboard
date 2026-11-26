@@ -31,21 +31,21 @@ export default function PolicyPage() {
         {p && (
           <>
             <section aria-label="Actions" className="overflow-x-auto border-b border-rule">
-              <table className="w-full min-w-[44rem] text-left text-[13px]">
+              <table className="w-full min-w-[44rem] text-left text-ui">
                 <caption className="sr-only">How policy treats each action</caption>
                 <thead className="label">
                   <tr className="border-b border-rule">
-                    <th className="px-5 py-2 font-normal">Action</th>
+                    <th className="px-6 max-sm:px-4 py-2 font-normal">Action</th>
                     <th className="py-2 pr-4 font-normal">Target</th>
                     <th className="py-2 pr-4 font-normal">Mode</th>
                     <th className="py-2 pr-4 font-normal">What happens</th>
-                    <th className="py-2 pr-5 text-right font-normal">Expires after</th>
+                    <th className="py-2 pr-6 max-sm:pr-4 text-right font-normal">Expires after</th>
                   </tr>
                 </thead>
                 <tbody>
                   {p.actions.map((a) => (
                     <tr key={a.kind} className="border-b border-rule last:border-0">
-                      <td className="px-5 py-2">
+                      <td className="px-6 max-sm:px-4 py-2">
                         <span className="text-ink">{a.title}</span>
                         <span className="label ml-2">{a.kind}</span>
                         {a.destructive && <span className="label ml-2 text-ink-2">destructive</span>}
@@ -58,32 +58,32 @@ export default function PolicyPage() {
                         {a.words}
                         {a.confirm_target && <span className="text-muted">. The approver types the target to confirm</span>}
                       </td>
-                      <td className="label tnum py-2 pr-5 text-right">{a.mode === "auto" || a.mode === "disabled" ? "—" : `${a.expiry_hours} h`}</td>
+                      <td className="label tnum py-2 pr-6 max-sm:pr-4 text-right">{a.mode === "auto" || a.mode === "disabled" ? "—" : `${a.expiry_hours} h`}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </section>
 
-            <section aria-label="Protected and limits" className="grid gap-8 border-b border-rule px-5 py-5 lg:grid-cols-2">
+            <section aria-label="Protected and limits" className="grid gap-8 border-b border-rule px-6 max-sm:px-4 py-5 lg:grid-cols-2">
               <div>
                 <h2 className="text-sm font-semibold">Protected</h2>
                 <p className="mt-1 text-xs text-muted">Requests aimed at these are always rejected, by any name the evidence gives them.</p>
-                <dl className="mt-2 space-y-1.5 text-[13px]">
+                <dl className="mt-2 space-y-1.5 text-ui">
                   <Protected label="Users" n={p.protected.users} values={p.lists?.users} />
                   <Protected label="Devices" n={p.protected.devices} values={p.lists?.devices} />
                   <Protected label="Indicators" n={p.protected.indicators} values={p.lists?.indicators} />
                   <Protected label="Apps" n={p.protected.apps ?? 0} values={p.lists?.apps} />
                 </dl>
                 {!isAdmin && <p className="label mt-2">Board admins can see the values.</p>}
-                <p className="mt-3 text-[13px] text-ink-2">
+                <p className="mt-3 text-ui text-ink-2">
                   Targets outside the incident evidence are {p.require_target_in_incident ? "flagged for the approver and never run on their own" : <strong className="text-warning">not checked</strong>}.
                 </p>
               </div>
               <div>
                 <h2 className="text-sm font-semibold">Rate limits</h2>
                 <p className="mt-1 text-xs text-muted">Per principal. At most {p.pending_actions_per_incident} actions can wait for approval on one incident.</p>
-                <table className="mt-2 w-full max-w-md text-[13px]">
+                <table className="mt-2 w-full max-w-md text-ui">
                   <thead className="label">
                     <tr className="border-b border-rule">
                       <th className="py-1.5 text-left font-normal">Bucket</th>
@@ -105,7 +105,7 @@ export default function PolicyPage() {
             </section>
 
             {p.warnings.length > 0 && (
-              <section aria-label="Warnings" className="border-b border-rule px-5 py-4">
+              <section aria-label="Warnings" className="border-b border-rule px-6 max-sm:px-4 py-4">
                 <h2 className="text-sm font-semibold">Warnings</h2>
                 <ul className="mt-2 space-y-0.5">
                   {p.warnings.map((w, i) => (
@@ -119,7 +119,7 @@ export default function PolicyPage() {
             )}
 
             <Simulator />
-            <p className="label px-5 py-3">policy version {p.version}</p>
+            <p className="label px-6 max-sm:px-4 py-3">policy version {p.version}</p>
           </>
         )}
       </div>
@@ -185,7 +185,7 @@ function Simulator() {
   };
 
   return (
-    <section aria-labelledby={`${id}-h`} className="border-b border-rule px-5 py-5">
+    <section aria-labelledby={`${id}-h`} className="border-b border-rule px-6 max-sm:px-4 py-5">
       <h2 id={`${id}-h`} className="text-sm font-semibold">
         What would happen if…
       </h2>
@@ -234,7 +234,7 @@ function Simulator() {
       </form>
       {result && (
         <div className="mt-3 max-w-2xl" role="status">
-          <p className={cx("text-[13px] font-medium", result.outcome === "reject" ? "text-critical" : result.outcome === "auto" ? "text-good" : "text-warning")}>{result.summary}</p>
+          <p className={cx("text-ui font-medium", result.outcome === "reject" ? "text-critical" : result.outcome === "auto" ? "text-good" : "text-warning")}>{result.summary}</p>
           <p className="mt-0.5 text-xs text-muted">{result.describe}</p>
           {result.notes.length > 0 && result.outcome !== "reject" && (
             <ul className="mt-1.5 space-y-0.5">

@@ -77,7 +77,7 @@ export default function IntelKeyPage() {
         sub={data ? <>Checked <Time iso={data.checked_at} />. Outside text is shown as quoted data.</> : " "}
       >
         {posted ? (
-          <Link to="/?channel=intel" className="text-[13px] text-accent underline-offset-4 hover:underline">
+          <Link to="/?channel=intel" className="text-ui text-accent underline-offset-4 hover:underline">
             Posted to #intel
           </Link>
         ) : (
@@ -89,11 +89,11 @@ export default function IntelKeyPage() {
       </PageHeader>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
-        {!data && <p className="px-5 py-4 text-[13px] text-muted">Checking every enabled source…</p>}
+        {!data && <p className="px-6 max-sm:px-4 py-4 text-ui text-muted">Checking every enabled source…</p>}
         {data && (
           <>
             {(data.agree.length > 0 || data.differ.length > 0) && (
-              <section aria-label="Agree and differ" className="border-b border-rule px-5 py-3 text-[13px]">
+              <section aria-label="Agree and differ" className="border-b border-rule px-6 max-sm:px-4 py-3 text-ui">
                 {data.agree.map((a) => (
                   <p key={a}>
                     <span className="label mr-2 text-good">agree</span>
@@ -113,14 +113,14 @@ export default function IntelKeyPage() {
                 <SourceCard key={c.source} c={c} />
               ))}
             </section>
-            <section aria-labelledby="rel-h" className="px-5 py-4">
+            <section aria-labelledby="rel-h" className="px-6 max-sm:px-4 py-4">
               <h2 id="rel-h" className="label pb-2">
                 On the board
               </h2>
-              {data.incidents.length === 0 && data.messages.length === 0 && <p className="text-[13px] text-muted">No incident or message mentions {data.key}.</p>}
+              {data.incidents.length === 0 && data.messages.length === 0 && <p className="text-ui text-muted">No incident or message mentions {data.key}.</p>}
               <ul className="space-y-1 pb-2">
                 {data.incidents.map((i) => (
-                  <li key={i.id} className="flex items-center gap-2 text-[13px]">
+                  <li key={i.id} className="flex items-center gap-2 text-ui">
                     <Severity value={i.severity} />
                     <Link to={`/incidents/${i.id}`} className="label tnum text-ink-2 hover:text-accent">
                       INC {i.graph_id}
@@ -312,9 +312,9 @@ function PwnBrief({ slug }: { slug?: string }) {
 function SourceCard({ c }: { c: Card }) {
   const s = STATUS[c.status];
   return (
-    <article className="border-t border-rule px-5 py-3 first:border-t-0">
+    <article className="border-t border-rule px-6 max-sm:px-4 py-3 first:border-t-0">
       <header className="flex min-w-0 flex-wrap items-center gap-2">
-        <h3 className="text-[13px] font-medium text-ink">{c.name}</h3>
+        <h3 className="text-ui font-medium text-ink">{c.name}</h3>
         <Tag tone={s.tone}>{s.label}</Tag>
         {c.severity && c.status === "found" && <Tag>{c.severity}</Tag>}
         <span className="ml-auto flex shrink-0 items-center gap-3">
@@ -330,7 +330,7 @@ function SourceCard({ c }: { c: Card }) {
           )}
         </span>
       </header>
-      {c.title && c.status !== "not_checked" && <p className="mt-1 text-[13px] text-ink-2">{c.title}</p>}
+      {c.title && c.status !== "not_checked" && <p className="mt-1 text-ui text-ink-2">{c.title}</p>}
       {c.status === "not_checked" && <p className="mt-1 text-xs text-muted">Not checked: {c.reason}. This is not the same as "no data".</p>}
       {c.status === "found" && (
         <dl className="mt-1.5 text-xs">

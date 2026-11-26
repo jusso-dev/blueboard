@@ -111,14 +111,14 @@ function ThreadSummary({ s, onOpen }: { s: ReplySummary; onOpen: () => void }) {
           ))}
         </span>
       )}
-      <span className="shrink-0 text-[13px] font-semibold text-accent">{n}</span>
+      <span className="shrink-0 text-ui font-semibold text-accent">{n}</span>
       {last && (
-        <span className="min-w-0 truncate text-[13px] text-muted">
+        <span className="min-w-0 truncate text-ui text-muted">
           <span className="group-hover/sum:hidden group-focus-visible/sum:hidden">Last reply {last}</span>
           <span className="hidden group-hover/sum:inline group-focus-visible/sum:inline">View thread</span>
         </span>
       )}
-      {!last && <span className="hidden text-[13px] text-muted group-hover/sum:inline group-focus-visible/sum:inline">View thread</span>}
+      {!last && <span className="hidden text-ui text-muted group-hover/sum:inline group-focus-visible/sum:inline">View thread</span>}
       <IconChevronRight className="ml-auto shrink-0 text-muted opacity-0 transition-opacity duration-150 group-hover/sum:opacity-100 group-focus-visible/sum:opacity-100" />
     </button>
   );
@@ -322,9 +322,9 @@ export function MessageRow({
       tabIndex={navProps?.tabIndex ?? -1}
       aria-label={summary}
       className={cx(
-        "group relative grid grid-cols-[36px_minmax(0,1fr)] gap-x-2 px-5 transition-colors duration-150 max-sm:px-3",
+        "group relative grid grid-cols-[36px_minmax(0,1fr)] gap-x-3 px-6 transition-colors duration-150 max-sm:px-4",
         "hover:bg-paper-2 focus-within:bg-paper-2 focus-visible:outline-offset-[-2px]",
-        grouped ? "py-0.5" : "pb-1 pt-2",
+        grouped ? "py-0.5" : "pb-2 pt-3",
         (selected || mentionsMe) && "bg-paper-2",
         mentionsMe && "before:absolute before:inset-y-0 before:left-0 before:w-0.5 before:bg-accent",
       )}
@@ -335,7 +335,7 @@ export function MessageRow({
             href={permalink(m)}
             title={fullTime(m.created_at)}
             tabIndex={-1}
-            className="tnum block pt-[3px] text-right font-mono text-[10.5px] leading-4 text-faint opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-has-[:focus-visible]:opacity-100 max-sm:hidden"
+            className="tnum block pt-[3px] text-right text-meta leading-4 text-faint opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-has-[:focus-visible]:opacity-100 max-sm:hidden"
           >
             <time dateTime={m.created_at}>{gutterTime(m.created_at)}</time>
           </a>
@@ -397,7 +397,7 @@ export function MessageRow({
             aria-expanded={expanded}
             aria-controls={`b-${m.id}`}
             onClick={() => setExpanded((x) => !x)}
-            className="mt-0.5 text-[13px] font-medium text-accent hover:underline"
+            className="mt-0.5 text-ui font-medium text-accent hover:underline"
           >
             {expanded ? "Show less" : "Show more"}
           </button>
@@ -445,7 +445,7 @@ export function MessageRow({
         {claimable && (
           <footer className="mt-1 flex min-h-6 flex-wrap items-center gap-1">
             {m.claim_state === "open" && (
-              <Button size="sm" variant="secondary" className="h-6 px-2" loading={busy} onClick={() => claim("claim")} title="Take this: others see you're on it">
+              <Button size="sm" variant="secondary" className="px-2" loading={busy} onClick={() => claim("claim")} title="Take this: others see you're on it">
                 Claim
               </Button>
             )}
@@ -454,10 +454,10 @@ export function MessageRow({
                 <span className="label">claimed by @{m.claimed_by}</span>
                 {me && m.claimed_by === me.handle && (
                   <>
-                    <Button size="sm" variant="secondary" className="h-6 px-2" disabled={busy} onClick={() => claim("done")}>
+                    <Button size="sm" variant="secondary" className="px-2" disabled={busy} onClick={() => claim("done")}>
                       Mark done
                     </Button>
-                    <Button size="sm" variant="ghost" className="h-6 px-2" disabled={busy} onClick={() => claim("release")}>
+                    <Button size="sm" variant="ghost" className="px-2" disabled={busy} onClick={() => claim("release")}>
                       Release
                     </Button>
                   </>
@@ -515,7 +515,7 @@ export function MessageRow({
                 aria-expanded={!!picker.anchor}
                 onClick={(e) => picker.toggle(e.currentTarget)}
                 title="Find another reaction"
-                className="inline-flex h-7 items-center gap-1.5 rounded-[4px] px-2 text-xs font-medium text-ink-2 transition-colors duration-150 hover:bg-paper-2 hover:text-ink"
+                className="inline-flex h-8 items-center gap-1.5 rounded-[4px] px-2 text-xs font-medium text-ink-2 transition-colors duration-150 hover:bg-paper-2 hover:text-ink"
               >
                 <IconSmilePlus />
                 React
@@ -527,7 +527,7 @@ export function MessageRow({
             <button
               type="button"
               onClick={() => onOpenThread(rootId)}
-              className="inline-flex h-7 items-center gap-1.5 rounded-[4px] px-2 text-xs font-medium text-ink-2 transition-colors duration-150 hover:bg-paper-2 hover:text-ink"
+              className="inline-flex h-8 items-center gap-1.5 rounded-[4px] px-2 text-xs font-medium text-ink-2 transition-colors duration-150 hover:bg-paper-2 hover:text-ink"
             >
               <IconReply />
               {m.parent_id ? "Open thread" : "Reply"}

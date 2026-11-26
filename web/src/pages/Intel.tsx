@@ -75,9 +75,9 @@ export default function IntelPage() {
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         {data && !data.any_enabled && (
-          <section className="border-b border-rule px-5 py-4">
+          <section className="border-b border-rule px-6 max-sm:px-4 py-4">
             <p className="text-sm font-medium text-ink-2">Every threat intel source is off, so nothing is fetched.</p>
-            <p className="mt-1 text-[13px] text-muted">
+            <p className="mt-1 text-ui text-muted">
               Turn sources on with these Function App settings, then each card below changes from "off" to its status. See docs/THREAT_INTEL.md.
             </p>
             <ul className="mt-2 flex flex-wrap gap-1.5">
@@ -92,20 +92,20 @@ export default function IntelPage() {
           </section>
         )}
         {data?.fixture_mode && (
-          <p className="border-b border-rule px-5 py-2 text-xs text-warning">Demo mode: every source is served from recorded fixtures (TI_FIXTURES_DIR).</p>
+          <p className="border-b border-rule px-6 max-sm:px-4 py-2 text-xs text-warning">Demo mode: every source is served from recorded fixtures (TI_FIXTURES_DIR).</p>
         )}
         {stale && (
-          <p role="status" className="border-b border-rule px-5 py-2 text-xs text-warning">
+          <p role="status" className="border-b border-rule px-6 max-sm:px-4 py-2 text-xs text-warning">
             Warning: {stale.freshness?.freshness}. pwn.watch can go quiet for days; check the site before relying on it.
           </p>
         )}
 
         <section aria-labelledby="recent-h" className="border-b border-rule">
-          <h2 id="recent-h" className="label px-5 pb-1 pt-4">
+          <h2 id="recent-h" className="label px-6 max-sm:px-4 pb-1 pt-4">
             Newest on your watchlists
           </h2>
           {data && data.recent.length === 0 && (
-            <p className="px-5 pb-4 text-[13px] text-muted">
+            <p className="px-6 max-sm:px-4 pb-4 text-ui text-muted">
               {data.sources.some((s) => (s.id === "pwn.watch" || s.id === "cisa-kev") && s.enabled)
                 ? "Nothing on your watchlists yet."
                 : "pwn.watch and CISA KEV are off, so there is nothing to list."}
@@ -113,7 +113,7 @@ export default function IntelPage() {
           )}
           <ul>
             {data?.recent.map((r) => (
-              <li key={`${r.source}:${r.key}`} className="border-t border-rule px-5 py-2.5 first:border-t-0">
+              <li key={`${r.source}:${r.key}`} className="border-t border-rule px-6 max-sm:px-4 py-2.5 first:border-t-0">
                 <div className="flex min-w-0 items-center gap-2">
                   <Tag>{r.source}</Tag>
                   {r.severity && <Tag tone={r.severity === "critical" || r.severity === "known exploited" ? "critical" : r.severity === "high" ? "warning" : "neutral"}>{r.severity}</Tag>}
@@ -122,7 +122,7 @@ export default function IntelPage() {
                     <Time iso={r.updated_at ?? r.published_at ?? r.retrieved_at} />
                   </span>
                 </div>
-                <p className="mt-1 text-[13px] text-ink">
+                <p className="mt-1 text-ui text-ink">
                   {r.url ? (
                     <a href={r.url} target="_blank" rel="noreferrer noopener" className="hover:text-accent">
                       {r.title ?? r.key}
@@ -154,7 +154,7 @@ export default function IntelPage() {
 
 function SourcesTable({ sources }: { sources: SourceRow[] }) {
   return (
-    <section aria-labelledby="sources-h" className="border-b border-rule px-5 py-4">
+    <section aria-labelledby="sources-h" className="border-b border-rule px-6 max-sm:px-4 py-4">
       <h2 id="sources-h" className="label pb-2">
         Sources
       </h2>
@@ -222,7 +222,7 @@ function WatchList({ watches, canEdit }: { watches: WatchRow[]; canEdit: boolean
     ["From Defender inventory", watches.filter((w) => w.origin === "inventory")],
   ];
   return (
-    <section aria-labelledby="watch-h" className="px-5 py-4">
+    <section aria-labelledby="watch-h" className="px-6 max-sm:px-4 py-4">
       <h2 id="watch-h" className="label">
         Watchlists
       </h2>

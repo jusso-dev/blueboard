@@ -178,7 +178,7 @@ export default function NotificationsPage() {
             )}
             {tab === "defaults" && resp.can_edit_defaults && (
               <div role="tabpanel" id="panel-defaults" aria-labelledby="tab-defaults">
-                <p className="mx-5 mt-4 max-w-[52rem] text-[13px] text-muted">
+                <p className="mx-6 max-sm:mx-4 mt-4 max-w-[52rem] text-ui text-muted">
                   What everyone gets unless they change it. People who changed a setting keep their own choice.
                 </p>
                 <SettingsForm
@@ -224,7 +224,7 @@ function Tabs<T extends string>({ tabs, value, onChange }: { tabs: { id: T; labe
     refs.current[to]?.focus();
   };
   return (
-    <div role="tablist" aria-label="Notification settings" className="flex gap-1 overflow-x-auto border-b border-rule px-5">
+    <div role="tablist" aria-label="Notification settings" className="flex gap-1 overflow-x-auto border-b border-rule px-6 max-sm:px-4">
       {tabs.map((t, i) => (
         <button
           key={t.id}
@@ -240,7 +240,7 @@ function Tabs<T extends string>({ tabs, value, onChange }: { tabs: { id: T; labe
           onClick={() => onChange(t.id)}
           onKeyDown={(e) => onKey(e, i)}
           className={cx(
-            "-mb-px whitespace-nowrap border-b-2 px-2 py-2.5 text-[13px] transition-colors duration-150 focus-visible:outline-offset-[-2px]",
+            "-mb-px whitespace-nowrap border-b-2 px-2 py-2.5 text-ui transition-colors duration-150 focus-visible:outline-offset-[-2px]",
             value === t.id ? "border-accent text-ink" : "border-transparent text-muted hover:text-ink",
           )}
         >
@@ -279,7 +279,7 @@ function SettingsForm({ mode, values, field, set, reset, sinks }: FormProps) {
   const tz = values.quiet_hours?.time_zone || browserTimeZone();
 
   return (
-    <div className="max-w-[52rem] px-5 pb-2">
+    <div className="max-w-[52rem] px-6 max-sm:px-4 pb-2">
       <div className="flex flex-wrap items-start gap-x-4 gap-y-1 border-b border-rule py-4">
         <div className="min-w-0 flex-1">
           <Switch
@@ -464,7 +464,7 @@ function ClassificationPicker({ value, disabled, set, ...p }: RowBase & { value:
                 <label
                   key={c.value}
                   className={cx(
-                    "inline-flex h-7 cursor-pointer items-center gap-1.5 rounded-[var(--radius-control)] border px-2 text-xs transition-colors duration-150 has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-focus",
+                    "inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-[var(--radius-control)] border px-2 text-xs transition-colors duration-150 has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-focus",
                     on ? "border-accent bg-accent-soft text-ink" : "border-control bg-paper-2 text-ink-2 hover:border-ink-2",
                     disabled && "cursor-not-allowed opacity-50",
                   )}
@@ -489,7 +489,7 @@ function SeverityRow({ value, disabled, set, ...p }: RowBase & { value: string; 
     <div className="border-b border-rule pb-2 pl-6">
       <Row {...p} path="min_incident_severity" name="incident severity threshold">
         <div className="flex flex-wrap items-center gap-2">
-          <label htmlFor={id} className="text-[13px] text-ink-2">
+          <label htmlFor={id} className="text-ui text-ink-2">
             For findings and new incidents, only at or above
           </label>
           <Select id={id} value={value} disabled={disabled} onChange={(e) => set("min_incident_severity", e.target.value)}>
@@ -558,7 +558,7 @@ function Check({ id, checked, onChange, label, disabled, small, describedBy }: {
         onChange={(e) => onChange(e.target.checked)}
         className="mt-0.5 size-4 shrink-0 accent-[var(--color-accent)] disabled:cursor-not-allowed"
       />
-      <label htmlFor={id} className={cx(small ? "text-[13px] text-ink-2" : "text-[13px] text-ink", disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer")}>
+      <label htmlFor={id} className={cx(small ? "text-ui text-ink-2" : "text-ui text-ink", disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer")}>
         {label}
       </label>
     </span>
@@ -611,7 +611,7 @@ function SendTest() {
     }
   };
   return (
-    <section aria-labelledby={`${id}-h`} className="max-w-[52rem] px-5 pb-6">
+    <section aria-labelledby={`${id}-h`} className="max-w-[52rem] px-6 max-sm:px-4 pb-6">
       <div className="border-t border-rule pt-4">
       <h2 id={`${id}-h`} className="text-sm font-semibold">
         Send a test
@@ -671,27 +671,27 @@ function RecentDeliveries() {
   const { data, error } = useLiveQuery<Delivery[]>("/notifications/recent?limit=50");
   return (
     <section aria-label="Recent deliveries">
-      <p className="px-5 pt-4 text-xs text-muted">The last 50 notices the board tried to send, newest first. Updates every few seconds.</p>
+      <p className="px-6 max-sm:px-4 pt-4 text-xs text-muted">The last 50 notices the board tried to send, newest first. Updates every few seconds.</p>
       {error && <Empty title="Couldn't load recent deliveries">{error.message}</Empty>}
       {data?.length === 0 && <Empty title="Nothing sent yet">Notices appear here once an event matches someone's settings.</Empty>}
       {data && data.length > 0 && (
         <div className="mt-2 overflow-x-auto">
-          <table className="w-full min-w-[48rem] text-left text-[13px]">
+          <table className="w-full min-w-[48rem] text-left text-ui">
             <caption className="sr-only">Recent notification deliveries</caption>
             <thead className="label">
               <tr className="border-b border-rule">
-                <th className="px-5 py-2 font-normal">When</th>
+                <th className="px-6 max-sm:px-4 py-2 font-normal">When</th>
                 <th className="py-2 pr-4 font-normal">Event</th>
                 <th className="py-2 pr-4 font-normal">Channel</th>
                 <th className="py-2 pr-4 font-normal">Recipient</th>
                 <th className="py-2 pr-4 font-normal">Status</th>
-                <th className="py-2 pr-5 font-normal">Detail</th>
+                <th className="py-2 pr-6 max-sm:pr-4 font-normal">Detail</th>
               </tr>
             </thead>
             <tbody>
               {data.map((d, i) => (
                 <tr key={`${d.created_at}-${d.sink}-${i}`} className="border-b border-rule align-top last:border-0">
-                  <td className="px-5 py-2">
+                  <td className="px-6 max-sm:px-4 py-2">
                     <Time iso={d.created_at} />
                   </td>
                   <td className="py-2 pr-4 text-ink-2">{EVENT_LABELS[d.event as EventKey] ?? d.event}</td>
@@ -700,7 +700,7 @@ function RecentDeliveries() {
                   <td className="py-2 pr-4">
                     <Tag tone={STATUS_TONE[d.status] ?? "neutral"}>{d.status}</Tag>
                   </td>
-                  <td className="max-w-80 py-2 pr-5 text-xs">
+                  <td className="max-w-80 py-2 pr-6 max-sm:pr-4 text-xs">
                     {d.error && <p className="text-critical [overflow-wrap:anywhere]">{d.error}</p>}
                     {(d.message_id || d.action_id) && (
                       <p className="label [overflow-wrap:anywhere]">

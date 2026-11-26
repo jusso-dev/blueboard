@@ -100,7 +100,7 @@ export default function AuditLogPage() {
           Export CSV
         </Button>
       </PageHeader>
-      <form className="flex shrink-0 flex-wrap items-end gap-2 border-b border-rule px-5 py-2" onSubmit={(e) => e.preventDefault()} aria-label="Filters">
+      <form className="flex shrink-0 flex-wrap items-end gap-2 border-b border-rule px-6 max-sm:px-4 py-2" onSubmit={(e) => e.preventDefault()} aria-label="Filters">
         <label className="grid gap-0.5">
           <span className="label">Event</span>
           <Select value={params.get("event") ?? ""} onChange={(e) => set("event", e.target.value)} aria-label="Event family">
@@ -141,20 +141,20 @@ export default function AuditLogPage() {
         {data && data.rows.length === 0 && <Empty title="No audit rows match these filters" />}
         {data && data.rows.length > 0 && (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[60rem] text-left text-[13px]">
+            <table className="w-full min-w-[60rem] text-left text-ui">
               <thead className="label sticky top-0 bg-paper">
                 <tr className="border-b border-rule">
-                  <th className="px-5 py-2 font-normal">When</th>
+                  <th className="px-6 max-sm:px-4 py-2 font-normal">When</th>
                   <th className="py-2 pr-4 font-normal">Actor</th>
                   <th className="py-2 pr-4 font-normal">Event</th>
                   <th className="py-2 pr-4 font-normal">Subject</th>
-                  <th className="py-2 pr-5 font-normal">Detail</th>
+                  <th className="py-2 pr-6 max-sm:pr-4 font-normal">Detail</th>
                 </tr>
               </thead>
               <tbody>
                 {data.rows.map((r) => (
                   <tr key={r.id} className="border-b border-rule align-top">
-                    <td className="whitespace-nowrap px-5 py-2">
+                    <td className="whitespace-nowrap px-6 max-sm:px-4 py-2">
                       <Time iso={r.at} />
                       <span className="label ml-2 font-mono">#{r.id}</span>
                     </td>
@@ -165,7 +165,7 @@ export default function AuditLogPage() {
                       <Tag tone={tone(r.event)}>{r.event}</Tag>
                     </td>
                     <td className="max-w-64 py-2 pr-4 [overflow-wrap:anywhere]">{r.subject}</td>
-                    <td className="py-2 pr-5">
+                    <td className="py-2 pr-6 max-sm:pr-4">
                       <Detail value={r.detail} />
                     </td>
                   </tr>
@@ -175,7 +175,7 @@ export default function AuditLogPage() {
           </div>
         )}
         {(before || data?.next) && (
-          <div className="flex gap-2 px-5 py-3">
+          <div className="flex gap-2 px-6 max-sm:px-4 py-3">
             {before && (
               <Button variant="ghost" onClick={() => setBefore(null)}>
                 Newest

@@ -69,7 +69,7 @@ function BrokerCard() {
     refreshAll();
   };
   return (
-    <section aria-labelledby="broker" className="border-b border-rule px-5 py-4">
+    <section aria-labelledby="broker" className="border-b border-rule px-6 max-sm:px-4 py-4">
       <div className="flex flex-wrap items-center gap-2">
         <h2 id="broker" className="text-sm font-semibold">
           Broker
@@ -81,7 +81,7 @@ function BrokerCard() {
           </span>
         )}
       </div>
-      <p className="mt-1 max-w-2xl text-[13px] text-muted">
+      <p className="mt-1 max-w-2xl text-ui text-muted">
         {pause.paused
           ? `Nothing runs in the tenant. Approvals are still recorded; approved actions are held until an approver chooses Run now after you resume.${pause.reason ? ` Reason: ${pause.reason}` : ""}`
           : "Pausing stops every brokered write on every instance at once, without touching Azure settings. BROKER_EXECUTE=false still turns execution off for good."}
@@ -136,7 +136,7 @@ function ParticipantRow({ p, self }: { p: Participant; self: boolean }) {
   return (
     <>
       <tr className={cx("border-b border-rule align-top", !p.enabled && "text-muted")}>
-        <td className="px-5 py-2">
+        <td className="px-6 max-sm:px-4 py-2">
           <p className="text-ink">@{p.handle}</p>
           <p className="truncate text-xs text-muted">{p.display_name}</p>
         </td>
@@ -150,7 +150,7 @@ function ParticipantRow({ p, self }: { p: Participant; self: boolean }) {
         <td className="py-2 pr-4">
           <Review p={p} />
         </td>
-        <td className="py-2 pr-5">
+        <td className="py-2 pr-6 max-sm:pr-4">
           <div className="flex items-center justify-end gap-2">
             {p.enabled ? <Tag tone="good">enabled</Tag> : <Tag tone="critical">disabled</Tag>}
             {!self && !open && (
@@ -168,7 +168,7 @@ function ParticipantRow({ p, self }: { p: Participant; self: boolean }) {
       </tr>
       {open && (
         <tr className="border-b border-rule">
-          <td colSpan={8} className="px-5 pb-3">
+          <td colSpan={8} className="px-6 max-sm:px-4 pb-3">
             <ReasonForm label={p.handle} verb={p.enabled ? `Disable @${p.handle}` : `Enable @${p.handle}`} danger={p.enabled} onSubmit={toggle} onCancel={() => setOpen(false)} />
           </td>
         </tr>
@@ -204,17 +204,17 @@ export default function ParticipantsPage() {
         {isAdmin && <BrokerCard />}
         {error && <Empty title="Couldn't load participants">{error.message}</Empty>}
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[56rem] text-left text-[13px]">
+          <table className="w-full min-w-[56rem] text-left text-ui">
             <thead className="label sticky top-0 bg-paper">
               <tr className="border-b border-rule">
-                <th className="px-5 py-2 font-normal">Principal</th>
+                <th className="px-6 max-sm:px-4 py-2 font-normal">Principal</th>
                 <th className="py-2 pr-4 font-normal">Kind</th>
                 <th className="py-2 pr-4 font-normal">Roles (last seen)</th>
                 <th className="py-2 pr-4 font-normal">Last seen</th>
                 <th className="py-2 pr-4 text-right font-normal">Posts 24h</th>
                 <th className="py-2 pr-4 text-right font-normal">Actions 24h</th>
                 <th className="py-2 pr-4 font-normal">Review</th>
-                <th className="py-2 pr-5 text-right font-normal">Access</th>
+                <th className="py-2 pr-6 max-sm:pr-4 text-right font-normal">Access</th>
               </tr>
             </thead>
             <tbody>

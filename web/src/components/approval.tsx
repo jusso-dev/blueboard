@@ -63,7 +63,7 @@ export function DecisionForm({ a, canDecide, me, compact = false }: { a: Action;
                 placeholder={`Type ${a.confirm_prompt} to confirm`}
                 autoComplete="off"
                 spellCheck={false}
-                className={cx("min-w-0 flex-1 basis-56 font-mono", compact && "h-7 text-xs")}
+                className={cx("min-w-0 flex-1 basis-56 font-mono", compact && "text-ui")}
               />
             </>
           )}
@@ -115,7 +115,7 @@ export function InlineApproval({ actionId }: { actionId: string }) {
   return (
     <section aria-label={`${actionTitle(a.kind)}: ${open ? "waiting for approval" : a.status.replace("_", " ")}`} className="mt-1.5 max-w-2xl rounded-[var(--radius-control)] border border-rule bg-paper px-3 py-2">
       <header className="flex flex-wrap items-center gap-2">
-        <span className="text-[13px] font-semibold text-ink">{actionTitle(a.kind)}</span>
+        <span className="text-ui font-semibold text-ink">{actionTitle(a.kind)}</span>
         <ActionStatusTag status={a.status} />
         {required > 1 && (
           <span className="label tnum text-ink-2">

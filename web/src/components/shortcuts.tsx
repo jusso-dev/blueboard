@@ -340,7 +340,7 @@ function Palette({ onClose, isAdmin, pageCommands, onHelp }: { onClose: () => vo
         />
       </div>
       <ul id={listId} role="listbox" aria-label="Results" className="max-h-[50vh] overflow-y-auto py-1">
-        {items.length === 0 && <li className="px-4 py-3 text-[13px] text-muted">Nothing matches.</li>}
+        {items.length === 0 && <li className="px-4 py-3 text-ui text-muted">Nothing matches.</li>}
         {items.map((it, n) => {
           const header = it.group !== lastGroup ? it.group : null;
           lastGroup = it.group;
@@ -357,7 +357,7 @@ function Palette({ onClose, isAdmin, pageCommands, onHelp }: { onClose: () => vo
                 aria-selected={n === active}
                 onMouseMove={() => setActive(n)}
                 onClick={() => choose(it)}
-                className={cx("mx-1 flex cursor-pointer items-center gap-2 rounded-[var(--radius-control)] px-3 py-1.5 text-[13px]", n === active ? "bg-paper-3 text-ink" : "text-ink-2")}
+                className={cx("mx-1 flex cursor-pointer items-center gap-2 rounded-[var(--radius-control)] px-3 py-1.5 text-ui", n === active ? "bg-paper-3 text-ink" : "text-ink-2")}
               >
                 <span className="min-w-0 flex-1 truncate">{it.label}</span>
                 {it.hint && <span className="label shrink-0">{it.hint}</span>}
@@ -383,7 +383,7 @@ function HelpDialog({ onClose, singleKeys, setSingleKeys }: { onClose: () => voi
           Close
         </Button>
       </div>
-      <table className="w-full text-[13px]">
+      <table className="w-full text-ui">
         <caption className="sr-only">Keyboard shortcuts</caption>
         <thead className="sr-only">
           <tr>
@@ -408,7 +408,7 @@ function HelpDialog({ onClose, singleKeys, setSingleKeys }: { onClose: () => voi
         </tbody>
       </table>
       <div className="space-y-2 border-t border-rule px-4 py-3">
-        <label className="flex items-center gap-2 text-[13px] text-ink-2">
+        <label className="flex items-center gap-2 text-ui text-ink-2">
           <input type="checkbox" checked={singleKeys} onChange={(e) => setSingleKeys(e.target.checked)} className="size-4 accent-[var(--color-accent)]" />
           Single-key shortcuts (turn off if you use speech input)
         </label>

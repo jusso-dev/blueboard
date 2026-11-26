@@ -13,7 +13,7 @@ import { IconBall, IconBulb, IconClock, IconFlag, IconFood, IconLeaf, IconPlane,
 
 const COLS = 9;
 const CELL = 36;
-const WIDTH = COLS * CELL + 24; // grid + padding
+const WIDTH = COLS * CELL + 26; // grid + padding + border
 const HEIGHT = 420;
 const GAP = 6;
 const EDGE = 8;
@@ -69,11 +69,13 @@ export function EmojiPicker({
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
   const measure = useCallback(() => {
-    const p = placePopover(anchor.getBoundingClientRect(), { w: WIDTH, h: HEIGHT }, { w: window.innerWidth, h: window.innerHeight });
-    return { top: p.top, left: p.left, h: Math.min(HEIGHT, window.innerHeight - 2 * EDGE) };
+    const w = Math.min(WIDTH, window.innerWidth - 2 * EDGE);
+    const p = placePopover(anchor.getBoundingClientRect(), { w, h: HEIGHT }, { w: window.innerWidth, h: window.innerHeight });
+    return { top: p.top, left: p.left, w, h: Math.min(HEIGHT, window.innerHeight - 2 * EDGE) };
   }, [anchor]);
   // Measured at mount (not in an effect) so the dialog is visible, and focusable, on its first paint.
   const [pos, setPos] = useState(measure);
+  const columns = Math.max(1, Math.min(COLS, Math.floor((pos.w - 26) / CELL)));
   const [inView, setInView] = useState("frequent");
   const frequent = useMemo(() => frequentEmoji(COLS * 2), []);
 
@@ -88,9 +90,9 @@ export function EmojiPicker({
     const rows: number[][] = [];
     const rowOf: number[] = [];
     for (const s of sections)
-      for (let i = 0; i < s.emoji.length; i += COLS) {
+      for (let i = 0; i < s.emoji.length; i += columns) {
         const row: number[] = [];
-        for (const e of s.emoji.slice(i, i + COLS)) {
+        for (const e of s.emoji.slice(i, i + columns)) {
           rowOf.push(rows.length);
           row.push(cells.length);
           cells.push(e);
@@ -98,7 +100,7 @@ export function EmojiPicker({
         rows.push(row);
       }
     return { cells, rows, rowOf };
-  }, [sections]);
+  }, [sections, columns]);
 
   useEffect(() => setActive(0), [query]);
   const current = cells[active];
@@ -243,7 +245,7 @@ export function EmojiPicker({
       onBlur={(e) => {
         if (e.relatedTarget && !ref.current?.contains(e.relatedTarget as Node) && !anchor.contains(e.relatedTarget as Node)) onClose(false);
       }}
-      style={{ top: pos.top, left: pos.left, width: WIDTH, height: pos.h }}
+      style={{ top: pos.top, left: pos.left, width: pos.w, height: pos.h }}
       className="fixed z-50 flex flex-col overflow-hidden rounded-lg border border-rule-strong bg-paper-3 text-ink shadow-[var(--shadow-pop)]"
     >
       <CategoryBar tabs={tabs} current={query ? "" : inView} onJump={jump} />
@@ -266,25 +268,25 @@ export function EmojiPicker({
             placeholder="Search all emoji"
             autoComplete="off"
             spellCheck={false}
-            className="bare-input min-w-0 flex-1 bg-transparent text-[13px] text-ink placeholder:text-faint"
+            className="bare-input min-w-0 flex-1 bg-transparent text-ui text-ink placeholder:text-faint"
           />
         </div>
       </div>
       <div ref={scroller} onScroll={onScroll} className="relative min-h-0 flex-1 overflow-y-auto px-3 pb-2">
         {cells.length === 0 ? (
-          <p id={`${id}-grid`} className="px-1 py-8 text-center text-[13px] text-muted">
+          <p id={`${id}-grid`} className="px-1 py-8 text-center text-ui text-muted">
             No emoji match “{query}”
           </p>
         ) : (
-          <div id={`${id}-grid`} role="grid" aria-label={query ? "Search results" : "Emoji"} aria-colcount={COLS}>
+          <div id={`${id}-grid`} role="grid" aria-label={query ? "Search results" : "Emoji"} aria-colcount={columns}>
             {sections.map((s) =>
               s.emoji.length === 0 ? null : (
                 <div key={s.id} id={`${id}-s-${s.id}`} role="rowgroup" aria-label={s.label}>
                   <p aria-hidden className="sticky top-0 z-[1] bg-paper-3 px-1 pb-1 pt-2 text-xs font-semibold text-ink-2">
                     {s.label}
                   </p>
-                  {chunk(s.emoji, COLS).map((row, r) => (
-                    <div key={r} role="row" className="flex">
+                  {chunk(s.emoji, columns).map((row, r) => (
+                    <div key={r} role="row" className="grid" style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}>
                       {row.map((e) => {
                         const i = index++;
                         return (
@@ -299,7 +301,7 @@ export function EmojiPicker({
                             onMouseDown={(ev) => ev.preventDefault() /* focus stays in the search box */}
                             onClick={() => pick(e)}
                             className={cx(
-                              "flex size-9 cursor-pointer select-none items-center justify-center rounded-[var(--radius-control)] text-[22px] leading-none transition-colors duration-150",
+                              "flex h-9 min-w-0 cursor-pointer select-none items-center justify-center rounded-[var(--radius-control)] text-[22px] leading-none transition-colors duration-150",
                               i === active ? "bg-accent-soft" : "hover:bg-paper-2",
                             )}
                           >
@@ -321,7 +323,7 @@ export function EmojiPicker({
             <span className="text-[28px] leading-none">{current.char}</span>
             <span className="min-w-0">
               <span className="block truncate font-mono text-xs font-semibold text-ink">:{current.name}:</span>
-              {current.aliases.length > 0 && <span className="block truncate font-mono text-[11px] text-muted">{current.aliases.map((a) => `:${a}:`).join(" ")}</span>}
+              {current.aliases.length > 0 && <span className="block truncate font-mono text-meta text-muted">{current.aliases.map((a) => `:${a}:`).join(" ")}</span>}
             </span>
           </>
         ) : (
@@ -405,8 +407,8 @@ export function useEmojiSource(): AutocompleteSource<Emoji> {
           <span aria-hidden className="w-5 shrink-0 text-center text-[17px] leading-none">
             {e.char}
           </span>
-          <span className="min-w-0 truncate font-mono text-[12.5px] text-ink">:{e.name}:</span>
-          {e.aliases.length > 0 && <span className="min-w-0 shrink-[2] truncate font-mono text-[11px] text-muted">{e.aliases.map((a) => `:${a}:`).join(" ")}</span>}
+          <span className="min-w-0 truncate font-mono text-code text-ink">:{e.name}:</span>
+          {e.aliases.length > 0 && <span className="min-w-0 shrink-[2] truncate font-mono text-meta text-muted">{e.aliases.map((a) => `:${a}:`).join(" ")}</span>}
         </>
       ),
       heading: "Emoji",

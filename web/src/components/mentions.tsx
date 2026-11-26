@@ -226,7 +226,7 @@ export function useAutocomplete({ value, setValue, textarea, sources }: { value:
                   choose(item);
                 }}
                 className={cx(
-                  "mx-1 flex h-8 cursor-pointer items-center gap-2 rounded-[4px] px-2 text-[13px] [@media(pointer:coarse)]:h-11",
+                  "mx-1 flex h-8 cursor-pointer items-center gap-2 rounded-[4px] px-2 text-ui [@media(pointer:coarse)]:h-11",
                   i === active ? "bg-accent-soft text-ink" : "text-ink-2",
                 )}
               >
@@ -235,11 +235,11 @@ export function useAutocomplete({ value, setValue, textarea, sources }: { value:
             ))}
           </ul>
         ) : (
-          <p id={listId} className="px-3 py-3 text-[13px] text-muted">
+          <p id={listId} className="px-3 py-3 text-ui text-muted">
             {source.empty(query)}
           </p>
         )}
-        <p className="flex h-8 items-center gap-1 border-t border-rule bg-paper-2 px-3 text-[11px] text-muted max-sm:hidden">
+        <p className="flex h-8 items-center gap-1 border-t border-rule bg-paper-2 px-3 text-meta text-muted max-sm:hidden">
           <span className="font-semibold text-ink-2">↑↓</span> to navigate · <span className="font-semibold text-ink-2">↵</span> to select · <span className="font-semibold text-ink-2">esc</span> to dismiss
         </p>
       </div>
@@ -278,13 +278,13 @@ function MentionOption({ p }: { p: Participant }) {
   return (
     <>
       <Avatar handle={p.handle} name={p.display_name} kind={p.kind} size={20} />
-      <span className="flex min-w-0 shrink-[0.5] items-baseline gap-1.5">
+      <span className="flex min-w-0 flex-1 items-baseline gap-1.5">
         <span className="min-w-[3rem] shrink-[0.3] truncate font-semibold text-ink">{p.display_name}</span>
         <span className="min-w-0 shrink truncate text-muted">@{p.handle}</span>
       </span>
       {p.kind === "agent" && <KindBadge kind="agent" />}
       {active && (
-        <span className="flex shrink-0 items-center gap-1 text-[11px] text-good">
+        <span className="flex shrink-0 items-center gap-1 text-meta text-good">
           <span aria-hidden className="size-1.5 rounded-full bg-good" />
           active
         </span>
