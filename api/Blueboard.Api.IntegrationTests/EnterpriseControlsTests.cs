@@ -51,8 +51,8 @@ public sealed class EnterpriseControlsTests(TestBoard t) : IClassFixture<TestBoa
     public async Task Export_is_audited_formula_safe_and_people_only()
     {
         var admin = await t.As("analyst");
-        await t.Audit.WriteAsync(admin.Id, "test.csv", "=HYPERLINK(\"http://evil\")", null, Ct);
-        var csv = await Log.ExportCsvAsync(admin, new AuditQuery(Event: "test.csv"), Ct);
+        await t.Audit.WriteAsync(admin.Id, "export_test.csv", "=HYPERLINK(\"http://evil\")", null, Ct);
+        var csv = await Log.ExportCsvAsync(admin, new AuditQuery(Event: "export_test.csv"), Ct);
         Assert.StartsWith("id,at_utc,actor,actor_kind,event,subject,detail\n", csv);
         Assert.Contains("\"'=HYPERLINK", csv);
         Assert.Equal(1, await t.ScalarAsync("select count(*) from audit_log where event = 'audit.exported' and actor_id = @a", ("a", admin.Id)));
