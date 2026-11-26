@@ -52,7 +52,7 @@ stub() { # <name> <body>
 stub preflight.sh ':'
 stub entra-app.sh 'state_set BOARD_API_CLIENT_ID 11111111-2222-3333-4444-555555555555; state_set BOARD_API_AUDIENCE api://blueboard-uptest; state_set BOARD_API_SP_ID 66666666-7777-8888-9999-000000000000'
 # deploy fails while $WORK/deploy-fails exists.
-stub deploy.sh '[[ -f "$WORK/deploy-fails" ]] && { echo "simulated failure" >&2; exit 1; }; echo "deploy POLICY_FILE=${POLICY_FILE:-}" >>"$WORK/calls"; state_set API_MI_PRINCIPAL_ID aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee; state_set WEB_HOST web.example.net; state_set API_HOST api.example.net'
+stub deploy.sh '[[ -f "$WORK/deploy-fails" ]] && { echo "simulated failure" >&2; exit 1; }; echo "deploy POLICY_FILE=${POLICY_FILE:-} BB_RELEASE=${BB_RELEASE:-} URL=${BB_RELEASE_URL:-}" >>"$WORK/calls"; state_set API_MI_PRINCIPAL_ID aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee; state_set WEB_HOST web.example.net; state_set API_HOST api.example.net'
 # groups fails while $WORK/groups-fails exists (the deployer lacks Groups Administrator).
 stub entra-groups.sh '[[ -f "$WORK/groups-fails" ]] && { echo "Insufficient privileges" >&2; exit 1; }; state_set GROUP_ANALYSTS_ID g-analysts; state_set GROUP_APPROVERS_ID g-approvers; state_set GROUP_ADMINS_ID g-admins'
 # CHECK=1 (up.sh asking whether the hand-off was done) succeeds only when STUB_GRANTED=all.
@@ -115,7 +115,7 @@ echo '{}' >"$WORK/policy.json"
 check "POLICY_FILE saved as an absolute path" test "$(jq -r .POLICY_FILE "$state")" = "$(cd "$WORK" && pwd)/policy.json"
 rm -f "$WORK/calls"
 STUB_ROLES="Privileged Role Administrator" BB_REDO=permissions up
-check "bare re-run deploys the remembered POLICY_FILE" grep -qx "deploy POLICY_FILE=$(cd "$WORK" && pwd)/policy.json" "$WORK/calls"
+check "bare re-run deploys the remembered POLICY_FILE" grep -q "^deploy POLICY_FILE=$(cd "$WORK" && pwd)/policy.json " "$WORK/calls"
 check "bare re-run grants the remembered ACTIONS and agents" grep -q "^grant ACTIONS=run_av_scan aaaaaaaa.* a1$" "$WORK/calls"
 rm -f "$WORK/calls"
 STUB_ROLES="Privileged Role Administrator" BB_REDO=permissions ACTIONS='' up
@@ -123,8 +123,14 @@ check "ACTIONS= clears the remembered value (read-only again)" grep -q "^grant R
 
 # 4c. The release is remembered for the re-run after a hand-off; BB_RELEASE= clears it.
 rm -f "$state"
-BB_RELEASE=v9.9.9 up
+BB_RELEASE=v9.9.9 BB_RELEASE_REPO=acme/blueboard BB_RELEASE_URL=https://mirror.example.net/bb up
 check "BB_RELEASE remembered in state" test "$(jq -r .BB_RELEASE "$state")" = v9.9.9
+check "release source remembered" jqok '.BB_RELEASE_REPO == "acme/blueboard" and .BB_RELEASE_URL == "https://mirror.example.net/bb"' "$state"
+up
+check "bare retry keeps the release and its source" jqok '.BB_RELEASE == "v9.9.9" and .BB_RELEASE_REPO == "acme/blueboard"' "$state"
+check "bare retry passes the release to deploy" grep -q "^deploy .*BB_RELEASE=v9.9.9 URL=https://mirror.example.net/bb" "$WORK/calls"
+BB_RELEASE=v9.9.10 up
+check "a non-empty BB_RELEASE overrides the remembered one" test "$(jq -r .BB_RELEASE "$state")" = v9.9.10
 BB_RELEASE='' up
 check "BB_RELEASE= clears it" test "$(jq -r .BB_RELEASE "$state")" = ""
 
@@ -158,6 +164,25 @@ rm -rf "$BB_STATE_DIR/releases"
 if fetch v9.9.9; then fail "tampered release package accepted"; else pass "tampered release package refused"; fi
 check "tampered package deleted" test ! -f "$BB_STATE_DIR/releases/v9.9.9/blueboard-web-v9.9.9.zip"
 if fetch "v1;rm -rf /"; then fail "malformed release tag accepted"; else pass "malformed release tag refused"; fi
+
+# The operator CLI is unpacked fresh from the verified archive on every run: a binary planted in the cache by an
+# earlier run is removed, never executed.
+rel3="$WORK/mirror3/v9.9.8"
+mkdir -p "$rel3" "$WORK/toolsrc"
+printf '#!/bin/sh\necho verified\n' >"$WORK/toolsrc/blueboard" && chmod +x "$WORK/toolsrc/blueboard"
+rid="$(source "$REAL_INFRA/lib.sh" && release_rid)"
+tar -czf "$rel3/blueboard-tools-v9.9.8-$rid.tar.gz" -C "$WORK/toolsrc" blueboard
+echo api >"$rel3/blueboard-api-v9.9.8.zip"
+echo web >"$rel3/blueboard-web-v9.9.8.zip"
+(cd "$rel3" && (sha256sum blueboard-* 2>/dev/null || shasum -a 256 blueboard-*) >blueboard-v9.9.8.sha256)
+fetch3() { (source "$REAL_INFRA/lib.sh" && BB_RELEASE_URL="file://$WORK/mirror3" BB_RELEASE_SKIP_ATTESTATION=1 release_fetch v9.9.8) 2>/dev/null; }
+dir3="$(fetch3)"
+printf '#!/bin/sh\necho planted\n' >"$dir3/tools/blueboard"
+dir3="$(fetch3)"
+check "stale tool binary replaced from the verified archive" test "$("$dir3/tools/blueboard")" = verified
+rm -f "$dir3/blueboard-tools-v9.9.8-$rid.tar.gz" "$rel3/blueboard-tools-v9.9.8-$rid.tar.gz"
+dir3="$(fetch3)"
+check "no verified archive, no tool" test ! -e "$dir3/tools/blueboard"
 
 # 6. Australia only.
 if LOCATION=westus2 "$REAL_INFRA/up.sh" >/dev/null 2>&1; then fail "non-Australian region accepted"; else pass "non-Australian region refused"; fi

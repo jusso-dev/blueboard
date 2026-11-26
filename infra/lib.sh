@@ -201,7 +201,10 @@ release_fetch() { # <tag>
   else
     log "release $tag: checksums verified (sign in to the GitHub CLI to verify build provenance too)" >&2
   fi
-  if [[ -f "$dir/$tools" && ! -x "$dir/tools/blueboard" ]]; then
+  # Unpacked fresh from the archive verified above on every run, never reused: a binary left by an earlier run is
+  # removed, and without a verified archive there is no tool (deploy.sh then falls back to the .NET SDK).
+  rm -rf "$dir/tools"
+  if [[ -f "$dir/$tools" ]]; then
     mkdir -p "$dir/tools" && tar -xzf "$dir/$tools" -C "$dir/tools"
   fi
   echo "$dir"
