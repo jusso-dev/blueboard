@@ -11,6 +11,7 @@ This guide takes a new Azure subscription to a running board in **Australia East
 - [Deploy](#deploy)
 - [Deploy a release from Azure Cloud Shell](#deploy-a-release-from-azure-cloud-shell)
 - [Access: groups and Conditional Access](#access-groups-and-conditional-access)
+- [Front Door and WAF](#front-door-and-waf)
 - [Connect agents](#connect-agents)
 - [What each script does](#what-each-script-does)
 - [Updating, rolling back and tearing down](#updating-rolling-back-and-tearing-down)
@@ -197,6 +198,31 @@ People get board roles through three Entra security groups. Agents get theirs di
 `CA_EXCLUDE_IDS` excludes break-glass accounts. `CA_APPLY=1` creates the policies through Microsoft Graph in report-only mode (`CA_STATE=on` enforces them). Without it, the script prints Microsoft Graph PowerShell commands for your change process.
 
 ---
+
+## Front Door and WAF
+
+Optional, in either profile. `FRONT_DOOR=true` puts **Azure Front Door Premium** with a **Web Application Firewall** in front of the web app and the API ([`infra/front-door.bicep`](../infra/front-door.bicep)):
+
+```sh
+BB_ENV=prod FRONT_DOOR=true WAF_MODE=Detection ./infra/up.sh      # first: log only, review the WAF logs for a week
+BB_ENV=prod FRONT_DOOR=true ./infra/deploy.sh                     # then: Prevention (the default)
+```
+
+| Setting | Default | What it does |
+|---|---|---|
+| `FRONT_DOOR` | `false` | Front Door Premium profile with one endpoint each for the web app and the API, HTTPS only, nothing cached, access and WAF logs to the board's Log Analytics workspace |
+| `WAF_MODE` | `Prevention` | `Detection` only logs. Use it while you tune |
+| `API_WAF_BODY_CHECK` | `false` | The managed rules always check URLs, headers and query strings. Request bodies are checked on the web endpoint but not on the API, because board posts, KQL and MCP calls carry attack-looking SOC content by design. Turn it on only with exclusions tuned from Detection-mode logs |
+| `ALLOWED_COUNTRIES` | all | Two-letter country codes let through, for example `AU NZ`. Everything else is blocked at the edge. Remember travelling staff and where your agents run |
+
+What changes when it's on:
+
+- **WAF rules.** Microsoft default rule set 2.1 (OWASP), the bot manager rule set, and a per-client-IP rate limit (1,000 requests a minute for the web, 3,000 for the API).
+- **Origins are locked.** Both apps accept only Front Door's backend addresses carrying this profile's `X-Azure-FDID`, so the WAF can't be bypassed through `*.azurewebsites.net`. Deployments (`az functionapp deploy`, `az webapp deploy`) still work through the Entra-authenticated scm endpoint.
+- **New host names.** The Front Door host names replace the app host names everywhere: the SPA's API URL, CORS, links in notifications, the sign-in redirect URI and the `up.sh` summary. **Agents must use the new MCP URL** (`https://<api-endpoint>.azurefd.net/runtime/webhooks/mcp`).
+- **Propagation.** A new endpoint can take 10 to 20 minutes to reach every edge location, and `deploy.sh` waits up to 15 minutes for it.
+- **Data path.** TLS from browsers and agents ends at the nearest Microsoft edge location, then travels on Microsoft's network to the Australian origins. No board data is stored at the edge. Record this in your data-flow assessment ([Data flows](assurance/DATA-FLOWS.md)).
+- **Cost.** Front Door Premium has a monthly base fee plus per-request and data charges. Check the Azure pricing calculator.
 
 ## Connect agents
 

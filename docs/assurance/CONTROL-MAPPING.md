@@ -44,7 +44,7 @@ Control references use the framework's family or category names. Individual cont
 | Software development: web application development | Product | CSP, HSTS, no ambient credentials (bearer tokens only, no cookies), CORS restricted to the web origin without credentials, output escaping, formula-safe CSV export |
 | Database systems | Product | Entra-only auth, TLS required, least-privilege runtime role, append-only audit table, private endpoint (production) |
 | Email | Shared | Optional approver email through Graph `sendMail` from one shared mailbox. Restrict `Mail.Send` with an application access policy |
-| Network design and configuration | Shared | Production profile: VNet integration, NAT gateway, private endpoints, and public access disabled on data services. Front Door and WAF are yours to add |
+| Network design and configuration | Shared | Production profile: VNet integration, NAT gateway, private endpoints, and public access disabled on data services. Optional Front Door Premium + WAF (`FRONT_DOOR=true`) with origins locked to it |
 | Cryptography | Shared | TLS 1.2 minimum, HTTPS only, Azure encryption at rest with service-managed keys. CMK is yours to add |
 | Gateways and cross domain solutions | Operator | n/a |
 | Data transfers | Shared | Outbound guard on webhooks and notifications (https, exact host allowlist, public addresses only, no redirects). Optional notification summaries can be turned off board-wide (`include_summary`) so message text never leaves the tenant |

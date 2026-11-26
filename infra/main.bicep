@@ -119,6 +119,16 @@ param alertEmails array = []
 @description('Create the operational alert rules and action group (infra/alerts.bicep).')
 param alertsEnabled bool = true
 
+@description('Put Azure Front Door Premium with a WAF in front of the web app and the API, and accept traffic only from it (infra/front-door.bicep). Browsers and agents then use the Front Door host names.')
+param frontDoor bool = false
+@description('Front Door WAF mode: Prevention blocks, Detection only logs (use while tuning).')
+@allowed(['Prevention', 'Detection'])
+param wafMode string = 'Prevention'
+@description('Inspect API request bodies with the WAF managed rules. Off by default: SOC content (command lines, KQL, URLs) looks like attacks.')
+param apiWafBodyCheck bool = false
+@description('Two-letter country codes allowed through Front Door; empty allows all.')
+param allowedCountries array = []
+
 var isProd = profile == 'production'
 // Australia East has availability zones; Australia Southeast doesn't, so HA there is same-zone.
 var hasZones = location == 'australiaeast'
@@ -255,6 +265,31 @@ resource plan 'Microsoft.Web/serverfarms@2024-04-01' = {
   properties: { reserved: true }
 }
 
+// ── optional edge: Front Door Premium + WAF ──────────────────────────────────────────────────
+module edge 'front-door.bicep' = if (frontDoor) {
+  name: 'front-door'
+  params: {
+    namePrefix: namePrefix
+    suffix: suffix
+    logsWorkspaceId: logs.id
+    wafMode: wafMode
+    apiWafBodyCheck: apiWafBodyCheck
+    allowedCountries: allowedCountries
+  }
+}
+
+// With Front Door, each site accepts only Front Door's backend addresses carrying this profile's id (X-Azure-FDID),
+// so the WAF can't be bypassed through the azurewebsites.net host. The deployment (scm) endpoint keeps its own,
+// Entra-authenticated access so az functionapp/webapp deploy still work.
+var edgeOnly = frontDoor ? {
+  ipSecurityRestrictionsDefaultAction: 'Deny'
+  ipSecurityRestrictions: [
+    { name: 'FrontDoorOnly', priority: 100, action: 'Allow', tag: 'ServiceTag', ipAddress: 'AzureFrontDoor.Backend', headers: { 'x-azure-fdid': [edge!.outputs.frontDoorId] } }
+  ]
+  scmIpSecurityRestrictionsUseMain: false
+  scmIpSecurityRestrictionsDefaultAction: 'Allow'
+} : {}
+
 resource api 'Microsoft.Web/sites@2024-04-01' = {
   name: '${namePrefix}-api-${suffix}'
   location: location
@@ -269,8 +304,8 @@ resource api 'Microsoft.Web/sites@2024-04-01' = {
       ftpsState: 'Disabled'
       http20Enabled: true
       // The browser calls the API cross-origin with a bearer token (no cookies), so only the web origin is allowed.
-      cors: { allowedOrigins: union(['https://${web.properties.defaultHostName}'], extraCorsOrigins), supportCredentials: false }
-    }, isProd ? { vnetRouteAllEnabled: true } : {})
+      cors: { allowedOrigins: union(['https://${web.properties.defaultHostName}'], frontDoor ? ['https://${edge!.outputs.webHostname}'] : [], extraCorsOrigins), supportCredentials: false }
+    }, isProd ? { vnetRouteAllEnabled: true } : {}, edgeOnly)
     functionAppConfig: {
       deployment: {
         storage: {
@@ -318,7 +353,7 @@ var notifySettings = union(notifySecretSettings, {
   NOTIFY_MAIL_FROM: notifyMailFrom
   NOTIFY_MAIL_TO: notifyMailTo
   NOTIFY_REMIND_MINUTES: string(notifyRemindMinutes)
-  BOARD_WEB_URL: empty(webBaseUrl) ? 'https://${web.properties.defaultHostName}' : webBaseUrl
+  BOARD_WEB_URL: empty(webBaseUrl) ? 'https://${publicWebHost}' : webBaseUrl
   WEBHOOK_ALLOWED_HOSTS: webhookAllowedHosts
   WEBHOOK_SIGNING_KEY: isProd && !empty(webhookSigningKey) ? '@Microsoft.KeyVault(VaultName=${vaultName};SecretName=webhook-signing-key)' : webhookSigningKey
 })
@@ -415,14 +450,14 @@ resource web 'Microsoft.Web/sites@2024-04-01' = {
     httpsOnly: true
     publicNetworkAccess: 'Enabled'
     clientAffinityEnabled: false
-    siteConfig: {
+    siteConfig: union({
       linuxFxVersion: 'DOTNETCORE|10.0'
       minTlsVersion: '1.2'
       ftpsState: 'Disabled'
       http20Enabled: true
       alwaysOn: true
       healthCheckPath: '/healthz'
-    }
+    }, edgeOnly)
   }
 }
 
@@ -433,7 +468,7 @@ resource webSettings 'Microsoft.Web/sites/config@2024-04-01' = {
     // Public values only: the SPA reads them from /config.json to sign in and find the API.
     BLUEBOARD_TENANT_ID: tenantId
     BLUEBOARD_CLIENT_ID: boardApiClientId
-    BLUEBOARD_API_URL: 'https://${api.properties.defaultHostName}'
+    BLUEBOARD_API_URL: 'https://${publicApiHost}'
     BLUEBOARD_API_SCOPE: '${boardApiAudience}/Board.Access'
     BLUEBOARD_AUTHORITY_HOST: environment().authentication.loginEndpoint
   }
@@ -573,10 +608,26 @@ module auditExport 'audit-export.bicep' = if (isProd) {
   }
 }
 
-output webHostname string = web.properties.defaultHostName
+// The host names people and agents use: Front Door's when it's on (the sites themselves then refuse direct traffic).
+var publicWebHost = frontDoor ? edge!.outputs.webHostname : web.properties.defaultHostName
+var publicApiHost = frontDoor ? edge!.outputs.apiHostname : api.properties.defaultHostName
+
+module edgeOrigins 'front-door-origins.bicep' = if (frontDoor) {
+  name: 'front-door-origins'
+  params: {
+    profileName: edge!.outputs.profileName
+    webEndpointName: edge!.outputs.webEndpointName
+    apiEndpointName: edge!.outputs.apiEndpointName
+    webOriginHost: web.properties.defaultHostName
+    apiOriginHost: api.properties.defaultHostName
+  }
+}
+
+output webHostname string = publicWebHost
 output webName string = web.name
 output apiName string = api.name
-output apiHostname string = api.properties.defaultHostName
+output apiHostname string = publicApiHost
+output frontDoorEnabled bool = frontDoor
 output apiIdentityPrincipalId string = idApi.properties.principalId
 output pgServerName string = pg.name
 output dbIdentityName string = dbRuntimeRole ? idDb!.name : idApi.name

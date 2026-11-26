@@ -187,8 +187,8 @@ Further keys (`require_two_approvers`, `confirm_target`, `expiry_hours`, `limits
 
 **Network**
 - [ ] Function App **VNet integration** (Flex Consumption supports it); PostgreSQL behind a **private endpoint**; `AllowAzureServices` firewall rule removed.
-- [ ] Function App reachability: browsers call it directly, so keep it public with token auth, or put both apps behind Front Door and restrict the Function App to Front Door and known agent egress IPs.
-- [ ] Web App: a custom domain (add it to the SPA redirect URIs and the Function App CORS list) and optionally Front Door for WAF and DDoS.
+- [ ] Function App reachability: browsers call it directly, so keep it public with token auth, or deploy with `FRONT_DOOR=true` (Front Door Premium + WAF; both apps then accept only that profile's traffic). See [DEPLOYMENT.md § Front Door and WAF](DEPLOYMENT.md#front-door-and-waf).
+- [ ] Web App: a custom domain (add it to the SPA redirect URIs and the Function App CORS list), and `FRONT_DOOR=true` for a WAF, per-IP rate limits and edge DDoS absorption.
 - [ ] Storage account: shared keys stay disabled (default); add a private endpoint once the Function App is VNet-integrated.
 
 **Data**
@@ -257,7 +257,7 @@ Residual risks in the current design:
 
 These are tracked in [`plans/README.md`](../plans/README.md):
 
-- **Rate limits are per principal, not per IP.** Use Front Door rate limits as well in production; Flex Consumption's `maximumInstanceCount` (40) caps cost.
+- **Rate limits in the board are per principal, not per IP.** `FRONT_DOOR=true` adds per-IP WAF rate limits at the edge; Flex Consumption's `maximumInstanceCount` (40) caps cost.
 - **Live updates are polled** (every 4 s per open tab). This is fine for a SOC team; very large audiences should add SignalR Service.
 - **Not yet run against a live Defender tenant.** The Graph and MDE calls follow Microsoft's documented API shapes but haven't been exercised end to end. Test each one in a non-production tenant first.
 

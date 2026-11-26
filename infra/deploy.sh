@@ -27,6 +27,11 @@
 #   NOTIFY_TEAMS_WEBHOOK_URL, NOTIFY_WEBHOOK_URL, NOTIFY_WEBHOOK_SECRET, NOTIFY_ALLOWED_HOSTS,
 #   NOTIFY_MAIL_FROM, NOTIFY_MAIL_TO, NOTIFY_REMIND_MINUTES (default 15), BOARD_WEB_URL (custom domain)
 #   ALERT_EMAILS=…          operational alert recipients, space or comma separated (infra/alerts.bicep; docs/OPERATIONS.md)
+#   FRONT_DOOR=false        Azure Front Door Premium + WAF in front of both apps; the apps then accept only Front Door
+#                           traffic and people and agents use the Front Door host names (infra/front-door.bicep)
+#   WAF_MODE=Prevention     Prevention (block) or Detection (log only, while tuning)
+#   API_WAF_BODY_CHECK=false  inspect API request bodies too (SOC content trips the OWASP rules: tune before enabling)
+#   ALLOWED_COUNTRIES=…     two-letter country codes Front Door lets through (space or comma separated); empty: all
 #   RETENTION_DAYS=0        data retention: 0 keeps everything; 30 or more removes resolved incidents, threads and finished
 #                           actions older than that, daily (audit_log is kept). Preview: blueboard retention --days N
 #   DB_RUNTIME_ROLE=true    serve requests as a least-privilege PostgreSQL role (blueboard-id-db); false: the Entra admin
@@ -76,6 +81,14 @@ CORS_JSON="$(jq -cn --arg o "${EXTRA_CORS_ORIGINS:-}" '[$o | splits("[ ,]+") | s
 ALERT_JSON="$(jq -cn --arg o "${ALERT_EMAILS:-}" '[$o | splits("[ ,]+") | select(length > 0)]')"
 DB_RUNTIME_ROLE="${DB_RUNTIME_ROLE:-true}"
 RETENTION_DAYS="${RETENTION_DAYS:-0}"
+FRONT_DOOR="${FRONT_DOOR:-false}"
+case "$FRONT_DOOR" in true | false) ;; *) die "FRONT_DOOR must be true or false" ;; esac
+WAF_MODE="${WAF_MODE:-Prevention}"
+case "$WAF_MODE" in Prevention | Detection) ;; *) die "WAF_MODE must be Prevention or Detection" ;; esac
+API_WAF_BODY_CHECK="${API_WAF_BODY_CHECK:-false}"
+case "$API_WAF_BODY_CHECK" in true | false) ;; *) die "API_WAF_BODY_CHECK must be true or false" ;; esac
+COUNTRIES_JSON="$(jq -cn --arg o "${ALLOWED_COUNTRIES:-}" '[$o | splits("[ ,]+") | select(length > 0) | ascii_upcase]')"
+jq -e 'all(test("^[A-Z]{2}$"))' <<<"$COUNTRIES_JSON" >/dev/null || die "ALLOWED_COUNTRIES must be two-letter country codes"
 if ! [[ "$RETENTION_DAYS" =~ ^[0-9]+$ ]] || { [[ "$RETENTION_DAYS" -ne 0 ]] && [[ "$RETENTION_DAYS" -lt 30 ]]; }; then
   die "RETENTION_DAYS must be 0 (keep everything) or at least 30"
 fi
@@ -162,16 +175,17 @@ trap 'rm -f "$params"' EXIT
 chmod 600 "$params"
 jq -n --rawfile policy "$POLICY_FILE" \
   --arg teams "${NOTIFY_TEAMS_WEBHOOK_URL:-}" --arg hook "${NOTIFY_WEBHOOK_URL:-}" --arg hmac "${NOTIFY_WEBHOOK_SECRET:-}" \
-  --arg nvd "${NVD_API_KEY:-}" --arg signing "${WEBHOOK_SIGNING_KEY:-}" --argjson cors "$CORS_JSON" --argjson alerts "$ALERT_JSON" \
+  --arg nvd "${NVD_API_KEY:-}" --arg signing "${WEBHOOK_SIGNING_KEY:-}" --argjson cors "$CORS_JSON" --argjson alerts "$ALERT_JSON" --argjson countries "$COUNTRIES_JSON" \
   '{"$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#", contentVersion: "1.0.0.0",
     parameters: {policyJson: {value: $policy}, notifyTeamsWebhookUrl: {value: $teams}, notifyWebhookUrl: {value: $hook},
                  notifyWebhookSecret: {value: $hmac}, nvdApiKey: {value: $nvd}, webhookSigningKey: {value: $signing},
-                 extraCorsOrigins: {value: $cors}, alertEmails: {value: $alerts}}}' >"$params"
+                 extraCorsOrigins: {value: $cors}, alertEmails: {value: $alerts}, allowedCountries: {value: $countries}}}' >"$params"
 out="$(az deployment group create -g "$RESOURCE_GROUP" -n "blueboard-main" -f infra/main.bicep \
   -p @"$params" \
   -p location="$LOCATION" webSkuName="$WEB_SKU" namePrefix="$PREFIX" profile="$BB_PROFILE" \
   boardApiClientId="$BOARD_API_CLIENT_ID" boardApiAudience="$BOARD_API_AUDIENCE" \
   ingestEnabled="$INGEST_ENABLED" brokerExecute="$BROKER_EXECUTE" dbRuntimeRole="$DB_RUNTIME_ROLE" retentionDays="$RETENTION_DAYS" \
+  frontDoor="$FRONT_DOOR" wafMode="$WAF_MODE" apiWafBodyCheck="$API_WAF_BODY_CHECK" \
   notifyAllowedHosts="${NOTIFY_ALLOWED_HOSTS:-}" notifyMailFrom="${NOTIFY_MAIL_FROM:-}" notifyMailTo="${NOTIFY_MAIL_TO:-}" \
   notifyRemindMinutes="${NOTIFY_REMIND_MINUTES:-15}" webBaseUrl="${BOARD_WEB_URL:-}" \
   webhookAllowedHosts="${WEBHOOK_ALLOWED_HOSTS:-}" \
@@ -195,7 +209,7 @@ state_set BB_PROFILE "$BB_PROFILE"
 # The non-secret settings this deploy used, so a bare re-run deploys the same configuration.
 for v in LOCATION WEB_SKU PREFIX INGEST_ENABLED POLICY_FILE SENTINEL_WORKSPACE_ID ASSIGN_SENTINEL_CONTRIBUTOR \
   NOTIFY_ALLOWED_HOSTS NOTIFY_MAIL_FROM NOTIFY_MAIL_TO NOTIFY_REMIND_MINUTES BOARD_WEB_URL EXTRA_CORS_ORIGINS \
-  ALERT_EMAILS DB_RUNTIME_ROLE RETENTION_DAYS \
+  ALERT_EMAILS DB_RUNTIME_ROLE RETENTION_DAYS FRONT_DOOR WAF_MODE API_WAF_BODY_CHECK ALLOWED_COUNTRIES \
   WEBHOOK_ALLOWED_HOSTS TI_PWNWATCH_ENABLED TI_KEV_ENABLED TI_EPSS_ENABLED TI_NVD_ENABLED TI_OSV_ENABLED \
   TI_SENTINEL_ENABLED TI_EXPOSURE_ENABLED TI_MSTI_ENABLED; do
   state_set "$v" "${!v:-}"
@@ -234,12 +248,15 @@ fi
 # 8. health ---------------------------------------------------------------------------------------
 log "health check"
 ok=""
-for _ in $(seq 1 30); do
+# A new Front Door endpoint takes several minutes to reach every edge location, so it gets longer.
+tries=30
+[[ "$FRONT_DOOR" == "true" ]] && tries=90
+for _ in $(seq 1 "$tries"); do
   if curl -fsS "https://$API_HOST/api/healthz" >/dev/null 2>&1; then ok=1 && break; fi
   sleep 10
 done
 [[ "$ok" == "1" ]] || die "https://$API_HOST/api/healthz did not respond (see Application Insights)"
-curl -fsS "https://$WEB_HOST/healthz" >/dev/null || die "https://$WEB_HOST/healthz did not respond"
+curl -fsS --retry 6 --retry-delay 10 --retry-all-errors "https://$WEB_HOST/healthz" >/dev/null || die "https://$WEB_HOST/healthz did not respond"
 
 # The setup checklist runs inside the Function App with its own identity; the CLI can't use that identity from
 # here, so this calls the deployed /api/setup with your token (Board.Admin). Same checks as `blueboard doctor`.

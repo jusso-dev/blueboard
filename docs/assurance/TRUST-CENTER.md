@@ -74,7 +74,10 @@ Customer-managed keys (CMK) aren't configured by the templates. If you need CMK 
   - The Function App has VNet integration, with outbound traffic through a NAT gateway with one static IP.
   - PostgreSQL, Storage (blob, queue and table) and Key Vault are reachable only through **private endpoints**, with public access disabled.
   - The PostgreSQL firewall rule is removed. PostgreSQL runs with zone-redundant HA (same-zone HA in Australia Southeast, which has no availability zones).
-- Front Door and WAF aren't deployed by the templates. They're documented as an optional addition in [architecture.md](../architecture.md#production-hardening).
+- **Optional edge (`FRONT_DOOR=true`, either profile):** Azure Front Door Premium with a WAF in front of both apps ([DEPLOYMENT.md § Front Door and WAF](../DEPLOYMENT.md#front-door-and-waf)).
+  - The WAF runs the Microsoft default rule set 2.1 (OWASP) and the bot manager rule set, a per-IP rate limit, and an optional country allow-list.
+  - Both apps then refuse any traffic that doesn't come from this Front Door profile (service tag plus the `X-Azure-FDID` header), so the WAF can't be bypassed.
+  - TLS ends at Microsoft's global edge, which is outside Australia. Nothing is cached there.
 
 ## Logging and audit
 
@@ -116,7 +119,7 @@ These are stated plainly so they can be tracked in your risk register:
 
 - **Retention is off until you set it.** With `RETENTION_DAYS` unset, incidents, messages and actions are kept forever. Once set, a daily job removes older resolved records. `audit_log` is never removed, by design ([Data flows § Retention](DATA-FLOWS.md#retention)).
 - **No customer-managed keys** in the templates.
-- **No WAF or Front Door** in the templates.
+- **The WAF is optional and doesn't inspect API request bodies by default.** SOC content such as command lines, KQL and URLs trips the OWASP rules. `API_WAF_BODY_CHECK=true` turns body inspection on, but expect to tune it.
 - **The production profile hasn't been deployed to a live subscription by the authors.** Run `az deployment group what-if` first. The `mvp` profile has been deployed against a live Defender tenant in read-only, dry-run mode.
 - **Brokered write actions haven't all been exercised end to end against a live tenant.** Test each one in a non-production tenant before setting `BROKER_EXECUTE=true`.
 - **No independent penetration test has been published.** See [Assurance evidence](PEN-TEST-AND-ASSURANCE-EVIDENCE.md#independent-penetration-test) for a suggested scope.

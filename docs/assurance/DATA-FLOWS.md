@@ -110,6 +110,16 @@ Rules that apply to these connections:
 
 **What leaves the tenant in a notification.** Approval notices carry the action kind, target, incident title, requester and a deep link. They never carry the justification. Message notices also carry a summary of up to 280 characters with formatting stripped, unless `include_summary` is off in the board defaults. Turn it off if message text must stay on the board. See [OPERATIONS.md § The summary trade-off](../OPERATIONS.md#the-summary-trade-off).
 
+### Inbound edge (optional Front Door)
+
+With `FRONT_DOOR=true`, browsers and agents connect to Azure Front Door Premium, not to the apps directly ([DEPLOYMENT.md § Front Door and WAF](../DEPLOYMENT.md#front-door-and-waf)):
+
+- **Where TLS ends.** TLS terminates at the nearest Microsoft edge location, which for users abroad is outside Australia. Requests are then re-encrypted to the Australian origins over Microsoft's network.
+- **No caching.** Nothing is cached at the edge, and no board data is stored there.
+- **Logs.** Front Door access logs and WAF logs (client IP, URL, user agent, rule matches; no request bodies) go to the board's Log Analytics workspace in your region.
+
+Without Front Door, TLS terminates at App Service in your Australian region.
+
 ## Retention
 
 | Store | Retention today | How to change it |
