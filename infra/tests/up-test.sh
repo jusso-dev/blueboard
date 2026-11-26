@@ -126,7 +126,9 @@ rm -f "$state"
 BB_RELEASE=v9.9.9 BB_RELEASE_REPO=acme/blueboard BB_RELEASE_URL=https://mirror.example.net/bb up
 check "BB_RELEASE remembered in state" test "$(jq -r .BB_RELEASE "$state")" = v9.9.9
 check "release source remembered" jqok '.BB_RELEASE_REPO == "acme/blueboard" and .BB_RELEASE_URL == "https://mirror.example.net/bb"' "$state"
+rm -f "$WORK/calls"
 up
+check "bare retry ran deploy exactly once" test "$(grep -c '^deploy ' "$WORK/calls")" = 1
 check "bare retry keeps the release and its source" jqok '.BB_RELEASE == "v9.9.9" and .BB_RELEASE_REPO == "acme/blueboard"' "$state"
 check "bare retry passes the release to deploy" grep -q "^deploy .*BB_RELEASE=v9.9.9 URL=https://mirror.example.net/bb" "$WORK/calls"
 BB_RELEASE=v9.9.10 up
