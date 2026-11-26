@@ -37,6 +37,8 @@ internal static class A1
         public required Blueboard.Api.Webhooks.WebhookService Hooks { get; init; }
         public required PlaybookRunner Playbooks { get; init; }
         public required Blueboard.Api.Intel.IntelService Intel { get; init; }
+        public required GifService Gifs { get; init; }
+        public required MemoryService Memory { get; init; }
         public required Enrichment Enrich { get; init; }
         public required Authenticator Auth { get; init; }
         public required BoardApi Api { get; init; }
@@ -65,8 +67,10 @@ internal static class A1
         var search = new Search(db, board);
         var queries = new IncidentQueries(db, board, books);
         var intel = Intel(db, board, ms, enrich, sys, t.Settings);
-        var api = new BoardApi(ep, board, search, new Reporting(db), broker, enrich, ingest, hooks, db, policy, queries, runner, books, intel, audit, new GifService(new HttpClient(), t.Settings, use));
-        return new App { Db = db, Policy = policy, Limiter = limiter, Board = board, Broker = broker, Enrich = enrich, Auth = auth, Api = api, Hooks = hooks, Intel = intel, Playbooks = runner, Microsoft = fake };
+        var gifs = new GifService(new HttpClient(), t.Settings, use);
+        var memory = new MemoryService(db, audit, board, use);
+        var api = new BoardApi(ep, board, search, new Reporting(db), broker, enrich, ingest, hooks, db, policy, queries, runner, books, intel, audit, gifs, memory);
+        return new App { Db = db, Policy = policy, Limiter = limiter, Board = board, Broker = broker, Enrich = enrich, Auth = auth, Api = api, Hooks = hooks, Intel = intel, Gifs = gifs, Memory = memory, Playbooks = runner, Microsoft = fake };
     }
 
     /// <summary>Threat intel with every source off (the default), so these tests never fetch anything.</summary>
