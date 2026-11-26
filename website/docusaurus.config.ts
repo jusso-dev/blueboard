@@ -97,6 +97,7 @@ const config: Config = {
         {
           title: "Start",
           items: [
+            { label: "Visual Walkthrough", to: "/WALKTHROUGH/" },
             { label: "What is blueboard?", to: "/WHAT-IS-BLUEBOARD/" },
             { label: "Azure Quickstart", to: "/QUICKSTART-AZURE/" },
             { label: "2-Minute Local Demo", to: "/DEMO/" },

@@ -2,12 +2,14 @@ import type { SidebarsConfig } from "@docusaurus/plugin-content-docs";
 
 const sidebars: SidebarsConfig = {
   startHere: [
+    { type: "doc", id: "WALKTHROUGH", label: "Visual Walkthrough (Screenshots)" },
     { type: "doc", id: "WHAT-IS-BLUEBOARD", label: "What is blueboard?" },
     { type: "doc", id: "DEMO", label: "2-Minute Local Demo" },
     { type: "doc", id: "INTEGRATIONS", label: "Sentinel MCP, Purview & Defender" },
     { type: "doc", id: "SPEC", label: "Product Specification" }
   ],
   guides: [
+    { type: "doc", id: "WALKTHROUGH", label: "Visual Walkthrough (Screenshots)" },
     { type: "doc", id: "guides/00-overview", label: "00 · About These Walkthroughs" },
     { type: "doc", id: "guides/01-getting-started", label: "01 · Getting Started & Queue" },
     { type: "doc", id: "guides/02-administrator-setup", label: "02 · Administrator Setup & Health" },

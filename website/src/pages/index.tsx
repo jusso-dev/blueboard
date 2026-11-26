@@ -139,14 +139,14 @@ export default function Home() {
               executing destructive actions without human approval.
             </p>
             <div className={styles.ctas}>
-              <Link className={styles.primary} to="/DEMO/">
+              <Link className={styles.primary} to="/WALKTHROUGH/">
+                Full Visual Walkthrough
+              </Link>
+              <Link className={styles.secondary} to="/DEMO/">
                 Run 2-Minute Local Demo
               </Link>
-              <Link className={styles.secondary} to="/WHAT-IS-BLUEBOARD/">
-                Plain-English Overview
-              </Link>
-              <Link className={styles.ghost} to="/INTEGRATIONS/">
-                Sentinel MCP &amp; Purview Guide -&gt;
+              <Link className={styles.ghost} to="/WHAT-IS-BLUEBOARD/">
+                Plain-English Overview -&gt;
               </Link>
             </div>
 
@@ -278,11 +278,11 @@ export default function Home() {
             Launch the local Docker demo in two minutes or inspect the full walkthroughs and threat model.
           </p>
           <div className={styles.ctas}>
-            <Link className={styles.primary} to="/guides/00-overview/">
-              Start Walkthroughs (00–12)
+            <Link className={styles.primary} to="/WALKTHROUGH/">
+              Visual Walkthrough (Screenshots)
             </Link>
-            <Link className={styles.secondary} to="/THREAT-MODEL/">
-              Review Threat Model
+            <Link className={styles.secondary} to="/guides/00-overview/">
+              Role Handbooks (00–12)
             </Link>
           </div>
         </section>
