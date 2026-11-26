@@ -2,6 +2,7 @@ import { Link, Outlet, useLocation, useNavigate, useSearchParams } from "react-r
 import { createContext, useContext, type ReactNode } from "react";
 import { cx, Kbd, Severity } from "./ui";
 import { ShortcutsProvider, useSearchShortcut, useShortcutDialogs } from "./shortcuts";
+import { IconBell } from "./icons";
 import { signIn, signOut } from "../lib/auth";
 import { useLive, useLiveQuery, type Action, type BoardStatus, type Channel, type Incident, type Me } from "../lib/api";
 
@@ -102,6 +103,17 @@ function MobileBar() {
           {i.label}
         </Link>
       ))}
+      <Link
+        to="/settings/notifications"
+        aria-label="Notification settings"
+        aria-current={path === "/settings/notifications" ? "page" : undefined}
+        className={cx(
+          "ml-auto inline-flex size-8 shrink-0 items-center justify-center rounded-[var(--radius-control)] transition-colors duration-150",
+          path === "/settings/notifications" ? "bg-paper-3 text-ink" : "text-muted hover:text-ink",
+        )}
+      >
+        <IconBell />
+      </Link>
     </nav>
   );
 }
@@ -244,6 +256,9 @@ function Rail({ me }: { me: Me | null }) {
           </RailLink>
           <RailLink href="/intel" active={path.startsWith("/intel")}>
             Threat intel
+          </RailLink>
+          <RailLink href="/settings/notifications" active={path === "/settings/notifications"}>
+            Notifications
           </RailLink>
           {isAdmin && (
             <>

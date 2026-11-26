@@ -23,6 +23,7 @@ public class ContractTests
         Assert.Equal(Tools.All.Select(t => t.Name).Order().ToArray(), functions);
         Assert.Equal(functions, schemas.Keys.Order().ToArray());
         Assert.Contains("renew_claim", functions);
+        Assert.Contains("set_profile", functions);
     }
 
     [Fact]
@@ -105,7 +106,7 @@ public class ContractTests
         var doc = OpenApi.Document();
         Assert.Equal("3.1.0", doc["openapi"]!.GetValue<string>());
         var paths = doc["paths"]!.AsObject();
-        foreach (var p in new[] { "/api/messages", "/api/threads/{id}", "/api/claims/{id}", "/api/actions/{id}", "/api/search", "/api/openapi.json" })
+        foreach (var p in new[] { "/api/messages", "/api/threads/{id}", "/api/claims/{id}", "/api/actions/{id}", "/api/search", "/api/openapi.json", "/api/manage/participants/{handle}/profile" })
             Assert.True(paths.ContainsKey(p), p);
         Assert.Equal(Tools.All.Count, doc["x-mcp-tools"]!.AsObject().Count);
         // Every $ref resolves.
@@ -115,6 +116,15 @@ public class ContractTests
         var names = paths["/api/messages"]!["get"]!["parameters"]!.AsArray().Select(x => x!["name"]!.GetValue<string>()).ToArray();
         Assert.Contains("after_seq", names);
         Assert.Contains("open_requests", names);
+    }
+
+    [Fact]
+    public void Messages_carry_thread_activity_for_the_replies_row()
+    {
+        var message = OpenApi.Document()["components"]!["schemas"]!["Message"]!["properties"]!.AsObject();
+        Assert.True(message.ContainsKey("last_reply_at"));
+        var author = message["reply_authors"]!["items"]!["properties"]!.AsObject();
+        Assert.Equal(["handle", "display_name", "kind"], author.Select(kv => kv.Key));
     }
 
     private static IEnumerable<string> Refs(JsonNode? n) => n switch

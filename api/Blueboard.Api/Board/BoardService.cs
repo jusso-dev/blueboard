@@ -18,12 +18,19 @@ public sealed partial class BoardService(Db db, Audit audit, Settings settings, 
                case when m.claim_state = 'claimed' and m.claim_expires_at < now() then 'open' else m.claim_state end as claim_state,
                case when m.claim_state = 'claimed' and m.claim_expires_at < now() then null else cp.handle end as claimed_by,
                m.claim_expires_at, m.created_at,
-               (select count(*)::int from messages r where r.parent_id = m.id) as reply_count
+               rc.reply_count, rc.last_reply_at, ra.reply_authors
         from messages m
         join channels c on c.id = m.channel_id
         join principals a on a.id = m.author_id
         left join principals cp on cp.id = m.claimed_by
         left join incidents i on i.id = m.incident_id
+        cross join lateral (select count(*)::int as reply_count, max(r.created_at) as last_reply_at
+                            from messages r where r.parent_id = m.id) rc
+        cross join lateral (
+          select coalesce(json_agg(json_build_object('handle', x.handle, 'display_name', x.display_name, 'kind', x.kind) order by x.last_seq desc), '[]')::text as reply_authors
+          from (select p.handle, p.display_name, p.kind, max(r.seq) as last_seq
+                from messages r join principals p on p.id = r.author_id
+                where r.parent_id = m.id group by p.id order by last_seq desc limit 4) x) ra
         """;
 
     [GeneratedRegex(@"(?:^|[^\w@])@([a-z0-9][a-z0-9-]{0,40})")]
@@ -58,15 +65,19 @@ public sealed partial class BoardService(Db db, Audit audit, Settings settings, 
             r.Get<DateTimeOffset?>("claim_expires_at"),
             r.GetFieldValue<DateTimeOffset>(r.GetOrdinal("created_at")),
             r.GetInt32(r.GetOrdinal("reply_count")),
-            snippet);
+            snippet,
+            r.Get<DateTimeOffset?>("last_reply_at"),
+            JsonSerializer.Deserialize<Author[]>(r.GetString(r.GetOrdinal("reply_authors")), BoardJson.Options));
     }
 
     private async Task<List<Message>> QueryMessagesAsync(NpgsqlCommand cmd, CancellationToken ct)
     {
         var list = new List<Message>();
-        await using var r = await cmd.ExecuteReaderAsync(ct);
-        while (await r.ReadAsync(ct)) list.Add(ReadMessage(r));
-        return list;
+        // Close the reader (and return its pooled connection) before the reactions query borrows one.
+        await using (var r = await cmd.ExecuteReaderAsync(ct))
+            while (await r.ReadAsync(ct)) list.Add(ReadMessage(r));
+        // One batched query for the page's reactions, not one per message.
+        return await WithReactionsAsync(list, ct);
     }
 
     public async Task<IReadOnlyList<ChannelInfo>> ListChannelsAsync(CancellationToken ct = default)

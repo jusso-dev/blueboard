@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router";
 import { PageHeader, useMe } from "../components/shell";
 import { api, ApiError, useLiveQuery } from "../lib/api";
 import { Button, cx, Empty, ErrorLine, Tag, Time } from "../components/ui";
@@ -107,6 +108,13 @@ export default function SetupPage() {
           <p className="mt-0.5 max-w-2xl text-[13px] text-muted">
             Sends a sample notice to every configured sink (Teams, email, webhook) so you can check approvers will hear about waiting actions.
           </p>
+          <p className="mt-0.5 max-w-2xl text-[13px] text-muted">
+            Who gets which notices, quiet hours and the board defaults are on{" "}
+            <Link to="/settings/notifications" className="whitespace-nowrap text-accent underline-offset-4 hover:underline">
+              Notifications
+            </Link>
+            .
+          </p>
           <div className="mt-2">
             <Button onClick={() => void sendTest()} loading={testing}>
               Send test notification
@@ -117,7 +125,7 @@ export default function SetupPage() {
               <ErrorLine>{testErr}</ErrorLine>
             </div>
           )}
-          {test && test.length === 0 && <p className="mt-2 text-xs text-warning">Approvers are not notified: no sink is configured.</p>}
+          {test && test.length === 0 && <p className="mt-2 text-xs text-warning">Nobody is notified outside the board: no webhook, Teams or email sink is configured.</p>}
           {test && test.length > 0 && (
             <ul className="mt-2 space-y-0.5 text-xs">
               {test.map((t) => (

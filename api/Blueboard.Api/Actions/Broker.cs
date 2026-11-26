@@ -31,7 +31,7 @@ public sealed class Broker(Db db, Audit audit, BoardService board, MsClient ms, 
                dp.handle as decided_by, a.decided_at, a.decision_note, a.result::text as result, a.error, a.created_at,
                a.expires_at, a.approvals_required,
                array(select ap.handle from action_approvals x join principals ap on ap.id = x.approver_id where x.action_id = a.id order by x.at) as approvals,
-               a.held_at
+               a.held_at, a.on_behalf_of
         from actions a
         join principals rp on rp.id = a.requested_by
         left join principals dp on dp.id = a.decided_by
@@ -43,7 +43,7 @@ public sealed class Broker(Db db, Audit audit, BoardService board, MsClient ms, 
         r.Get<Guid?>("request_message_id"), r.GetString(6), r.GetString(7), r.GetString(8), r.GetBoolean(9), r.GetFieldValue<string[]>(10),
         r.Get<string>("decided_by"), r.Get<DateTimeOffset?>("decided_at"), r.Get<string>("decision_note"),
         r.Get<string>("result") is { } res ? JsonDocument.Parse(res).RootElement.Clone() : null, r.Get<string>("error"), r.GetFieldValue<DateTimeOffset>(16),
-        r.Get<DateTimeOffset?>("expires_at"), r.GetInt32(18), r.GetFieldValue<string[]>(19), r.Get<DateTimeOffset?>("held_at"));
+        r.Get<DateTimeOffset?>("expires_at"), r.GetInt32(18), r.GetFieldValue<string[]>(19), r.Get<DateTimeOffset?>("held_at"), r.Get<Guid?>("on_behalf_of"));
 
     public async Task<ActionRow?> GetAsync(Guid id, CancellationToken ct = default)
     {
@@ -148,9 +148,21 @@ public sealed class Broker(Db db, Audit audit, BoardService board, MsClient ms, 
         var decision = PolicyEngine.Assess(def, prms, incident, policy);
         var status = decision.Status;
 
+        // A person told the agent to do this on the board (act_on_instruction): their message is the approval, when
+        // every check holds. Otherwise the request is refused outright, never quietly filed as something else.
+        Instruction? instruction = null;
+        if (req.OnBehalfOf is { } instructedIn && decision.Outcome == Outcome.NeedsApproval)
+        {
+            if (InstructionRules.CheckPolicy(def.Kind, policy, (await GetPauseAsync(ct)).Paused, decision.ApprovalsRequired) is { } refused)
+                throw new BoardException(refused);
+            instruction = await LoadInstructionAsync(instructedIn, p, def.Kind, ct);
+            if (InstructionRules.CheckMessage(instruction, instructedIn, p, incidentId) is { } why) throw new BoardException(why);
+            status = "approved";
+        }
+
         // The action row, its board message and the link between them commit together (issue #4): a crash can't
         // leave an action without its message, or a message without its action.
-        var label = status switch
+        var label = instruction is not null ? $"approved on @{instruction.AuthorHandle}'s instruction" : status switch
         {
             "rejected" => "REJECTED by policy",
             "approved" => "auto-approved (non-destructive)",
@@ -165,23 +177,58 @@ public sealed class Broker(Db db, Audit audit, BoardService board, MsClient ms, 
         {
             if (status == "pending_approval" && incidentId is { } capped) await EnforcePendingCapAsync(conn, tx, p, capped, incident?.GraphId ?? capped.ToString(), ct);
             var needsApproval = decision.Outcome == Outcome.NeedsApproval;
+            var note = instruction is null ? null : $"instructed in message {instruction.MessageId}";
             await using (var ins = new NpgsqlCommand("""
-                insert into actions (kind, params, incident_id, requested_by, justification, status, requires_approval, policy_notes, expires_at, approvals_required)
-                values (@k, @p, @i, @r, @j, @s, @ra, @n, case when @ra then now() + make_interval(secs => @exp) end, @ar) returning id
+                insert into actions (kind, params, incident_id, requested_by, justification, status, requires_approval, policy_notes, expires_at, approvals_required,
+                                     on_behalf_of, decided_by, decided_at, decision_note)
+                values (@k, @p, @i, @r, @j, @s, @ra, @n, case when @ra then now() + make_interval(secs => @exp) end, @ar,
+                        @obo, @db, case when @db::uuid is not null then now() end, @dn) returning id
                 """, conn, tx).With("k", def.Kind).WithJson("p", prms).With("i", incidentId).With("r", p.Id).With("j", req.Justification)
                 .With("s", status).With("ra", needsApproval).With("n", decision.Notes.ToArray())
-                .With("exp", decision.ExpiresInHours * 3600).With("ar", Math.Max(1, decision.ApprovalsRequired)))
-                actionId = (Guid)(await ins.ExecuteScalarAsync(ct))!;
+                .With("exp", decision.ExpiresInHours * 3600).With("ar", Math.Max(1, decision.ApprovalsRequired))
+                .With("obo", instruction?.MessageId).With("db", instruction?.AuthorId).With("dn", note))
+            {
+                try { actionId = (Guid)(await ins.ExecuteScalarAsync(ct))!; }
+                catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UniqueViolation && ex.ConstraintName == "actions_on_behalf_of_kind")
+                {
+                    throw new BoardException($"on_behalf_of refused: message {instruction!.MessageId} was already used for a request of this kind");
+                }
+            }
+            if (instruction is not null)
+                await using (var ap = new NpgsqlCommand("insert into action_approvals (action_id, approver_id, note) values (@id, @p, @n)", conn, tx)
+                                 .With("id", actionId).With("p", instruction.AuthorId).With("n", note))
+                    await ap.ExecuteNonQueryAsync(ct);
             var msgId = await board.PostInTransactionAsync(conn, tx, sys, new PostInput("containment", body, "action_request",
-                Json.Element(new { action_id = actionId, kind = def.Kind, @params = prms, status, policy_notes = decision.Notes }), null, incidentId?.ToString()), system: true, ct);
+                Json.Element(new { action_id = actionId, kind = def.Kind, @params = prms, status, policy_notes = decision.Notes, on_behalf_of = instruction?.MessageId }), null, incidentId?.ToString()), system: true, ct);
             await using (var up = new NpgsqlCommand("update actions set request_message_id = @m where id = @id", conn, tx).With("m", msgId).With("id", actionId))
                 await up.ExecuteNonQueryAsync(ct);
             await tx.CommitAsync(ct);
         }
-        await audit.WriteAsync(p.Id, "action.requested", actionId.ToString(), new { kind = def.Kind, @params = prms, outcome = decision.Outcome.ToString(), notes = decision.Notes }, ct);
+        await audit.WriteAsync(p.Id, "action.requested", actionId.ToString(), new { kind = def.Kind, @params = prms, outcome = decision.Outcome.ToString(), notes = decision.Notes, on_behalf_of = req.OnBehalfOf }, ct);
+        if (instruction is not null)
+            await audit.WriteAsync(instruction.AuthorId, "action.approved", actionId.ToString(),
+                new { via = "instruction", message_id = instruction.MessageId, requested_by = p.Handle, approvals = 1, approvals_required = 1 }, ct);
 
         if (status == "approved") await ExecuteAsync(actionId, ct);
         return (await GetAsync(actionId, ct))!;
+    }
+
+    /// <summary>The cited instruction message and its author, with the checks that need the database (age, thread, reuse).</summary>
+    private async Task<Instruction?> LoadInstructionAsync(Guid messageId, Principal requester, string kind, CancellationToken ct)
+    {
+        await using var cmd = db.Command("""
+            select m.id, a.id, a.handle, a.kind, a.enabled, a.roles, m.incident_id,
+                   extract(epoch from now() - m.created_at)::float8,
+                   @h = any(m.mentions),
+                   exists (select 1 from messages t where t.author_id = @r and (t.id = coalesce(m.parent_id, m.id) or t.parent_id = coalesce(m.parent_id, m.id))),
+                   exists (select 1 from actions x where x.on_behalf_of = m.id and x.kind = @k)
+            from messages m join principals a on a.id = m.author_id
+            where m.id = @id
+            """).With("id", messageId).With("h", requester.Handle).With("r", requester.Id).With("k", kind);
+        await using var r = await cmd.ExecuteReaderAsync(ct);
+        if (!await r.ReadAsync(ct)) return null;
+        return new Instruction(r.GetGuid(0), r.GetGuid(1), r.GetString(2), r.GetString(3), r.GetBoolean(4), r.GetFieldValue<string[]>(5),
+            r.IsDBNull(6) ? null : r.GetGuid(6), TimeSpan.FromSeconds(r.GetDouble(7)), r.GetBoolean(8), r.GetBoolean(9), r.GetBoolean(10));
     }
 
     /// <summary>Indicators marked malicious in ioc messages on an incident, as normalised "kind:value".</summary>

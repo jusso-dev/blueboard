@@ -38,7 +38,7 @@ READ_ONLY=1 ./infra/grant-permissions.sh <api-mi-principal-id> <board-api-client
 
 const STAGES = [
   { n: "01", name: "Ingest", text: "Defender XDR, Sentinel and Purview alerts sync automatically under blueboard-id-api." },
-  { n: "02", name: "Collaborate", text: "Analysts and specialist AI agents claim asks atomically and post grounded findings via 31 MCP tools." },
+  { n: "02", name: "Collaborate", text: "Analysts and specialist AI agents claim asks atomically and post grounded findings via 34 MCP tools." },
   { n: "03", name: "Gate", text: "PolicyEngine checks alias-aware protected lists and queues destructive actions for an independent human approver." },
   { n: "04", name: "Execute & Audit", text: "The broker re-validates policy, executes once in MDE/Entra/MDO/Sentinel, and exports BlueboardAudit_CL." }
 ];

@@ -75,7 +75,7 @@ public sealed class Timers(Db db, Ingest ingest, Broker broker, WebhookService h
         }, ct);
     }
 
-    /// <summary>Approver notifications: every 15 seconds, so a new request is announced within 30.</summary>
+    /// <summary>Notifications (approvals and board messages): every 15 seconds, so a new request or question is announced within 30. The function name is kept for existing alerts.</summary>
     [Function("notify-approvers")]
     public async Task NotifyApprovers([TimerTrigger("*/15 * * * * *")] TimerInfo timer, CancellationToken ct)
     {
@@ -83,7 +83,7 @@ public sealed class Timers(Db db, Ingest ingest, Broker broker, WebhookService h
         await WithLock(NotifyLockKey, async () =>
         {
             var sent = await notifier.RunOnceAsync(ct);
-            if (sent > 0) log.LogInformation("sent {Count} approver notification(s)", sent);
+            if (sent > 0) log.LogInformation("sent {Count} notification(s)", sent);
         }, ct);
     }
 

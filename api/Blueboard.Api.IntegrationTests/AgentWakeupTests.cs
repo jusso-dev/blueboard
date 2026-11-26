@@ -128,6 +128,25 @@ public sealed class AgentWakeupTests(TestBoard t) : IClassFixture<TestBoard>
     }
 
     [DbFact]
+    public async Task Person_posting_on_an_incident_the_agent_works_wakes_it_with_thread_reply()
+    {
+        var (hooks, rx) = Hooks();
+        await hooks.EnqueueAsync(Ct);
+        var agent = await t.As("agent2");
+        var sub = await hooks.SubscribeAsync(agent, new SubscribeInput($"https://{Host}/incident-talk", ["thread.reply"]), Ct);
+        var inc = t.IncidentId.ToString();
+        await t.Board.PostAsync(agent, new PostInput("incidents", "Was the download expected?", "question", null, null, inc), ct: Ct);
+        var answer = await t.Board.PostAsync(await t.As("analyst"), new PostInput("incidents", "this was just a test", "chat", null, null, inc), ct: Ct);
+        await t.Board.PostAsync(await t.As("agent"), new PostInput("incidents", "another agent on the same incident", "chat", null, null, inc), ct: Ct);
+        await t.Board.PostAsync(await t.As("analyst"), new PostInput("general", "not about an incident"), ct: Ct);
+
+        await hooks.RunOnceAsync(Ct);
+        Assert.Equal([answer.Id], rx.Got.Select(g => g.Event.MessageId));
+        Assert.Equal("thread.reply", rx.Got.Single().Event.Event);
+        await hooks.UnsubscribeAsync(agent, sub.Id, Ct);
+    }
+
+    [DbFact]
     public async Task Action_decided_and_claim_expired_reach_the_requester()
     {
         var (hooks, rx) = Hooks();

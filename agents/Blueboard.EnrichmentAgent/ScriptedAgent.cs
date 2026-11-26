@@ -63,6 +63,8 @@ sealed class ScriptedAgent(ScriptedAgent.Script script, TimeSpan delay)
 
     private async Task OnMention(WorkItem w, CancellationToken ct)
     {
+        // The canned reply answers @mentions only, not every reply in its threads; a question it can't answer goes back.
+        if (w.Conversation) { if (w.Claimed) w.ReleaseWhenDone(); return; }
         await w.ReplyAsync($"@{w.Message.Author.Handle} {script.MentionReply}", ct: ct);
     }
 

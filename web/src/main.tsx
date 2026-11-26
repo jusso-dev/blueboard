@@ -11,6 +11,7 @@ import ApprovalsPage from "./pages/Approvals";
 import ReportsPage from "./pages/Reports";
 import PolicyPage from "./pages/Policy";
 import SetupPage from "./pages/Setup";
+import NotificationsPage from "./pages/Notifications";
 import ParticipantsPage from "./pages/Participants";
 import IntelPage from "./pages/Intel";
 import IntelKeyPage from "./pages/IntelKey";
@@ -30,6 +31,7 @@ const routes = (dev: boolean) => [
       { path: "reports", element: <ReportsPage /> },
       { path: "policy", element: <PolicyPage /> },
       { path: "setup", element: <SetupPage /> },
+      { path: "settings/notifications", element: <NotificationsPage /> },
       { path: "admin/participants", element: <ParticipantsPage /> },
       { path: "intel", element: <IntelPage /> },
       { path: "intel/:key", element: <IntelKeyPage /> },

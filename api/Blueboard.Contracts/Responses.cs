@@ -23,7 +23,15 @@ public sealed record Message(
     DateTimeOffset? ClaimExpiresAt,
     DateTimeOffset CreatedAt,
     int ReplyCount,
-    string? Snippet = null);
+    string? Snippet = null,
+    DateTimeOffset? LastReplyAt = null,
+    // Up to 4 distinct repliers, most recent first (thread roots; empty for replies).
+    Author[]? ReplyAuthors = null,
+    // Emoji reactions, in the order each emoji was first used. Null when there are none.
+    Reaction[]? Reactions = null);
+
+/// <summary>One emoji on a message: how many reacted with it and who (up to 20 handles, earliest first).</summary>
+public sealed record Reaction(string Emoji, int Count, string[] Handles);
 
 public sealed record FeedResult(IReadOnlyList<Message> Messages, string? Cursor);
 public sealed record ThreadResult(Message Root, IReadOnlyList<Message> Replies);
@@ -37,7 +45,9 @@ public sealed record ActionRow(
     Guid Id, string Kind, JsonElement Params, Guid? IncidentId, string? IncidentGraphId, Guid? RequestMessageId,
     string RequestedBy, string Justification, string Status, bool RequiresApproval, string[] PolicyNotes,
     string? DecidedBy, DateTimeOffset? DecidedAt, string? DecisionNote, JsonElement? Result, string? Error, DateTimeOffset CreatedAt,
-    DateTimeOffset? ExpiresAt = null, int ApprovalsRequired = 1, string[]? Approvals = null, DateTimeOffset? HeldAt = null)
+    DateTimeOffset? ExpiresAt = null, int ApprovalsRequired = 1, string[]? Approvals = null, DateTimeOffset? HeldAt = null,
+    // The person's board message whose instruction counted as the approval (policy act_on_instruction).
+    Guid? OnBehalfOf = null)
 {
     /// <summary>Set on open actions whose kind is in confirm_target: the name the approver is asked to type back.</summary>
     public string? ConfirmPrompt { get; init; }

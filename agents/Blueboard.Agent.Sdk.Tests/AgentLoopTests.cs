@@ -12,11 +12,14 @@ internal sealed class FakeBoard : IBoardTransport
     public readonly List<(string Tool, Dictionary<string, object?> Args)> Calls = [];
     public readonly Dictionary<Guid, string> ClaimedBy = [];
     public string Me = "agent";
+    /// <summary>Make react and set_typing fail, to check they never stop the work.</summary>
+    public bool CosmeticFails;
 
-    public Message Add(string type, string body, string author = "analyst", string channel = "intel", string[]? mentions = null, Guid? parent = null, string kind = "human")
+    public Message Add(string type, string body, string author = "analyst", string channel = "intel", string[]? mentions = null, Guid? parent = null, string kind = "human",
+        Guid? incident = null, DateTimeOffset? at = null)
     {
-        var m = new Message(Guid.NewGuid(), (Feed.Count + 1).ToString(), channel, new Author(author, author, kind), parent, null, null,
-            type, body, null, mentions ?? [], "open", null, null, DateTimeOffset.UtcNow, 0);
+        var m = new Message(Guid.NewGuid(), (Feed.Count + 1).ToString(), channel, new Author(author, author, kind), parent, incident, null,
+            type, body, null, mentions ?? [], "open", null, null, at ?? DateTimeOffset.UtcNow, 0);
         Feed.Add(m);
         return m;
     }
@@ -34,7 +37,13 @@ internal sealed class FakeBoard : IBoardTransport
             "claim_message" => Claim(Guid.Parse(S("message_id"))),
             "renew_claim" => ClaimedBy.GetValueOrDefault(Guid.Parse(S("message_id"))) == Me ? Find(S("message_id")) : "error: you do not hold a claim (status 409)",
             "complete_claim" => Complete(Guid.Parse(S("message_id"))),
-            "post_message" => Add(args.TryGetValue("type", out var t) ? t?.ToString() ?? "chat" : "chat", S("body"), Me, S("channel")),
+            "get_thread" => Thread(Guid.Parse(S("message_id"))),
+            "react" or "set_typing" when CosmeticFails => "error: internal error (status 500)",
+            "react" => new[] { new Reaction(S("emoji"), 1, [Me]) },
+            "set_typing" => new { active = string.Equals(S("active"), "true", StringComparison.OrdinalIgnoreCase) },
+            "post_message" => Add(args.TryGetValue("type", out var t) ? t?.ToString() ?? "chat" : "chat", S("body"), Me, S("channel"), kind: "agent",
+                parent: args.TryGetValue("parent_id", out var pid) && pid is not null ? Guid.Parse(pid.ToString()!) : null,
+                incident: args.TryGetValue("incident", out var inc) && inc is not null ? Guid.Parse(inc.ToString()!) : null),
             _ => $"error: unknown tool {tool} (status 400)",
         };
         return Task.FromResult(result as string ?? JsonSerializer.Serialize(result, BoardJson.Options));
@@ -48,6 +57,12 @@ internal sealed class FakeBoard : IBoardTransport
     }
 
     private Message Find(string id) => Feed.First(m => m.Id.ToString() == id);
+    private ThreadResult Thread(Guid id)
+    {
+        var root = Find(id.ToString());
+        if (ClaimedBy.TryGetValue(id, out var who)) root = root with { ClaimState = "claimed", ClaimedBy = who };
+        return new ThreadResult(root, Feed.Where(m => m.ParentId == id).ToList());
+    }
     private Message Claim(Guid id) { ClaimedBy[id] = Me; return Find(id.ToString()); }
     private Message Complete(Guid id) { ClaimedBy.Remove(id); return Find(id.ToString()); }
 
@@ -295,6 +310,249 @@ public class AgentLoopTests : IDisposable
         Assert.Contains(fake.Calls, c => c.Tool == "post_message" && c.Args["type"]!.ToString() == "finding");
         Assert.Contains(fake.Calls, c => c.Tool == "post_message" && c.Args["type"]!.ToString() == "question" && c.Args["body"]!.ToString()!.Contains("@sentinel-hunter"));
         Assert.Contains(fake.Calls, c => c.Tool == "complete_claim" && c.Args["message_id"]!.ToString() == q.Id.ToString() && c.Args["outcome"]!.ToString() == "release");
+    }
+
+    // ── conversations: people replying to the agent without an @mention ──────────────────────────
+    private (List<WorkItem> Handled, AgentHandler Handler) Recorder()
+    {
+        var handled = new List<WorkItem>();
+        return (handled, (w, _) => { handled.Add(w); return Task.CompletedTask; });
+    }
+
+    [Fact]
+    public async Task Human_reply_in_a_thread_the_agent_posted_in_reaches_the_mention_handler()
+    {
+        var fake = new FakeBoard();
+        await new AgentState { Cursor = "0" }.SaveAsync(StateFile, Ct);
+        var root = fake.Add("finding", "the agent's finding", author: "agent", kind: "agent");
+        var other = fake.Add("chat", "a person's thread");
+        fake.Add("chat", "agent chimes in", author: "agent", kind: "agent", parent: other.Id);
+        var (handled, onMention) = Recorder();
+        await RunOnce(fake, null, onMention);
+
+        // Separate pass (and state reload): the threads are remembered in the state file.
+        var reply = fake.Add("chat", "that host is a test box", parent: root.Id);
+        var reply2 = fake.Add("chat", "agreed, nothing to see", author: "analyst2", parent: other.Id);
+        await RunOnce(fake, null, onMention);
+        Assert.Equal([reply.Id, reply2.Id], handled.Select(w => w.Message.Id));
+        Assert.All(handled, w => Assert.True(w.Conversation));
+        Assert.Equal(0, fake.Count("claim_message")); // chats aren't claimed
+    }
+
+    [Fact]
+    public async Task Agent_and_system_replies_in_the_agents_thread_are_ignored()
+    {
+        var fake = new FakeBoard();
+        await new AgentState { Cursor = "0" }.SaveAsync(StateFile, Ct);
+        var root = fake.Add("finding", "the agent's finding", author: "agent", kind: "agent");
+        fake.Add("chat", "another agent replies", author: "agent2", kind: "agent", parent: root.Id);
+        fake.Add("status", "board status in the thread", author: "board", kind: "system", parent: root.Id);
+        fake.Add("chat", "@agent2 can you check the proxy?", parent: root.Id, mentions: ["agent2"]); // talking to someone else
+        var (handled, onMention) = Recorder();
+        await RunOnce(fake, onMention, onMention);
+        Assert.Empty(handled);
+    }
+
+    [Fact]
+    public async Task Human_reply_in_an_unrelated_thread_is_ignored()
+    {
+        var fake = new FakeBoard();
+        await new AgentState { Cursor = "0" }.SaveAsync(StateFile, Ct);
+        var root = fake.Add("chat", "people talking");
+        fake.Add("chat", "still people talking", author: "analyst2", parent: root.Id);
+        var (handled, onMention) = Recorder();
+        await RunOnce(fake, null, onMention);
+        Assert.Empty(handled);
+    }
+
+    [Fact]
+    public async Task Human_question_in_the_agents_thread_is_claimed_and_answered()
+    {
+        var fake = new FakeBoard();
+        await new AgentState { Cursor = "0" }.SaveAsync(StateFile, Ct);
+        var root = fake.Add("finding", "the agent's finding", author: "agent", kind: "agent", channel: "incidents");
+        var q = fake.Add("question", "was this the only device?", parent: root.Id, channel: "incidents");
+        var (handled, onMention) = Recorder();
+        await RunOnce(fake, null, onMention);
+        Assert.Equal([q.Id], handled.Select(w => w.Message.Id));
+        Assert.True(handled[0].Claimed);
+        Assert.Contains(fake.Calls, c => c.Tool == "complete_claim" && c.Args["message_id"]!.ToString() == q.Id.ToString());
+    }
+
+    [Fact]
+    public async Task Top_level_human_chat_on_an_incident_the_agent_posted_on_reaches_it()
+    {
+        var fake = new FakeBoard();
+        await new AgentState { Cursor = "0" }.SaveAsync(StateFile, Ct);
+        var incident = Guid.NewGuid();
+        var root = fake.Add("incident", "Incident 90210", author: "board", kind: "system", channel: "incidents", incident: incident);
+        fake.Add("question", "Is the PowerShell download expected?", author: "agent", kind: "agent", channel: "incidents", parent: root.Id, incident: incident);
+        var (handled, onMention) = Recorder();
+        await RunOnce(fake, null, onMention);
+
+        var answer = fake.Add("chat", "this was just a test", channel: "incidents", incident: incident);
+        await RunOnce(fake, null, onMention);
+        Assert.Equal([answer.Id], handled.Select(w => w.Message.Id));
+        Assert.True(handled[0].Conversation);
+    }
+
+    [Fact]
+    public async Task Top_level_chat_on_another_or_stale_incident_is_ignored()
+    {
+        var fake = new FakeBoard();
+        await new AgentState { Cursor = "0" }.SaveAsync(StateFile, Ct);
+        var mine = Guid.NewGuid();
+        fake.Add("finding", "agent posted on this incident two days ago", author: "agent", kind: "agent", channel: "incidents", incident: mine,
+            at: DateTimeOffset.UtcNow.AddDays(-2));
+        var (handled, onMention) = Recorder();
+        await RunOnce(fake, null, onMention);
+
+        fake.Add("chat", "a different incident", channel: "incidents", incident: Guid.NewGuid());
+        fake.Add("chat", "the agent hasn't posted here for two days", channel: "incidents", incident: mine);
+        fake.Add("chat", "another agent on the agent's incident", author: "agent2", kind: "agent", channel: "incidents", incident: mine);
+        await RunOnce(fake, null, onMention);
+        Assert.Empty(handled);
+    }
+
+    [Fact]
+    public async Task Agents_own_replies_are_remembered_so_the_answer_to_them_is_heard()
+    {
+        var fake = new FakeBoard();
+        await new AgentState { Cursor = "0" }.SaveAsync(StateFile, Ct);
+        var q = fake.Add("chat", "@agent what is 203.0.113.9?", mentions: ["agent"]);
+        var (handled, onMention) = Recorder();
+        await RunOnce(fake, null, async (w, ct) => { await onMention(w, ct); await w.ReplyAsync("@analyst it's our proxy. Was this expected?", ct: ct); });
+        var followUp = fake.Add("chat", "yes, expected", parent: q.Id);
+        await RunOnce(fake, null, onMention);
+        Assert.Equal([q.Id, followUp.Id], handled.Select(w => w.Message.Id));
+    }
+
+    [Fact]
+    public void Conversation_memory_is_capped()
+    {
+        var state = new AgentState();
+        var first = Guid.NewGuid();
+        state.MarkPosted(first, Guid.NewGuid(), DateTimeOffset.UtcNow);
+        for (var i = 0; i < AgentState.MaxConversations + 10; i++) state.MarkPosted(Guid.NewGuid(), Guid.NewGuid(), DateTimeOffset.UtcNow);
+        Assert.Equal(AgentState.MaxConversations, state.Threads.Count);
+        Assert.Equal(AgentState.MaxConversations, state.Incidents.Count);
+        Assert.False(state.InThread(first));
+    }
+
+    [Fact]
+    public async Task Close_own_question_leaves_a_question_someone_else_holds()
+    {
+        var fake = new FakeBoard();
+        var mine = fake.Add("question", "is this expected?", author: "agent", kind: "agent");
+        var held = fake.Add("question", "who owns this host?", author: "agent", kind: "agent");
+        fake.ClaimedBy[held.Id] = "analyst";
+        await using var board = BoardConnection.Over(fake);
+        var work = new WorkItem(board, mine, "agent", claimed: false);
+        Assert.Equal("done", await work.CloseOwnQuestionAsync(mine.Id, Ct));
+        Assert.StartsWith("left open", await work.CloseOwnQuestionAsync(held.Id, Ct));
+        Assert.DoesNotContain(fake.Calls, c => c.Tool == "complete_claim" && c.Args["message_id"]!.ToString() == held.Id.ToString());
+    }
+
+    [Fact]
+    public async Task Reacts_with_eyes_after_the_claim_and_types_while_the_handler_runs()
+    {
+        var fake = new FakeBoard();
+        await new AgentState { Cursor = "0" }.SaveAsync(StateFile, Ct);
+        var q = fake.Add("question", "@agent who owns 203.0.113.9?", mentions: ["agent"]);
+        List<string> during = [];
+        await RunOnce(fake, null, (w, _) => { during.AddRange(fake.Calls.Select(c => c.Tool)); return Task.CompletedTask; });
+
+        var order = fake.Calls.Select(c => c.Tool).ToList();
+        Assert.True(order.IndexOf("claim_message") < order.IndexOf("react"));
+        var react = fake.Calls.Single(c => c.Tool == "react");
+        Assert.Equal(q.Id.ToString(), react.Args["message_id"]!.ToString());
+        Assert.Equal("👀", react.Args["emoji"]!.ToString());
+        // Typing was on before the handler finished, and turned off before the claim was settled.
+        var typing = fake.Calls.Where(c => c.Tool == "set_typing").ToList();
+        Assert.Equal("True", typing[0].Args["active"]!.ToString());
+        Assert.Equal("False", typing[^1].Args["active"]!.ToString());
+        Assert.True(order.LastIndexOf("set_typing") < order.IndexOf("complete_claim"));
+    }
+
+    [Fact]
+    public async Task Chat_mention_gets_eyes_without_a_claim()
+    {
+        var fake = new FakeBoard();
+        await new AgentState { Cursor = "0" }.SaveAsync(StateFile, Ct);
+        fake.Add("chat", "@agent resolve this as a false positive", mentions: ["agent"]);
+        await RunOnce(fake, null, (_, _) => Task.CompletedTask);
+        Assert.Equal(0, fake.Count("claim_message"));
+        Assert.Equal(1, fake.Count("react"));
+    }
+
+    [Fact]
+    public async Task Typing_is_renewed_while_a_long_handler_runs()
+    {
+        var fake = new FakeBoard();
+        await new AgentState { Cursor = "0" }.SaveAsync(StateFile, Ct);
+        fake.Add("chat", "@agent hunt for this", mentions: ["agent"]);
+        await using var board = BoardConnection.Over(fake);
+        var state = await AgentState.LoadAsync(StateFile, Ct);
+        await BoardAgent.PollOnceAsync(board, Options with { TypingRenewInterval = TimeSpan.FromMilliseconds(20) }, state, fake.Me, null, null,
+            async (_, ct) => await Task.Delay(200, ct), Ct);
+        var active = fake.Calls.Count(c => c.Tool == "set_typing" && c.Args["active"]!.ToString() == "True");
+        Assert.True(active >= 3, $"typing renewed {active} times");
+        Assert.Equal("False", fake.Calls.Last(c => c.Tool == "set_typing").Args["active"]!.ToString());
+    }
+
+    [Fact]
+    public async Task Incidents_get_no_eyes_or_typing()
+    {
+        var fake = new FakeBoard();
+        await new AgentState { Cursor = "0" }.SaveAsync(StateFile, Ct);
+        fake.Add("incident", "Incident 90210", author: "board", kind: "system", channel: "incidents", incident: Guid.NewGuid());
+        var handled = 0;
+        await using var board = BoardConnection.Over(fake);
+        var state = await AgentState.LoadAsync(StateFile, Ct);
+        await BoardAgent.PollOnceAsync(board, Options, state, fake.Me, (_, _) => { handled++; return Task.CompletedTask; }, null, null, Ct);
+        Assert.Equal(1, handled);
+        Assert.Equal(0, fake.Count("react"));
+        Assert.Equal(0, fake.Count("set_typing"));
+    }
+
+    [Fact]
+    public async Task Ack_and_typing_can_be_turned_off()
+    {
+        var fake = new FakeBoard();
+        await new AgentState { Cursor = "0" }.SaveAsync(StateFile, Ct);
+        fake.Add("question", "who owns 203.0.113.9?");
+        await using var board = BoardConnection.Over(fake);
+        var state = await AgentState.LoadAsync(StateFile, Ct);
+        await BoardAgent.PollOnceAsync(board, Options with { AckReaction = null, ShowTyping = false }, state, fake.Me, null, (_, _) => Task.CompletedTask, null, Ct);
+        Assert.Equal(1, fake.Count("claim_message"));
+        Assert.Equal(0, fake.Count("react"));
+        Assert.Equal(0, fake.Count("set_typing"));
+    }
+
+    [Fact]
+    public async Task Failed_reaction_or_typing_never_fails_the_work()
+    {
+        var fake = new FakeBoard { CosmeticFails = true };
+        await new AgentState { Cursor = "0" }.SaveAsync(StateFile, Ct);
+        var q = fake.Add("question", "who owns 203.0.113.9?");
+        var handled = 0;
+        await RunOnce(fake, (_, _) => { handled++; return Task.CompletedTask; }, null);
+        Assert.Equal(1, handled);
+        Assert.Contains(fake.Calls, c => c.Tool == "complete_claim" && c.Args["message_id"]!.ToString() == q.Id.ToString() && c.Args["outcome"]!.ToString() == "done");
+    }
+
+    [Fact]
+    public async Task Work_item_react_reacts_to_its_message()
+    {
+        var fake = new FakeBoard();
+        await new AgentState { Cursor = "0" }.SaveAsync(StateFile, Ct);
+        var m = fake.Add("chat", "@agent thanks!", mentions: ["agent"]);
+        await using var board = BoardConnection.Over(fake);
+        var state = await AgentState.LoadAsync(StateFile, Ct);
+        Reaction[]? got = null;
+        await BoardAgent.PollOnceAsync(board, Options with { AckReaction = null }, state, fake.Me, null, null, async (w, ct) => got = await w.ReactAsync("👍", ct), Ct);
+        Assert.Equal("👍", Assert.Single(got!).Emoji);
+        Assert.Equal(m.Id.ToString(), fake.Calls.Single(c => c.Tool == "react").Args["message_id"]!.ToString());
     }
 
     private async Task RunOnce(FakeBoard fake, AgentHandler? onQuestion, AgentHandler? onMention)

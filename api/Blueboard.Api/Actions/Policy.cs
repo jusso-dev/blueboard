@@ -28,6 +28,12 @@ public sealed record Policy
     public string[] RequireTwoApprovers { get; init; } = [];
     /// <summary>Kinds whose approver must type the target back (a device name, UPN or indicator) to stop click-through approvals.</summary>
     public string[] ConfirmTarget { get; init; } = [];
+    /// <summary>
+    /// Kinds an agent may file on a human approver's instruction (request_action on_behalf_of = their board message):
+    /// the instruction counts as that person's approval. Never kinds in require_two_approvers; kinds also in
+    /// confirm_target are refused at request time (a person has to type the target).
+    /// </summary>
+    public string[] ActOnInstruction { get; init; } = [];
     /// <summary>A pending request older than this can't be approved; the recovery timer marks it expired.</summary>
     public double ExpiryHours { get; init; } = 4;
     public Dictionary<string, double> ExpiryHoursByKind { get; init; } = [];
@@ -80,9 +86,12 @@ public sealed record Policy
     {
         var errors = new List<string>();
         if (Version != CurrentVersion) errors.Add($"version must be {CurrentVersion} (got {Version})");
-        foreach (var (key, kinds) in new[] { ("auto_approve", AutoApprove), ("disabled", Disabled), ("require_two_approvers", RequireTwoApprovers), ("confirm_target", ConfirmTarget) })
+        foreach (var (key, kinds) in new[] { ("auto_approve", AutoApprove), ("disabled", Disabled), ("require_two_approvers", RequireTwoApprovers), ("confirm_target", ConfirmTarget), ("act_on_instruction", ActOnInstruction) })
             foreach (var k in kinds.Where(k => !Catalog.All.ContainsKey(k)))
                 errors.Add($"{key}: unknown action kind {k}");
+        // One person's chat message can't stand in for two people's approvals.
+        foreach (var k in ActOnInstruction.Where(RequireTwoApprovers.Contains))
+            errors.Add($"act_on_instruction: {k} is in require_two_approvers, which needs two approvers, so a single person's instruction can't approve it");
         foreach (var k in ExpiryHoursByKind.Keys.Where(k => !Catalog.All.ContainsKey(k)))
             errors.Add($"expiry_hours_by_kind: unknown action kind {k}");
         foreach (var (k, h) in ExpiryHoursByKind.Append(new("default", ExpiryHours)))

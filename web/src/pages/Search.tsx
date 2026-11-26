@@ -2,6 +2,7 @@ import { useSearchParams } from "react-router";
 import { useMemo, useState } from "react";
 import { ThreadPanel } from "../components/feed";
 import { MessageRow } from "../components/message";
+import { replySummary } from "../lib/chat";
 import { PageHeader } from "../components/shell";
 import { useLiveQuery, type Channel, type Incident, type Message } from "../lib/api";
 import { Button, cx, Empty, Input, Segmented, Select } from "../components/ui";
@@ -150,8 +151,8 @@ export default function SearchPage() {
         </div>
       </div>
 
-      <div className={cx("grid min-h-0 flex-1", thread ? "grid-cols-[minmax(0,1fr)_minmax(340px,440px)] max-lg:grid-cols-1" : "grid-cols-1")}>
-        <div className="min-h-0 overflow-y-auto" aria-live="polite" aria-busy={loading}>
+      <div className="flex min-h-0 flex-1">
+        <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden" aria-live="polite" aria-busy={loading}>
           {error && <Empty title="Search failed">{error.message}</Empty>}
           {data && data.hits.length === 0 && (
             <Empty title={q ? `No messages match "${q}"` : "No messages match these filters"}>
@@ -159,7 +160,7 @@ export default function SearchPage() {
             </Empty>
           )}
           {data?.hits.map((m) => (
-            <MessageRow key={m.id} m={m} showChannel onOpenThread={(x) => setThread(x.parent_id ?? x.id)} selected={thread === m.id} />
+            <MessageRow key={m.id} m={m} showChannel onOpenThread={setThread} replies={m.parent_id ? null : replySummary(m)} selected={thread === (m.parent_id ?? m.id)} />
           ))}
           {data && data.total > PAGE && (
             <nav aria-label="Results pages" className="flex items-center justify-between px-5 py-3">

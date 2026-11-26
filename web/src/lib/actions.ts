@@ -105,6 +105,7 @@ export const MIN_JUSTIFICATION = 20;
 export const MODE_WORDS: Record<string, string> = {
   auto: "Runs on its own",
   approval: "Needs approval",
+  on_instruction: "Runs when an approver asks",
   two_approvers: "Needs two approvers",
   disabled: "Off",
 };

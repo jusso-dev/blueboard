@@ -58,7 +58,14 @@ public sealed record Settings
     public string? NotifyWebhookSecret { get; init; }
     public string? NotifyMailFrom { get; init; }
     public string[] NotifyMailTo { get; init; } = [];
-    /// <summary>Exact host names the Teams and webhook URLs may point at (https only).</summary>
+    /// <summary>ntfy server base URL plus topic (e.g. https://ntfy.example.com/blueboard). A secret: never logged or returned.</summary>
+    public string? NotifyNtfyUrl { get; init; }
+    /// <summary>Optional ntfy access token (tk_…), sent as Authorization: Bearer. Never logged or returned.</summary>
+    public string? NotifyNtfyToken { get; init; }
+    /// <summary>
+    /// Exact host names the Teams, webhook and ntfy URLs may point at (https only; ntfy may use plain http and a
+    /// custom port on a single-label host such as a Docker service name).
+    /// </summary>
     public string[] NotifyAllowedHosts { get; init; } = [];
     public int NotifyRemindMinutes { get; init; } = 15;
 
@@ -127,6 +134,8 @@ public sealed record Settings
             NotifyWebhookSecret = Env("NOTIFY_WEBHOOK_SECRET"),
             NotifyMailFrom = Env("NOTIFY_MAIL_FROM"),
             NotifyMailTo = List("NOTIFY_MAIL_TO"),
+            NotifyNtfyUrl = Env("NOTIFY_NTFY_URL"),
+            NotifyNtfyToken = Env("NOTIFY_NTFY_TOKEN"),
             NotifyAllowedHosts = List("NOTIFY_ALLOWED_HOSTS"),
             NotifyRemindMinutes = Math.Max(1, Int("NOTIFY_REMIND_MINUTES", 15)),
             AuditDceEndpoint = Env("AUDIT_DCE_ENDPOINT"),

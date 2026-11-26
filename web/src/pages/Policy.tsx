@@ -16,7 +16,7 @@ type PolicyView = {
   lists: { users: string[]; devices: string[]; indicators: string[]; apps?: string[] } | null;
 };
 
-const MODE_TONE: Record<string, "good" | "warning" | "neutral" | "critical"> = { auto: "good", approval: "warning", two_approvers: "warning", disabled: "neutral" };
+const MODE_TONE: Record<string, "good" | "warning" | "neutral" | "critical"> = { auto: "good", approval: "warning", on_instruction: "good", two_approvers: "warning", disabled: "neutral" };
 
 /** Read-only view of the effective policy (issue #11). Policy is file-based; there is no editing here. */
 export default function PolicyPage() {

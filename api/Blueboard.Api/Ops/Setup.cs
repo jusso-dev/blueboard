@@ -323,11 +323,11 @@ public sealed class Setup(Db db, Settings settings, Policy policy, MsClient ms, 
     // notifications (#3) -----------------------------------------------------------------------------
     private async Task<Check> NotificationsAsync(CancellationToken ct)
     {
-        const string name = "Approver notifications";
+        const string name = "Notifications";
         var sinks = notifier.Sinks();
         if (sinks.Count == 0)
-            return new("notify", name, CheckStatus.Warning, "Approvers are not notified: no Teams, email or webhook is configured.",
-                "Set NOTIFY_TEAMS_WEBHOOK_URL, NOTIFY_MAIL_FROM + NOTIFY_MAIL_TO, or NOTIFY_WEBHOOK_URL (docs/OPERATIONS.md).");
+            return new("notify", name, CheckStatus.Warning, "Nobody is notified outside the board (approvals, questions, mentions, verdicts): no Teams, email, webhook or ntfy is configured.",
+                "Set NOTIFY_TEAMS_WEBHOOK_URL, NOTIFY_MAIL_FROM + NOTIFY_MAIL_TO, NOTIFY_WEBHOOK_URL or NOTIFY_NTFY_URL (docs/OPERATIONS.md).");
         IReadOnlyDictionary<string, (string Status, DateTimeOffset At, string? Error)> last;
         try { last = await notifier.LastDeliveryAsync(ct); }
         catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested) { last = new Dictionary<string, (string, DateTimeOffset, string?)>(); }
@@ -340,9 +340,9 @@ public sealed class Setup(Db db, Settings settings, Policy policy, MsClient ms, 
                 "Fix the settings named below (docs/OPERATIONS.md § Notifications), then use Send test notification.", lines);
         var failing = sinks.Where(s => last.TryGetValue(s.Sink, out var l) && l.Status == "failed").Select(s => s.Sink).ToList();
         if (failing.Count > 0)
-            return new("notify", name, CheckStatus.Warning, $"Last delivery failed for {string.Join(", ", failing)}: approvers may not have been told.",
-                "Check the receiving end (Teams workflow, mailbox, webhook receiver) and NOTIFY_ALLOWED_HOSTS, then use Send test notification.", lines);
-        return new("notify", name, CheckStatus.Ok, $"{string.Join(", ", sinks.Select(s => s.Sink))}, reminders every {settings.NotifyRemindMinutes} minutes.", null, lines);
+            return new("notify", name, CheckStatus.Warning, $"Last delivery failed for {string.Join(", ", failing)}: people may not have been told.",
+                "Check the receiving end (Teams workflow, mailbox, webhook receiver, ntfy server and its token) and NOTIFY_ALLOWED_HOSTS, then use Send test notification.", lines);
+        return new("notify", name, CheckStatus.Ok, $"{string.Join(", ", sinks.Select(s => s.Sink))}, approval reminders every {settings.NotifyRemindMinutes} minutes; which events go to whom is set under Settings → Notifications.", null, lines);
     }
 
     // audit export (#26) -------------------------------------------------------------------------------

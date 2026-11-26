@@ -24,6 +24,27 @@ public sealed class BoardTests(TestBoard t) : IClassFixture<TestBoard>
     }
 
     [DbFact]
+    public async Task Thread_roots_carry_last_reply_and_the_latest_repliers()
+    {
+        var a = await t.As("analyst");
+        var root = await t.Board.PostAsync(a, new PostInput("triage", "root for the replies row"), ct: Ct);
+        Assert.Equal((0, null), (root.ReplyCount, root.LastReplyAt));
+        Assert.Empty(root.ReplyAuthors!);
+        foreach (var who in new[] { "analyst2", "agent", "analyst2", "reader", "agent2", "analyst" })
+            await t.Board.PostAsync(await t.As(who), new PostInput("triage", $"reply from {who}", "chat", null, root.Id), ct: Ct);
+
+        var thread = await t.Board.GetThreadAsync(root.Id, Ct);
+        Assert.Equal(6, thread.Root.ReplyCount);
+        Assert.Equal(thread.Replies[^1].CreatedAt, thread.Root.LastReplyAt);
+        // Distinct, most recent first, at most 4: analyst, agent2, reader, analyst2 (agent's only reply is older).
+        Assert.Equal(["analyst", "agent2", "reader", "analyst2"], thread.Root.ReplyAuthors!.Select(x => x.Handle));
+        Assert.Equal(("Agent Two", "agent"), (thread.Root.ReplyAuthors![1].DisplayName, thread.Root.ReplyAuthors[1].Kind));
+        // The feed returns the same shape.
+        var feed = await t.Board.ReadFeedAsync(new FeedQuery(Channel: "triage", RootsOnly: true, Limit: 5), Ct);
+        Assert.Equal(thread.Root.ReplyAuthors!.Select(x => x.Handle), feed.Messages.Single(m => m.Id == root.Id).ReplyAuthors!.Select(x => x.Handle));
+    }
+
+    [DbFact]
     public async Task Outside_principals_cannot_post_board_types()
     {
         var agent = await t.As("agent");

@@ -4,6 +4,7 @@ using Blueboard.Api.Auth;
 using Blueboard.Api.Board;
 using Blueboard.Api.Core;
 using Blueboard.Api.Graph;
+using Blueboard.Api.Ops;
 using Blueboard.Api.Webhooks;
 using Blueboard.Contracts;
 using Blueboard.Api.Intel;
@@ -20,7 +21,7 @@ namespace Blueboard.Api.Mcp;
 /// Every call authenticates the bearer token from the transport headers and re-reads the caller's roles from Entra;
 /// there is no shared key. Board content is untrusted data.
 /// </summary>
-public sealed class BoardTools(Authenticator auth, BoardService board, Search search, IncidentQueries incidents, Broker broker, Enrichment enrich, Ingest ingest, WebhookService hooks, Policy policy, PlaybookRunner playbooks, PlaybookSet playbookSet, IntelService intel, ILogger<BoardTools> log)
+public sealed class BoardTools(Authenticator auth, BoardService board, Search search, IncidentQueries incidents, Broker broker, Enrichment enrich, Ingest ingest, WebhookService hooks, Policy policy, PlaybookRunner playbooks, PlaybookSet playbookSet, IntelService intel, Participants participants, ILogger<BoardTools> log)
 {
     /// <summary>Authenticate, require the tool's role, read its input record, run, and return JSON text or an error string.</summary>
     private async Task<string> Call<TIn>(ToolInvocationContext ctx, Func<Principal, TIn, Task<object?>> fn) where TIn : class
@@ -78,6 +79,10 @@ public sealed class BoardTools(Authenticator auth, BoardService board, Search se
     public Task<string> ListParticipants([McpToolTrigger(Tools.ListParticipants, Tools.ListParticipantsDoc)] ToolInvocationContext ctx) =>
         Call(ctx, async _ => await board.ListParticipantsAsync());
 
+    [Function(nameof(SetProfile))]
+    public Task<string> SetProfile([McpToolTrigger(Tools.SetProfile, Tools.SetProfileDoc)] ToolInvocationContext ctx) =>
+        Call<ProfileInput>(ctx, async (me, p) => await participants.SetOwnProfileAsync(me, p));
+
     [Function(nameof(ReadFeed))]
     public Task<string> ReadFeed([McpToolTrigger(Tools.ReadFeed, Tools.ReadFeedDoc)] ToolInvocationContext ctx) =>
         Call<FeedQuery>(ctx, async (_, q) => await board.ReadFeedAsync(q));
@@ -93,6 +98,14 @@ public sealed class BoardTools(Authenticator auth, BoardService board, Search se
     [Function(nameof(PostMessage))]
     public Task<string> PostMessage([McpToolTrigger(Tools.PostMessage, Tools.PostMessageDoc)] ToolInvocationContext ctx) =>
         Call<PostInput>(ctx, async (me, input) => await board.PostAsync(me, input));
+
+    [Function(nameof(React))]
+    public Task<string> React([McpToolTrigger(Tools.React, Tools.ReactDoc)] ToolInvocationContext ctx) =>
+        Call<ReactInput>(ctx, async (me, r) => await board.ReactAsync(me, r.MessageId, r.Emoji, r.Remove));
+
+    [Function(nameof(SetTyping))]
+    public Task<string> SetTyping([McpToolTrigger(Tools.SetTyping, Tools.SetTypingDoc)] ToolInvocationContext ctx) =>
+        Call<SetTypingInput>(ctx, async (me, t) => await board.SetTypingAsync(me, t.MessageId, t.Active));
 
     [Function(nameof(ClaimMessage))]
     public Task<string> ClaimMessage([McpToolTrigger(Tools.ClaimMessage, Tools.ClaimMessageDoc)] ToolInvocationContext ctx) =>

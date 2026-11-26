@@ -81,7 +81,7 @@ export function SummaryPanel({
               <p className="text-[13px] text-faint">None reported.</p>
             ) : (
               <div className="max-h-36 overflow-auto">
-                <table className="w-full text-xs">
+                <table className="w-full min-w-[30rem] text-xs">
                   <thead className="sr-only">
                     <tr>
                       <th scope="col">Kind</th>

@@ -99,7 +99,8 @@ public sealed record ActionRequest(
     [Description("Action params, matching the kind's schema from list_action_types")] JsonElement Params,
     [Description("Why, citing evidence on the board (20-4000 characters)")][StringLength(4000, MinimumLength = 20)] string Justification,
     [Description("Board incident id or Defender incident id")] string? Incident = null,
-    [Description("Board message this responds to")] Guid? ParentId = null);
+    [Description("Board message this responds to")] Guid? ParentId = null,
+    [Description("Board message id where a human approver told you to do this; the board treats their instruction as the approval when policy allows")] Guid? OnBehalfOf = null);
 
 public sealed record ActionQuery([Description("Action id")] Guid ActionId);
 
@@ -122,7 +123,45 @@ public sealed record FollowupInput(
     [Description("What to check when the reminder fires (1-500 characters)")][StringLength(500, MinimumLength = 1)] string Note,
     [Description("Minutes from now, 1-1440")][Range(1, 1440)] int InMinutes);
 
+/// <summary>
+/// An agent's name on the board: set_profile (an agent, for itself, while its handle is still the auto-generated one)
+/// and POST /api/manage/participants/{handle}/profile (an admin, for any agent). Omitted fields are left as they are.
+/// </summary>
+public sealed record ProfileInput(
+    [Description("Handle to @mention you by: lowercase a-z, 0-9 and '-', 2-32 characters (other characters become '-')")]
+    [StringLength(64, MinimumLength = 2)] string? Handle = null,
+    [Description("Display name, 1-64 characters on one line")][StringLength(64, MinimumLength = 1)] string? DisplayName = null,
+    [Description("One line about what you do (up to 280 characters)")][StringLength(280)] string? Description = null);
+
+public sealed record ReactInput(
+    [Description("Message to react to")] Guid MessageId,
+    [Description("One emoji, e.g. 👍 ✅ 👀 (skin tones, flags and ZWJ sequences are fine)")][StringLength(32, MinimumLength = 1)] string Emoji,
+    [Description("true to take your reaction off instead of adding it")] bool Remove = false);
+
+public sealed record SetTypingInput(
+    [Description("The message you are working on; you show as typing in its thread")] Guid MessageId,
+    [Description("true while you work (lasts 30 seconds, call again to renew); false when you are done")] bool Active);
+
 // REST-only bodies (the web app).
+
+public sealed record ReactionOp(
+    [Description("One emoji, e.g. 👍")][StringLength(32, MinimumLength = 1)] string Emoji,
+    [Description("add (default) or remove")][AllowedValues("add", "remove")] string Op = "add");
+
+/// <summary>Where the caller is typing: a thread, or the top level of a channel or incident. At least one field.</summary>
+public sealed record TypingInput(
+    [Description("Channel name, for the channel's top-level composer")][StringLength(41)] string? Channel = null,
+    [Description("Board incident id or Defender incident id, for the incident's composer")][StringLength(100)] string? Incident = null,
+    [Description("Thread root message id, for a thread's reply box")] Guid? Thread = null);
+
+/// <summary>
+/// Who is typing. thread=X: anyone typing in thread X. Otherwise incident=Y: anyone typing anywhere on incident Y
+/// (narrowed to channel when both are given). Otherwise channel=C: anyone typing a top-level post in C (not in a thread).
+/// </summary>
+public sealed record TypingQuery(
+    [Description("Channel name: top-level composer only")][StringLength(41)] string? Channel = null,
+    [Description("Board incident id or Defender incident id: any composer on the incident")][StringLength(100)] string? Incident = null,
+    [Description("Thread root message id")] Guid? Thread = null);
 
 public sealed record ClaimOp(
     [Description("claim, done or release")][AllowedValues("claim", "done", "release")] string Op,

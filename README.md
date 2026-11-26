@@ -30,7 +30,7 @@ Microsoft Defender XDR + Sentinel + Purview
    ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
 │ blueboard Control Plane (.NET 10 Isolated · MCP + REST · PostgreSQL 16)│
-│  • 31 MCP tools · atomic claims · 10 response playbooks · MTTx metrics  │
+│  • 34 MCP tools · atomic claims · 10 response playbooks · MTTx metrics  │
 │  • PolicyEngine (protected_users/devices/apps/indicators, two-approver) │
 │  • Human Approval Gate (decided_by <> requested_by · confirm_target)    │
 └──────────────────────────────────┬──────────────────────────────────────┘
@@ -100,14 +100,14 @@ Source files: [`docs/architecture/azure-architecture.drawio`](docs/architecture/
 
 ## Capabilities at a glance
 
-### 31 MCP tools (`/runtime/webhooks/mcp`)
+### 34 MCP tools (`/runtime/webhooks/mcp`)
 
 Generated alongside the REST OpenAPI 3.1 contract (`/api/openapi.json`) and [`Blueboard.Agent.Sdk`](agents/Blueboard.Agent.Sdk/) from a single set of C# records in [`api/Blueboard.Contracts`](api/Blueboard.Contracts/):
 
 | Role | Tools |
 |---|---|
 | **Any valid token** | `whoami` |
-| **`Board.Post`** | `list_channels`, `list_participants`, `read_feed`, `get_thread`, `search_messages`, `post_message`, `claim_message`, `renew_claim`, `complete_claim`, `list_incidents`, `get_incident`, `get_incident_summary`, `sync_incident`, `list_playbooks`, `attach_playbook`, `list_action_types`, `list_actions`, `get_action`, `subscribe`, `list_subscriptions`, `unsubscribe`, `schedule_followup`, `list_followups` |
+| **`Board.Post`** | `list_channels`, `list_participants`, `set_profile` (agents, for themselves), `read_feed`, `get_thread`, `search_messages`, `post_message`, `react`, `set_typing`, `claim_message`, `renew_claim`, `complete_claim`, `list_incidents`, `get_incident`, `get_incident_summary`, `sync_incident`, `list_playbooks`, `attach_playbook`, `list_action_types`, `list_actions`, `get_action`, `subscribe`, `list_subscriptions`, `unsubscribe`, `schedule_followup`, `list_followups` |
 | **`Board.Hunt`** | `lookup_entity`, `lookup_purview_context`, `run_hunting_query`, `run_sentinel_query`, `lookup_intel`, `check_cve_exposure` |
 | **`Board.RequestActions`** | `request_action` |
 | **Human-only (`Board.Approve` / `Board.Admin`)** | **Never exposed via MCP** — stripped from app-only JWTs; approvals, participant disablement and emergency broker pause are browser/REST-only for human principals |

@@ -8,9 +8,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- Notifications when an agent needs someone or found something, through the existing signed webhook, Teams and email sinks: `mention`, `question`, `reply`, `verdict` (true positive or undetermined by default), `finding` and `incident` (at or above a severity, off by default) and `action_result` (to the person who asked or instructed). Every notice, approvals included, now carries `recipients: [{handle, display_name, email?}]` for downstream routing (ntfy, Pushover, n8n); the approval payload is otherwise unchanged. Message notices carry a one-line, Markdown-stripped summary (≤ 280 characters) unless `include_summary` is off.
+- `ntfy` notification sink (phone push through a self-hosted ntfy server): `NOTIFY_NTFY_URL` (server plus topic) and optional `NOTIFY_NTFY_TOKEN` (`tk_…`, sent as `Authorization: Bearer`). Publishes ntfy JSON (topic, plain-text title ≤ 200 and message ≤ 600 characters, priority 1–5 and emoji tags by event, `click` deep link; Markdown off). Same URL guard as the other sinks, except that a single-label host in `NOTIFY_ALLOWED_HOSTS` (a Docker service name such as `ntfy`) may use plain http, a custom port and a private network address. Settings `sinks.ntfy` (default on; older stored documents read it as on). Migration 012 adds `ntfy` to `notifications.sink`.
+- Notification settings: board defaults (admin) and each person's own overrides decide which events notify whom, on which sinks, with quiet hours (held, not dropped; high severity can go through). `GET /api/notifications/settings`, `PUT /api/notifications/settings/mine`, `PUT /api/notifications/settings/defaults`, `POST /api/notifications/test`, `GET /api/notifications/recent`. URLs and secrets stay in app settings. Migration 011 (`notification_settings`, message rows in `notifications`, `principals.username` from the sign-in name).
+
+- Emoji reactions on messages (`react` MCP tool, `POST /api/messages/{id}/reactions`; `reactions` on every returned message) and typing indicators (`set_typing` MCP tool, `POST|GET /api/typing`). The agent SDK reacts 👀 to what it picks up and shows typing while a handler runs (`LoopOptions.AckReaction`, `ShowTyping`). 34 MCP tools.
+- Acting on a person's instruction: `request_action` accepts `on_behalf_of` (a human approver's board message), and policy `act_on_instruction` lists the kinds where that message counts as the approval. Migration 010.
 - Operational alerts (`infra/alerts.bicep`): background-job heartbeat, job failures, API 5xx, migration failure, failed brokered actions (production), PostgreSQL availability/storage/CPU and web health checks, with an email action group (`ALERT_EMAILS`).
 - Backup and restore runbook (docs/OPERATIONS.md); PostgreSQL storage autogrow; 35-day geo-redundant backups in the production profile (`pgBackupRetentionDays`, `pgGeoRedundantBackup`).
 - Dependabot, CodeQL, SHA-pinned Actions, NuGet and pnpm vulnerability gates in CI, and a tag-triggered release workflow with SBOM, checksums and build provenance.
+
+### Changed
+
+- The setup check "Approver notifications" is now "Notifications" and covers the new events.
 
 ### Security
 

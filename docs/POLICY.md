@@ -44,6 +44,7 @@ Warnings (allowed, but probably not what you meant):
 | `require_target_in_incident` | `true` | Flag targets missing from the linked incident's evidence. A flagged request never runs on its own. |
 | `require_two_approvers` | none | Kinds that need two different human approvers. Suggested: `disable_user`, `purge_email`, `block_indicator`, `disable_service_principal`. |
 | `confirm_target` | none | Kinds where the approver types the target back (a device name, UPN, app or indicator) before approving or releasing held actions. Checked by the API, not just the page. |
+| `act_on_instruction` | none | Kinds an agent may file on a human approver's instruction in chat (`request_action` with `on_behalf_of`): the instruction counts as that person's approval. See [Acting on a person's instruction](#acting-on-a-persons-instruction). Can't overlap `require_two_approvers`. Suggested: `update_incident`, `add_incident_comment`, `run_av_scan`, `collect_investigation_package`. |
 | `expiry_hours` | `4` | How long a request may wait for a decision. |
 | `expiry_hours_by_kind` | none | Per-kind override, for example `{ "isolate_device": 1 }`. |
 | `limits` | see below | Rate limits and the per-incident cap. |
@@ -56,6 +57,25 @@ Every destructive action needs a decision from a human with `Board.Approve` who 
 - **Policy is checked again at approval, Run now and execution.** If policy now rejects the request (for example, the device or app was added to a protected list and the board reloaded its policy), approval, held-action **Run now**, or `Broker.ExecuteAsync` refuses it, marks it `rejected`, and audits `action.rejected_on_recheck` / `action.rejected`. Denying is always allowed.
 - **Two approvers.** For kinds in `require_two_approvers`, the first approval moves the request to `approved_once` (shown as "1 of 2 approvals") and audits `action.approved_once`. A second, different approver runs it. The same person can't approve twice, and the requester can't approve at all. A request at 1 of 2 can still be denied or expire.
 - **Typed confirmation.** For kinds in `confirm_target`, the approver types any name the evidence gives the target, case-insensitively — both on **Approve** and when releasing a held action via **Run now** (`POST /api/actions/{id}/run`).
+
+### Acting on a person's instruction
+
+An analyst who tells an agent "resolve this as a false positive" has already decided. With the kind in `act_on_instruction`, the agent files `request_action` with `on_behalf_of` set to the id of that message, and the board treats the message as the analyst's approval: it records an `action_approvals` row for them (note `instructed in message <id>`), sets `decided_by` to them, audits `action.approved` with `{ "via": "instruction", "message_id": … }` under their name, labels the request "approved on @analyst's instruction" and runs it the way an auto-approved action runs (`BROKER_EXECUTE` still decides whether it really reaches Microsoft).
+
+The board refuses `on_behalf_of` with a 400 that names the failed check, and files nothing, unless every one of these holds:
+
+- the message exists and its author is a person (`kind = human`, never an agent or the board), enabled, and holds `Board.Approve`;
+- the author isn't the requester;
+- the message is on the same incident as the action (a message on no incident never counts);
+- it was posted at most 60 minutes ago;
+- it @mentions the requester, or is in a thread the requester has posted in;
+- the kind is in `act_on_instruction`, is not in `confirm_target` ("this kind needs a person to approve it on the board") and doesn't need two approvers;
+- the broker isn't paused;
+- no other action of the same kind was filed on the same message (one instruction, one action per kind; a unique index backs this).
+
+Only requests policy would otherwise hold for approval use the instruction. A request policy rejects is still rejected, and one that would run on its own still does.
+
+**Security note.** This lets an approver's chat message count as their approval. It's limited to the kinds you list, and never applies to `confirm_target` or two-approver kinds. An agent can't approve itself with it: agent-authored, board-authored, non-approver, disabled, stale, off-incident and reused messages are all refused, and every check runs on the board, not in the agent. Only list kinds where "a person said so in the incident thread" is as good as a click on **Approve** for your team. The approver is still accountable: their message, the action and the audit row link to each other.
 
 Action states: `pending_approval` → `approved_once` (two-approver kinds only) → `approved` → `running` → `succeeded` or `failed`. A request can also end as `rejected` (by policy), `denied` (by a person) or `expired`.
 
@@ -94,7 +114,7 @@ Front Door or WAF rate limits are still worth adding in production. These limits
 
 ## Seeing and testing policy on the board
 
-- **`/policy`** (everyone with `Board.Post`): each action's mode in words, protected list counts, rate limits and warnings. Board admins can expand the protected lists; everyone else sees counts only. Backed by `GET /api/policy`.
+- **`/policy`** (everyone with `Board.Post`): each action's mode in words (`auto`, `approval`, `on_instruction`, `two_approvers` or `disabled`), protected list counts, rate limits and warnings. Board admins can expand the protected lists; everyone else sees counts only. Backed by `GET /api/policy`.
 - **What would happen if…**: the form on `/policy` calls `POST /api/policy/simulate` with an action, its parameters and an optional incident, and shows the decision and notes. Nothing is filed.
 - **Request preview**: the "Request action" form calls `POST /api/actions/preview` (needs `Board.RequestActions`) as you type.
 - The simulator, the preview and a real request all go through `Broker.PrepareAsync` and `PolicyEngine.Assess`, so they can't disagree. Unit and integration tests check this for every fixture.

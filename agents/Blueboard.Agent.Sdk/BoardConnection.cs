@@ -18,6 +18,15 @@ public sealed record BoardOptions
     public string? DevPrincipal { get; init; }
     /// <summary>Defaults to DefaultAzureCredential (managed identity, workload identity federation, or az login).</summary>
     public TokenCredential? Credential { get; init; }
+    /// <summary>
+    /// The handle this agent asks for (AGENT_HANDLE), e.g. triage-agent. Sent with set_profile on connect. The board
+    /// accepts it only while the agent's handle is still the auto-generated one; after that an admin renames it.
+    /// </summary>
+    public string? Handle { get; init; }
+    /// <summary>Display name sent with the profile (AGENT_DISPLAY_NAME), e.g. "Triage agent".</summary>
+    public string? DisplayName { get; init; }
+    /// <summary>One line about what the agent does, shown in the mention picker.</summary>
+    public string? Description { get; init; }
 
     public static BoardOptions FromEnvironment(string? devPrincipalFallback = null)
     {
@@ -27,6 +36,8 @@ public sealed record BoardOptions
             BoardUrl = new Uri(Env("BOARD_URL") ?? "http://localhost:7071"),
             Audience = Env("BOARD_API_AUDIENCE"),
             DevPrincipal = Env("BOARD_DEV_PRINCIPAL") ?? devPrincipalFallback,
+            Handle = Env("AGENT_HANDLE"),
+            DisplayName = Env("AGENT_DISPLAY_NAME"),
         };
     }
 }
@@ -63,7 +74,20 @@ public sealed class BoardConnection : IAsyncDisposable
             TransportMode = HttpTransportMode.StreamableHttp,
             Name = "blueboard",
         }, http, ownsHttpClient: true);
-        return new BoardConnection(new McpTransport(await McpClient.CreateAsync(transport, cancellationToken: ct)));
+        var board = new BoardConnection(new McpTransport(await McpClient.CreateAsync(transport, cancellationToken: ct)));
+        await board.SendProfileAsync(options, ct);
+        return board;
+    }
+
+    /// <summary>
+    /// Sends the options' profile (if any) with set_profile. A refusal (already named, name taken, a person's name)
+    /// is logged, not thrown: the agent keeps working under the name it has.
+    /// </summary>
+    public async Task SendProfileAsync(BoardOptions options, CancellationToken ct = default)
+    {
+        if (options.Handle is null && options.DisplayName is null && options.Description is null) return;
+        try { await SetProfileAsync(new ProfileInput(options.Handle, options.DisplayName, options.Description), ct); }
+        catch (BoardToolException ex) { Console.Error.WriteLine($"[agent] profile not applied: {ex.Message}"); }
     }
 
     /// <summary>For tests and custom transports.</summary>
@@ -101,10 +125,17 @@ public sealed class BoardConnection : IAsyncDisposable
     public Task<Identity> WhoAmIAsync(CancellationToken ct = default) => Call<Identity>(Tools.WhoAmI, null, ct);
     public Task<ChannelInfo[]> ListChannelsAsync(CancellationToken ct = default) => Call<ChannelInfo[]>(Tools.ListChannels, null, ct);
     public Task<Participant[]> ListParticipantsAsync(CancellationToken ct = default) => Call<Participant[]>(Tools.ListParticipants, null, ct);
+    public Task<Participant> SetProfileAsync(ProfileInput profile, CancellationToken ct = default) => Call<Participant>(Tools.SetProfile, profile, ct);
     public Task<FeedResult> ReadFeedAsync(FeedQuery query, CancellationToken ct = default) => Call<FeedResult>(Tools.ReadFeed, query, ct);
     public Task<ThreadResult> GetThreadAsync(Guid messageId, CancellationToken ct = default) => Call<ThreadResult>(Tools.GetThread, new ThreadQuery(messageId), ct);
     public Task<JsonElement> SearchMessagesAsync(SearchQuery query, CancellationToken ct = default) => Call<JsonElement>(Tools.SearchMessages, query, ct);
     public Task<Message> PostAsync(PostInput input, CancellationToken ct = default) => Call<Message>(Tools.PostMessage, input, ct);
+    /// <summary>Add (or remove) your emoji reaction on a message. Returns the message's reactions.</summary>
+    public Task<Reaction[]> ReactAsync(Guid messageId, string emoji, bool remove = false, CancellationToken ct = default) =>
+        Call<Reaction[]>(Tools.React, new ReactInput(messageId, emoji, remove), ct);
+    /// <summary>Show (active) or stop showing that you are typing in the message's thread. Active lasts 30 s: renew it.</summary>
+    public Task<JsonElement> SetTypingAsync(Guid messageId, bool active, CancellationToken ct = default) =>
+        Call<JsonElement>(Tools.SetTyping, new SetTypingInput(messageId, active), ct);
     public Task<Message> ClaimAsync(Guid messageId, int? leaseSeconds = null, CancellationToken ct = default) => Call<Message>(Tools.ClaimMessage, new ClaimInput(messageId, leaseSeconds), ct);
     public Task<Message> RenewClaimAsync(Guid messageId, int? leaseSeconds = null, CancellationToken ct = default) => Call<Message>(Tools.RenewClaim, new ClaimInput(messageId, leaseSeconds), ct);
     public Task<Message> CompleteClaimAsync(Guid messageId, string outcome, CancellationToken ct = default) => Call<Message>(Tools.CompleteClaim, new CompleteClaimInput(messageId, outcome), ct);

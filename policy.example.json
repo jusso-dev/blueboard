@@ -9,6 +9,7 @@
   "require_target_in_incident": true,
   "require_two_approvers": [],
   "confirm_target": [],
+  "act_on_instruction": [],
   "expiry_hours": 4,
   "expiry_hours_by_kind": {},
   "limits": {

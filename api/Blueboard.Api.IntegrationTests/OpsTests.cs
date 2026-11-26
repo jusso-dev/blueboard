@@ -88,6 +88,81 @@ public sealed class OpsTests(TestBoard t) : IClassFixture<TestBoard>
         Assert.Contains(list, p => p.Handle == "agent" && p.Kind == "agent");
     }
 
+    // ── agent names (set_profile, admin rename) ────────────────────────────────────────────────────
+    private async Task<Principal> NewAgentAsync(string handle, string name = "Agent")
+    {
+        await using (var c = t.Db.Command("insert into principals (handle, display_name, kind, roles) values (@h, @n, 'agent', '{poster}')").With("h", handle).With("n", name))
+            await c.ExecuteNonQueryAsync(Ct);
+        return await t.As(handle);
+    }
+
+    private static async Task<int> StatusOf(Func<Task> call) => (await Assert.ThrowsAsync<BoardException>(call)).Status;
+
+    [DbFact]
+    public async Task Agent_replaces_its_generated_handle_once()
+    {
+        var parts = new Participants(t.Db, t.Audit, t.Board, t.System);
+        var me = await NewAgentAsync("0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b", "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2bc0de");
+        var p = await parts.SetOwnProfileAsync(me, new ProfileInput("Triage Agent", "Triage agent", "Triages new incidents"), Ct);
+        Assert.Equal(("triage-agent", "Triage agent", "Triages new incidents"), (p.Handle, p.DisplayName, p.Description));
+        Assert.Equal(1, await t.ScalarAsync("select count(*) from audit_log where event = 'principal.profile_updated' and subject = 'triage-agent' and detail->>'from_handle' = '0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b'"));
+
+        // Now named: sending the same profile again (every restart) is fine, a new handle is not.
+        me = await t.As("triage-agent");
+        await parts.SetOwnProfileAsync(me, new ProfileInput("triage-agent", "Triage agent", "Triages new incidents"), Ct);
+        Assert.Equal(403, await StatusOf(() => parts.SetOwnProfileAsync(me, new ProfileInput("analyst-helper"), Ct)));
+        // The description stays the agent's to edit.
+        Assert.Equal("Triages and enriches", (await parts.SetOwnProfileAsync(me, new ProfileInput(Description: "Triages and enriches"), Ct)).Description);
+    }
+
+    [DbFact]
+    public async Task Profile_handle_clash_is_409_and_people_cannot_be_impersonated()
+    {
+        var parts = new Participants(t.Db, t.Audit, t.Board, t.System);
+        var me = await NewAgentAsync("agent-0badc0de");
+        Assert.Equal(409, await StatusOf(() => parts.SetOwnProfileAsync(me, new ProfileInput("agent2"), Ct)));
+        Assert.Equal(403, await StatusOf(() => parts.SetOwnProfileAsync(me, new ProfileInput(DisplayName: "second ANALYST"), Ct))); // a person's display name
+        Assert.Equal(403, await StatusOf(() => parts.SetOwnProfileAsync(me, new ProfileInput(DisplayName: "@analyst"), Ct)));      // a person's handle
+        Assert.Equal(403, await StatusOf(() => parts.SetOwnProfileAsync(me, new ProfileInput("Second Analyst"), Ct)));         // @second-analyst reads as a person
+        Assert.Equal(409, await StatusOf(() => parts.SetOwnProfileAsync(me, new ProfileInput("reader"), Ct)));                     // a person's handle: taken
+        Assert.Equal(400, await StatusOf(() => parts.SetOwnProfileAsync(me, new ProfileInput(DisplayName: "two\nlines"), Ct)));
+        Assert.Equal(400, await StatusOf(() => parts.SetOwnProfileAsync(me, new ProfileInput("agent-12345678"), Ct)));           // can't pick a generated-looking handle
+        Assert.Equal("agent-0badc0de", (await t.As("agent-0badc0de")).Handle); // nothing changed
+        // People's names come from Entra.
+        Assert.Equal(403, await StatusOf(async () => await parts.SetOwnProfileAsync(await t.As("reader"), new ProfileInput(DisplayName: "Reader Bot"), Ct)));
+    }
+
+    [DbFact]
+    public async Task Only_admins_rename_other_agents()
+    {
+        var parts = new Participants(t.Db, t.Audit, t.Board, t.System);
+        await NewAgentAsync("hunter-bot", "Hunter bot");
+        Assert.Equal(403, await StatusOf(async () => await parts.SetProfileAsync(await t.As("analyst2"), "hunter-bot", new ProfileInput("hunter"), Ct)));
+        Assert.Equal(403, await StatusOf(async () => await parts.SetProfileAsync(await t.As("agent"), "hunter-bot", new ProfileInput("hunter"), Ct)));
+
+        var admin = await t.As("analyst");
+        var row = await parts.SetProfileAsync(admin, "hunter-bot", new ProfileInput("threat-hunter", "Threat hunter", "Hunts across Defender tables"), Ct);
+        Assert.Equal(("threat-hunter", "Threat hunter", "Hunts across Defender tables"), (row.Handle, row.DisplayName, row.Description));
+        Assert.Equal(1, await t.ScalarAsync("select count(*) from audit_log where event = 'principal.profile_updated' and subject = 'threat-hunter' and (detail->>'by_admin')::boolean"));
+        // Admins can rename an agent that already has a real handle, but the same checks apply.
+        Assert.Equal(409, await StatusOf(() => parts.SetProfileAsync(admin, "threat-hunter", new ProfileInput("agent2"), Ct)));
+        Assert.Equal(403, await StatusOf(() => parts.SetProfileAsync(admin, "threat-hunter", new ProfileInput(DisplayName: "Analyst"), Ct)));
+        Assert.Equal(400, await StatusOf(() => parts.SetProfileAsync(admin, "analyst2", new ProfileInput(DisplayName: "Someone"), Ct))); // people aren't renamed here
+        Assert.Equal(404, await StatusOf(() => parts.SetProfileAsync(admin, "nobody", new ProfileInput(DisplayName: "x"), Ct)));
+    }
+
+    [DbFact]
+    public async Task First_sign_in_of_a_nameless_app_token_gets_an_agent_handle()
+    {
+        var auth = new Authenticator(t.Settings, new TokenValidator(t.Settings), t.Db, t.Audit);
+        var appId = Guid.NewGuid().ToString();
+        var upsert = typeof(Authenticator).GetMethod("UpsertAsync", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+        var id = new CallerIdentity(Guid.NewGuid().ToString(), appId, "agent", appId, null, ["poster"]);
+        var p = await (Task<Principal>)upsert.Invoke(auth, [id, Ct])!;
+        Assert.Equal($"agent-{appId[..8]}", p.Handle);
+        Assert.Equal($"Agent {appId[..8]}", p.DisplayName);
+    }
+
     // ── #10 broker pause ───────────────────────────────────────────────────────────────────────────
     [DbFact]
     public async Task Pause_holds_approved_actions_until_an_approver_runs_them()

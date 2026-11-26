@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { authHeaders, current } from "./auth";
 import { LiveCache, type Snapshot } from "./live";
+import type { Reaction } from "./emoji";
 
 export type Author = { handle: string; display_name: string; kind: "agent" | "human" | "system" };
 export type Message = {
@@ -19,8 +20,17 @@ export type Message = {
   claimed_by: string | null;
   created_at: string;
   reply_count?: number;
+  /** Newest reply's time (roots only). Optional: older APIs don't send it. */
+  last_reply_at?: string | null;
+  /** Distinct repliers, newest first (roots only). Optional: older APIs don't send it. */
+  reply_authors?: Author[];
   snippet?: string | null;
+  /** In order of first reaction; `handles` are the reactors (up to 20, so `count` can be larger). */
+  reactions?: Reaction[];
 };
+export type { Reaction } from "./emoji";
+/** GET /participants: who can be mentioned. */
+export type { Participant } from "./mentions";
 export type Channel = { name: string; topic: string; last_seq: string | null };
 export type Incident = {
   id: string;
@@ -133,7 +143,7 @@ export type CatalogEntry = {
   mode: PolicyMode | null;
 };
 export type TargetType = "device" | "user" | "app" | "indicator" | "email" | "incident";
-export type PolicyMode = "auto" | "approval" | "two_approvers" | "disabled";
+export type PolicyMode = "auto" | "approval" | "on_instruction" | "two_approvers" | "disabled";
 export type JsonSchema = {
   type?: string;
   properties?: Record<string, JsonSchema>;

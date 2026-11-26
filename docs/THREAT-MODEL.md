@@ -12,7 +12,7 @@ This document provides the complete architectural threat model for **blueboard**
 Every control in the `.NET 10` API (`api/Blueboard.Api`), the PostgreSQL schema (`db/migrations/`), the static web host (`web/host/`), and the Azure deployment (`infra/main.bicep`) upholds six core invariants:
 
 1. **Single credential boundary**: Neither the React web app nor any AI agent holds Microsoft Graph, Defender for Endpoint, Sentinel TI, Purview or Log Analytics credentials. Only the Function App's user-assigned managed identity (`blueboard-id-api`) acquires Microsoft tokens, and `MsClient.BuildUri` locks tokens to exact Microsoft origins.
-2. **Server-enforced identity & human-only governance**: Every HTTP route and every MCP tool (`POST /runtime/webhooks/mcp`, 31 tools) validates an Entra JWT against tenant JWKS and verifies roles per call. App-only tokens have `Board.Approve` and `Board.Admin` stripped unconditionally in `TokenValidator.MapRoles`, even if misassigned in Entra ID.
+2. **Server-enforced identity & human-only governance**: Every HTTP route and every MCP tool (`POST /runtime/webhooks/mcp`, 34 tools) validates an Entra JWT against tenant JWKS and verifies roles per call. App-only tokens have `Board.Approve` and `Board.Admin` stripped unconditionally in `TokenValidator.MapRoles`, even if misassigned in Entra ID.
 3. **Human-gated, non-self-approved destructive containment**: Destructive actions cannot be placed into `auto_approve`. They require a human principal (`IsHuman == true`, `Board.Approve`) who did not request the action (`decided_by <> requested_by` enforced in PostgreSQL), with optional dual-approver (`require_two_approvers`) and typed target confirmation (`confirm_target`).
 4. **Delayed & post-pause policy re-verification**: `PolicyEngine.Assess` / `PolicyEngine.Evaluate` runs at request time, again at approval time (`Broker.DecideAsync`), again when releasing held actions after an admin pause (`Broker.RunNowAsync`), and finally inside execution (`Broker.ExecuteAsync` via `GuardExecutionPolicy`).
 5. **Untrusted content isolation**: Incident payloads, emails, filenames, command lines, KQL rows, threat-intel advisories, Sentinel MCP results and participant messages are treated as hostile input — never instructions. Deterministic C# summaries (`IncidentSummary`), UI escaping and secret/Purview guards prevent rendered HTML, markdown spoofing and ungrounded claims from misleading human approvers.
@@ -66,7 +66,7 @@ flowchart LR
   MS -->|"read ingest & alerts_v2 (Managed Identity)"| API
   HUM --> UI
   HUM -->|"Delegated JWT (Board.Access)"| API
-  AG <-->|"App-only JWT (/runtime/webhooks/mcp, 31 tools)"| API
+  AG <-->|"App-only JWT (/runtime/webhooks/mcp, 34 tools)"| API
   AG <-->|"Read-only Sentinel Data Lake & Graph"| SMCP
   AG <-->|"Untrusted prompts/data"| LLM
   API <-->|"Parameterised SQL / Secrets"| DB

@@ -5,6 +5,7 @@ import { useListNav, type NavRowProps } from "../components/shortcuts";
 import { api, refreshAll, useLiveQuery, type Action, type BoardStatus } from "../lib/api";
 import { actionTitle } from "../lib/actions";
 import { ActionStatusTag } from "../components/request-action";
+import { DecisionForm, useCanDecide } from "../components/approval";
 import { Button, cx, Empty, ErrorLine, Input, Segmented, Tag, Time, fmtDuration } from "../components/ui";
 
 /** "expires in 3.2h" / "expired": time left is a word, not a colour. */
@@ -103,27 +104,8 @@ function Held({ a, canRun, mine, paused, target }: { a: Action; canRun: boolean;
 }
 
 function Pending({ a, canDecide, me, target, navProps }: { a: Action; canDecide: boolean; me: string | undefined; target: boolean; navProps?: NavRowProps }) {
-  const [note, setNote] = useState("");
-  const [confirm, setConfirm] = useState("");
-  const [busy, setBusy] = useState<"approve" | "deny" | null>(null);
-  const [err, setErr] = useState<string | null>(null);
   const required = a.approvals_required ?? 1;
   const approvals = a.approvals ?? [];
-  const mine = a.requested_by === me;
-  const approvedByMe = !!me && approvals.includes(me);
-  const needsConfirm = !!a.confirm_prompt;
-  const decide = async (decision: "approve" | "deny") => {
-    setBusy(decision);
-    setErr(null);
-    try {
-      await api(`/actions/${a.id}`, { method: "POST", body: JSON.stringify({ decision, note: note || undefined, confirm: confirm || undefined }) });
-      refreshAll();
-    } catch (e) {
-      setErr((e as Error).message);
-      setBusy(null);
-    }
-  };
-  const confirmed = !needsConfirm || confirm.trim().length > 0;
   return (
     // j/k move between requests. Deliberately no Enter or single-key shortcut here: approving is always a click.
     <article
@@ -173,55 +155,7 @@ function Pending({ a, canDecide, me, target, navProps }: { a: Action; canDecide:
         </ul>
       )}
 
-      {canDecide && !mine && !approvedByMe ? (
-        <form
-          className="mt-3 flex max-w-3xl flex-wrap gap-2"
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (confirmed) void decide("approve");
-          }}
-        >
-          {needsConfirm && (
-            <>
-              <label className="sr-only" htmlFor={`confirm-${a.id}`}>
-                Type {a.confirm_prompt} to confirm
-              </label>
-              <Input
-                id={`confirm-${a.id}`}
-                value={confirm}
-                onChange={(e) => setConfirm(e.target.value)}
-                placeholder={`Type ${a.confirm_prompt} to confirm`}
-                autoComplete="off"
-                spellCheck={false}
-                className="min-w-64 flex-1 font-mono"
-              />
-            </>
-          )}
-          <label className="sr-only" htmlFor={`note-${a.id}`}>
-            Decision note
-          </label>
-          <Input id={`note-${a.id}`} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Note for the record (optional)" className="min-w-48 flex-1" />
-          <Button type="submit" variant="primary" loading={busy === "approve"} disabled={!!busy || !confirmed}>
-            {required > 1 && approvals.length + 1 < required ? `Approve (1 of ${required})` : "Approve and run"}
-          </Button>
-          <Button type="button" loading={busy === "deny"} disabled={!!busy} onClick={() => decide("deny")}>
-            Deny
-          </Button>
-        </form>
-      ) : (
-        <p className="label mt-3">
-          {mine
-            ? "You requested this, so a different approver has to approve it."
-            : approvedByMe
-              ? "You approved this. A second, different approver must complete it."
-              : "Only human approvers can decide."}
-        </p>
-      )}
-      {err && (
-        <div className="mt-1.5">
-          <ErrorLine>{err}</ErrorLine>
-        </div>
-      )}
+      <DecisionForm a={a} canDecide={canDecide} me={me} />
     </article>
   );
 }
@@ -233,7 +167,7 @@ export default function ApprovalsPage() {
   const { data: held } = useLiveQuery<Action[]>("/actions?status=held");
   const { data: status } = useLiveQuery<BoardStatus>("/status");
   const { data: all } = useLiveQuery<Action[]>(view === "history" ? "/actions" : null);
-  const canDecide = me?.kind === "human" && me.roles.includes("approver");
+  const canDecide = useCanDecide();
   const history = all?.filter((a) => a.status !== "pending_approval" && a.status !== "approved_once" && !a.held_at);
   const target = useTargetAction(pending !== undefined && held !== undefined && (view === "pending" || all !== undefined));
   // A link to an action that's already decided opens History with that row highlighted.

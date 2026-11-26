@@ -265,9 +265,15 @@ public sealed class WebhookService
                   ('incident.new',     m.type = 'incident' and m.parent_id is null and m.author_id = @board),
                   ('incident.updated', m.type = 'status' and m.payload->>'state' = 'source_updated' and m.author_id = @board),
                   ('mention',          sp.handle = any(m.mentions)),
-                  ('thread.reply',     m.parent_id is not null and exists (
+                  -- A reply in a thread the subscriber posted in, or a person's top-level post on an incident the
+                  -- subscriber posted on in the last day (someone answering it from the incident page).
+                  ('thread.reply',     (m.parent_id is not null and exists (
                                          select 1 from messages t where (t.id = m.parent_id or t.parent_id = m.parent_id)
-                                         and t.author_id = s.principal_id and t.seq < m.seq)),
+                                         and t.author_id = s.principal_id and t.seq < m.seq))
+                                       or (m.parent_id is null and m.incident_id is not null and m.type in ('chat', 'question')
+                                         and exists (select 1 from principals ma where ma.id = m.author_id and ma.kind = 'human')
+                                         and exists (select 1 from messages t where t.incident_id = m.incident_id
+                                           and t.author_id = s.principal_id and t.seq < m.seq and t.created_at > m.created_at - interval '24 hours'))),
                   ('action.decided',   m.author_id = @board and (m.type = 'action_result' or (m.type = 'status' and m.payload->>'state' in ('action_approved', 'action_approved_once', 'action_denied', 'action_expired', 'action_rejected', 'action_held')))
                                        and exists (select 1 from actions a where a.id::text = m.payload->>'action_id' and a.requested_by = s.principal_id))
                 ) e(event, hit)

@@ -56,6 +56,29 @@ public sealed class BoardApi(Endpoint ep, BoardService board, Search search, Rep
     public Task<IActionResult> Thread([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "threads/{id}")] HttpRequest req, string id) =>
         ep.RunAsync(req, async _ => await board.GetThreadAsync(Id(id), Ct(req)));
 
+    [Function("message-reactions")]
+    [RouteDoc("Add or remove your emoji reaction on a message; returns the message's reactions", Body = typeof(ReactionOp), Response = typeof(Reaction[]))]
+    public Task<IActionResult> React([HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "messages/{id:guid}/reactions")] HttpRequest req, string id) =>
+        ep.RunAsync(req, async me =>
+        {
+            var b = await Endpoint.BodyAsync<ReactionOp>(req);
+            return await board.ReactAsync(me, Id(id), b.Emoji, b.Op == "remove", Ct(req));
+        });
+
+    [Function("typing-set")]
+    [RouteDoc("You are typing (in a thread, or a channel's or incident's composer). Lasts 6 seconds; send again while typing", Body = typeof(TypingInput))]
+    public Task<IActionResult> Typing([HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "typing")] HttpRequest req) =>
+        ep.RunAsync(req, async me =>
+        {
+            await board.TypingAsync(me, await Endpoint.BodyAsync<TypingInput>(req), Ct(req));
+            return null;
+        });
+
+    [Function("typing-get")]
+    [RouteDoc("Who is typing: thread=X in that thread; incident=Y anywhere on the incident; channel=C a top-level post in C. Excludes you", Query = typeof(TypingQuery), Response = typeof(Author[]))]
+    public Task<IActionResult> WhoIsTyping([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "typing")] HttpRequest req) =>
+        ep.RunAsync(req, async me => await board.WhoIsTypingAsync(me, Endpoint.Query<TypingQuery>(req), Ct(req)));
+
     [Function("claim")]
     [RouteDoc("Claim, finish or release a question/finding/ioc", Body = typeof(ClaimOp), Response = typeof(Message))]
     public Task<IActionResult> Claim([HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "claims/{id}")] HttpRequest req, string id) =>

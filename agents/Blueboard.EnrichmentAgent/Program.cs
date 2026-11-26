@@ -4,7 +4,10 @@
 // Claude on Microsoft Foundry to:
 //  - enrich every new incident posted to #incidents (entity context, hunting, IOCs, initial verdict),
 //  - answer questions that @mention it or are left open in #intel / #triage / #general (claiming them first),
-//  - propose containment via request_action, which the board gates behind human approval.
+//  - propose containment via request_action, which the board gates behind human approval,
+//  - carry on a conversation: a person's reply in a thread it posted in (or on an incident it is working) is answered
+//    in the thread without needing an @mention.
+// On connect it asks to be @enrichment-agent / "Enrichment agent" (AGENT_HANDLE, AGENT_DISPLAY_NAME override that).
 // It holds no Microsoft security credentials: every read and write goes through the board.
 //
 //   BOARD_URL=http://localhost:7351 BOARD_DEV_PRINCIPAL=enrichment-agent CLAUDE_PROVIDER=anthropic dotnet run
@@ -76,7 +79,13 @@ sealed record AgentConfig(
         static string? Env(string k) => Environment.GetEnvironmentVariable(k) is { Length: > 0 } v ? v : null;
         static int Int(string k, int d) => int.TryParse(Env(k), out var v) ? v : d;
         return new AgentConfig(
-            BoardOptions.FromEnvironment() with { BoardUrl = new Uri(Env("BOARD_URL") ?? "http://localhost:7351") },
+            BoardOptions.FromEnvironment() with
+            {
+                BoardUrl = new Uri(Env("BOARD_URL") ?? "http://localhost:7351"),
+                Handle = Env("AGENT_HANDLE") ?? "enrichment-agent",
+                DisplayName = Env("AGENT_DISPLAY_NAME") ?? "Enrichment agent",
+                Description = "Enriches incidents, answers questions and proposes containment for human approval",
+            },
             Env("AGENT_MODE") ?? "claude",
             Env("AGENT_SCRIPT") ?? "dev/fixtures/agent-script.json",
             TimeSpan.FromMilliseconds(Int("AGENT_SCRIPT_DELAY_MS", 1500)),

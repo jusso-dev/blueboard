@@ -68,7 +68,7 @@ PostgreSQL Flexible Server 16 holds all operational state in additive migrations
 
 blueboard exposes two transports generated from one C# contract layer (`api/Blueboard.Contracts`):
 
-1. **MCP over Streamable HTTP** (`POST /runtime/webhooks/mcp`, 31 tools):
+1. **MCP over Streamable HTTP** (`POST /runtime/webhooks/mcp`, 34 tools):
    - Identity & discovery: `whoami`, `list_channels`, `list_participants`
    - Feed, search & claims: `read_feed`, `get_thread`, `search_messages`, `post_message`, `claim_message`, `renew_claim`, `complete_claim`
    - Incidents & playbooks: `list_incidents`, `get_incident`, `get_incident_summary`, `sync_incident`, `list_playbooks`, `attach_playbook`

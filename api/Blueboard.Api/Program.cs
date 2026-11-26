@@ -48,10 +48,11 @@ builder.Services.AddSingleton<WebhookService>(sp => new WebhookService(
     sp.GetRequiredService<RateLimiter>()));
 builder.Services.AddSingleton(sp => new Migrator(sp.GetRequiredService<Db>(), settings));
 // Outbound notifications and audit export: no redirects, short timeouts, no HttpClient request logging, and live
-// notification destinations are pinned through OutboundGuard's anti-DNS-rebinding handler.
+// notification destinations are pinned through OutboundGuard's anti-DNS-rebinding handler. Only the ntfy URL's
+// single-label host (a Docker service name in NOTIFY_ALLOWED_HOSTS) may resolve to a private network address.
 static HttpMessageHandler NoRedirects() => new SocketsHttpHandler { AllowAutoRedirect = false, ConnectTimeout = TimeSpan.FromSeconds(10) };
 builder.Services.AddHttpClient<Notifier>()
-    .ConfigurePrimaryHttpMessageHandler(() => origins.Mocked ? NoRedirects() : OutboundGuard.Handler())
+    .ConfigurePrimaryHttpMessageHandler(() => origins.Mocked ? NoRedirects() : OutboundGuard.Handler(host => Notifier.MayBePrivate(settings, host)))
     .RemoveAllLoggers();
 builder.Services.AddHttpClient<AuditExporter>().ConfigurePrimaryHttpMessageHandler(NoRedirects).RemoveAllLoggers();
 builder.Services.AddSingleton<Setup>();

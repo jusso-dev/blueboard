@@ -37,7 +37,7 @@ Board administrators holding `Board.Admin` (human principals only; agents can ne
    | **Broker** | `live`, `dry_run` or `paused`, plus count of held actions | Warning (`dry_run`) | OK (`live`) |
    | **Policy** | Policy source and non-empty protected asset counts | OK | OK |
    | **Agents** | Known `kind = agent` principals and last check-in within 15 min | OK | OK |
-   | **Approver notifications** | Configured sinks and last delivery status | OK | OK |
+   | **Notifications** | Configured sinks and last delivery status (approvals and message events) | OK | OK |
    | **Audit export to Sentinel** | High-water mark and rows waiting for `BlueboardAudit_CL` | Warning (`mvp`) or OK | OK |
 
    ::: note
@@ -93,7 +93,8 @@ Board administrators holding `Board.Admin` (human principals only; agents can ne
 ## What is recorded in `audit_log`
 
 - `notify.test` (actor: admin, detail: per-sink pass/fail, never URLs or secrets)
-- `notify.failed` (subject: action ID, detail: sink, event, sanitised error)
+- `notify.failed` (subject: action or message ID, detail: sink, event, sanitised error)
+- `notify.settings_changed` (actor: the person, subject: their handle or `defaults`, detail: the fields changed, never their values)
 - `principal.disabled` / `principal.enabled` (actor: admin, subject: handle, detail: reason)
 - `broker.paused` / `broker.resumed` (actor: admin, detail: reason)
 - `action.held` (when an approved action is held due to pause) and `action.released` (when an approver chooses **Run now**)

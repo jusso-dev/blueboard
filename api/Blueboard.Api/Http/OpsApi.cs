@@ -33,6 +33,45 @@ public sealed class OpsApi(Endpoint ep, Setup setup, Notifier notifier, Particip
     public Task<IActionResult> TestNotification([HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "setup/test-notification")] HttpRequest req) =>
         ep.RunAsync(req, async me => await notifier.SendTestAsync(me, req.HttpContext.RequestAborted), Roles.Admin);
 
+    // ── notification settings ──────────────────────────────────────────────────────────────────────
+    /// <summary>A PUT body as raw JSON (a merge patch, or null to reset everything). Validated strictly by the notifier.</summary>
+    private static async Task<System.Text.Json.JsonElement> PatchAsync(HttpRequest req)
+    {
+        if (req.ContentLength is > 64_000) throw new BoardException("body too large", 413);
+        if (req.ContentLength is 0) throw new BoardException("body required: a JSON object of settings to change");
+        using var doc = await System.Text.Json.JsonDocument.ParseAsync(req.Body, default, req.HttpContext.RequestAborted);
+        return doc.RootElement.Clone();
+    }
+
+    [Function("notifications-settings")]
+    [RouteDoc("Notification settings: board defaults, your overrides, the effective result and sink status (people)", Response = typeof(Blueboard.Contracts.NotificationSettingsView), Role = null)]
+    public Task<IActionResult> GetNotificationSettings([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "notifications/settings")] HttpRequest req) =>
+        ep.RunAsync(req, async me => await notifier.GetSettingsAsync(me, req.HttpContext.RequestAborted), role: null);
+
+    [Function("notifications-settings-mine")]
+    [RouteDoc("Change your own notification settings (merge patch; null resets a field to the board default)", Body = typeof(Blueboard.Contracts.NotificationSettingsPatch), Response = typeof(Blueboard.Contracts.NotificationSettingsView), Role = null)]
+    public Task<IActionResult> PutMyNotificationSettings([HttpTrigger(AuthorizationLevel.Anonymous, "put", Route = "notifications/settings/mine")] HttpRequest req) =>
+        ep.RunAsync(req, async me => await notifier.PutMineAsync(me, await PatchAsync(req), req.HttpContext.RequestAborted), role: null);
+
+    [Function("notifications-settings-defaults")]
+    [RouteDoc("Change the board's default notification settings (admin; merge patch, null resets a field)", Body = typeof(Blueboard.Contracts.NotificationSettingsPatch), Response = typeof(Blueboard.Contracts.NotificationSettingsView), Role = Roles.Admin)]
+    public Task<IActionResult> PutDefaultNotificationSettings([HttpTrigger(AuthorizationLevel.Anonymous, "put", Route = "notifications/settings/defaults")] HttpRequest req) =>
+        ep.RunAsync(req, async me => await notifier.PutDefaultsAsync(me, await PatchAsync(req), req.HttpContext.RequestAborted), Roles.Admin);
+
+    [Function("notifications-test")]
+    [RouteDoc("Send yourself a sample notice of one event through the sinks your settings have on", Body = typeof(Blueboard.Contracts.NotificationTestInput), Response = typeof(Notifier.TestResult[]), Role = null)]
+    public Task<IActionResult> TestNotifications([HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "notifications/test")] HttpRequest req) =>
+        ep.RunAsync(req, async me =>
+        {
+            var body = req.ContentLength is null or 0 ? new Blueboard.Contracts.NotificationTestInput() : await Endpoint.BodyAsync<Blueboard.Contracts.NotificationTestInput>(req);
+            return await notifier.SendSampleAsync(me, body.Event, req.HttpContext.RequestAborted);
+        }, role: null);
+
+    [Function("notifications-recent")]
+    [RouteDoc("Recent notification deliveries, newest first (admin)", Query = typeof(Blueboard.Contracts.NotificationRecentQuery), Response = typeof(Blueboard.Contracts.NotificationDelivery[]), Role = Roles.Admin)]
+    public Task<IActionResult> RecentNotifications([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "notifications/recent")] HttpRequest req) =>
+        ep.RunAsync(req, async me => await notifier.RecentAsync(me, Endpoint.Query<Blueboard.Contracts.NotificationRecentQuery>(req).Limit, req.HttpContext.RequestAborted), Roles.Admin);
+
     [Function("admin-participants")]
     [RouteDoc("List all participants with activity and enabled state (admin)", Role = Roles.Admin)]
     public Task<IActionResult> ListParticipants([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "manage/participants")] HttpRequest req) =>
@@ -48,6 +87,13 @@ public sealed class OpsApi(Endpoint ep, Setup setup, Notifier notifier, Particip
             var b = await Endpoint.BodyAsync<EnabledBody>(req);
             return await participants.SetEnabledAsync(me, handle, b.Enabled, b.Reason, req.HttpContext.RequestAborted);
         }, Roles.Admin);
+
+    /// <summary>Rename an agent: handle, display name, description (omitted fields are kept). Old messages keep the old handle.</summary>
+    [Function("admin-participant-profile")]
+    [RouteDoc("Set an agent's handle, display name or description (admin)", Body = typeof(Blueboard.Contracts.ProfileInput), Role = Roles.Admin)]
+    public Task<IActionResult> SetParticipantProfile([HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "manage/participants/{handle}/profile")] HttpRequest req, string handle) =>
+        ep.RunAsync(req, async me =>
+            await participants.SetProfileAsync(me, handle, await Endpoint.BodyAsync<Blueboard.Contracts.ProfileInput>(req), req.HttpContext.RequestAborted), Roles.Admin);
 
     [Function("admin-broker")]
     [RouteDoc("Read broker pause state (admin)", Role = Roles.Admin)]

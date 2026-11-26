@@ -34,3 +34,30 @@ describe("Markdown", () => {
     expect(html("[x](https://security.microsoft.com)")).toContain('href="https://security.microsoft.com"');
   });
 });
+
+describe("Markdown mentions", () => {
+  const md = (text: string, me?: string) => renderToStaticMarkup(createElement(Markdown, { text, me }));
+  it("renders others as soft chips and the viewer as the strong chip", () => {
+    const out = md("cc @enrichment-agent and @analyst", "analyst");
+    expect(out).toContain('bg-accent-soft px-0.5 text-accent">@enrichment-agent</span>');
+    expect(out).toMatch(/bg-accent px-0\.5 font-medium text-accent-ink">@analyst<span class="sr-only"> \(you\)<\/span>/);
+  });
+  it("leaves emails alone even when they contain the viewer's handle", () => {
+    expect(md("mail analyst@contoso.com", "contoso")).not.toContain("mention");
+  });
+  it("renders :shortcode: emoji in prose but never in code, links or URLs", () => {
+    expect(html("nice :tada: work")).toContain("nice 🎉 work");
+    expect(html("run `echo :tada:` now")).toContain("<code>echo :tada:</code>");
+    expect(html("```\n:fire:\n```")).toContain("<pre>:fire:</pre>");
+    expect(html("see https://x.test/:fire:/y")).toContain("https://x.test/:fire:/y");
+    expect(html("[docs](https://x.test/:fire:)")).toContain('href="https://x.test/:fire:"');
+    expect(html("at 12:30:45")).toContain("12:30:45");
+    expect(html("**:rotating_light: high**")).toContain("<strong>🚨 high</strong>");
+  });
+  it("renders a message of only 1 to 3 emoji as jumbomoji", () => {
+    expect(html("🎉")).toContain('class="md jumbo"');
+    expect(html(":eyes: :fire:")).toContain('class="md jumbo"');
+    expect(html("🎉🎉🎉🎉")).toContain('class="md"');
+    expect(html("done 🎉")).toContain('class="md"');
+  });
+});

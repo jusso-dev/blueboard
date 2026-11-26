@@ -30,15 +30,32 @@ public static class OutboundGuard
     }
 
     /// <summary>Resolves the host and refuses it unless every address is public.</summary>
-    public static async Task<IPAddress[]> ResolvePublicAsync(string host, CancellationToken ct)
+    public static Task<IPAddress[]> ResolvePublicAsync(string host, CancellationToken ct) => ResolveAsync(host, false, ct);
+
+    /// <summary>
+    /// Resolves the host and refuses it unless every address is public, or, with <paramref name="privateOk"/>, public
+    /// or on a private network (RFC 1918, IPv6 unique local: a Docker network). Loopback, link-local (cloud metadata)
+    /// and the other special ranges are refused either way.
+    /// </summary>
+    public static async Task<IPAddress[]> ResolveAsync(string host, bool privateOk, CancellationToken ct)
     {
         IPAddress[] addrs;
         try { addrs = await Dns.GetHostAddressesAsync(host, ct); }
         catch (SocketException) { throw new BoardException($"webhook host {host} does not resolve"); }
         if (addrs.Length == 0) throw new BoardException($"webhook host {host} does not resolve");
-        if (addrs.FirstOrDefault(a => !IsPublic(a)) is { } bad)
+        if (addrs.FirstOrDefault(a => !IsPublic(a) && !(privateOk && IsPrivateNetwork(a))) is { } bad)
             throw BoardException.Forbidden($"webhook host {host} resolves to a non-public address ({bad})");
         return addrs;
+    }
+
+    /// <summary>RFC 1918 (10/8, 172.16/12, 192.168/16) and IPv6 unique local (fc00::/7) addresses.</summary>
+    public static bool IsPrivateNetwork(IPAddress ip)
+    {
+        if (ip.IsIPv4MappedToIPv6) ip = ip.MapToIPv4();
+        if (ip.AddressFamily == AddressFamily.InterNetworkV6) return ip.IsIPv6UniqueLocal;
+        if (ip.AddressFamily != AddressFamily.InterNetwork) return false;
+        var b = ip.GetAddressBytes();
+        return b[0] == 10 || (b[0] == 172 && b[1] >= 16 && b[1] <= 31) || (b[0] == 192 && b[1] == 168);
     }
 
     /// <summary>False for loopback, private, link-local, CGNAT, multicast, documentation, unspecified and other special ranges.</summary>
@@ -81,9 +98,10 @@ public static class OutboundGuard
 
     /// <summary>
     /// The handler webhook deliveries use: no redirects, no proxy, no cookies, TLS verification on (the default),
-    /// and a connect step that resolves, checks and connects to the checked address.
+    /// and a connect step that resolves, checks and connects to the checked address. <paramref name="mayBePrivate"/>
+    /// names hosts that may also resolve to a private network address (the notifier's single-label ntfy host).
     /// </summary>
-    public static SocketsHttpHandler Handler() => new()
+    public static SocketsHttpHandler Handler(Func<string, bool>? mayBePrivate = null) => new()
     {
         AllowAutoRedirect = false,
         UseProxy = false,
@@ -92,7 +110,7 @@ public static class OutboundGuard
         PooledConnectionLifetime = TimeSpan.FromMinutes(2),
         ConnectCallback = async (ctx, ct) =>
         {
-            var addrs = await ResolvePublicAsync(ctx.DnsEndPoint.Host, ct);
+            var addrs = await ResolveAsync(ctx.DnsEndPoint.Host, mayBePrivate?.Invoke(ctx.DnsEndPoint.Host) == true, ct);
             var socket = new Socket(SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
             try
             {

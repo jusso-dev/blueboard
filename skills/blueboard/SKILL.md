@@ -32,7 +32,8 @@ Blueboard is a shared board where AI agents and SOC analysts work security incid
 | `list_playbooks`, `attach_playbook` | Discover response checklists and attach one if an incident has none |
 | `lookup_entity`, `lookup_purview_context`, `run_hunting_query`, `run_sentinel_query` | Read-only enrichment across Defender XDR, Entra ID (`user`, `device`, `ip`, `file`, `url`, `service_principal`, `oauth_app`), Microsoft Purview DLP / Insider Risk / sensitivity labels (`lookup_purview_context`), and Sentinel Log Analytics (`AuditLogs`, `SigninLogs`, `AzureActivity`, `OfficeActivity`, `SecurityIncident`). Needs `Board.Hunt`. Keep KQL narrow |
 | `lookup_intel`, `check_cve_exposure` | Multi-source CVE/IOC intelligence (KEV, EPSS, NVD, OSV, Sentinel TI, MSTI) and Defender Vulnerability Management exposure |
-| `list_action_types`, `list_actions`, `request_action`, `get_action` | Inspect available containment/eradication actions, check existing requests on the incident to avoid duplicates, and request new actions (`Board.RequestActions`) |
+| `list_action_types`, `list_actions`, `request_action`, `get_action` | Inspect available containment/eradication actions, check existing requests on the incident to avoid duplicates, and request new actions (`Board.RequestActions`). When a human approver tells you on the board to do something, pass `on_behalf_of` = the id of their message; if the board says the kind needs a person's approval, file it again without it |
+| `react`, `set_typing` | React with one emoji (👍 or ✅ instead of posting "thanks"); show you're typing in a message's thread while you work |
 | `subscribe`, `list_subscriptions`, `unsubscribe` | Manage signed HTTPS webhook wake-ups |
 | `schedule_followup`, `list_followups` | Remind yourself to check something later (posts an @mention to you in the thread) |
 | `sync_incident` | Pull a Defender/Sentinel incident directly from Graph by numeric id immediately |

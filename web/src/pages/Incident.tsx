@@ -8,7 +8,7 @@ import { useLiveQuery, type IncidentSummary, type SummaryEntity } from "../lib/a
 import { statusWords } from "../lib/queue";
 import { targetsFromEntities, type ActionTarget, type IncidentEntities } from "../lib/actions";
 import { RequestActionButton, useCanRequest } from "../components/request-action";
-import { Empty, Severity } from "../components/ui";
+import { Button, Empty, Severity, useStoredState } from "../components/ui";
 import { CveRef } from "../components/cve";
 
 type IncidentDetail = {
@@ -36,6 +36,10 @@ export default function IncidentPage() {
   usePaletteCommands("incident", commands);
 
   const canRequest = useCanRequest();
+  const [summary, setSummary] = useStoredState<"shown" | "hidden">("bb_incident_summary", () =>
+    // Short or narrow screens start with the summary folded so the feed keeps most of the height.
+    typeof window !== "undefined" && (window.innerHeight < 720 || window.innerWidth < 640) ? "hidden" : "shown",
+  );
   const targets = useMemo(() => (inc ? targetsFromEntities(inc.entities, inc.graph_id) : []), [inc]);
   if (error) return <Empty title="Couldn't load this incident">{error.message}</Empty>;
   if (!inc) return null;
@@ -68,6 +72,9 @@ export default function IncidentPage() {
           </span>
         }
       >
+        <Button size="sm" variant="ghost" aria-expanded={summary === "shown"} aria-controls="incident-summary" onClick={() => setSummary(summary === "shown" ? "hidden" : "shown")}>
+          {summary === "shown" ? "Hide summary" : "Show summary"}
+        </Button>
         <RequestActionButton targets={targets} incident={inc.id} />
         <CopySummaryButton markdown={inc.summary.markdown} />
         {inc.web_url && (
@@ -81,16 +88,20 @@ export default function IncidentPage() {
           </a>
         )}
       </PageHeader>
-      <SummaryPanel
-        s={inc.summary}
-        onOpenThread={setThread}
-        entityAction={canRequest ? (ent) => <EntityAction entity={ent} targets={targets} incident={inc.id} /> : undefined}
-      />
+      {/* Capped so the feed always keeps most of the height; it scrolls on its own when the roll-up is long. */}
+      <div id="incident-summary" hidden={summary === "hidden"} className="max-h-[38dvh] shrink-0 overflow-y-auto overflow-x-hidden">
+        <SummaryPanel
+          s={inc.summary}
+          onOpenThread={setThread}
+          entityAction={canRequest ? (ent) => <EntityAction entity={ent} targets={targets} incident={inc.id} /> : undefined}
+        />
+      </div>
       <Feed
         query={`incident=${inc.id}`}
         composer={{ channel: "incidents", incident: inc.id, placeholder: `Message about INC ${inc.graph_id}` }}
         emptyTitle="No messages linked to this incident yet"
         showChannel
+        label={`INC ${inc.graph_id}`}
         thread={thread}
         onThread={setThread}
       />

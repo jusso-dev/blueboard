@@ -23,7 +23,9 @@ public sealed record PolicyReport(
         var def = Catalog.Get(kind);
         if (p.Disabled.Contains(kind)) return "disabled";
         if (p.RequireTwoApprovers.Contains(kind)) return "two_approvers";
-        return !def.Destructive && p.AutoApprove.Contains(kind) ? "auto" : "approval";
+        if (!def.Destructive && p.AutoApprove.Contains(kind)) return "auto";
+        // confirm_target wins: a person has to type the target, so an instruction in chat isn't enough.
+        return p.ActOnInstruction.Contains(kind) && !p.ConfirmsTarget(kind) ? "on_instruction" : "approval";
     }
 
     private static string Words(string mode) => mode switch
@@ -31,6 +33,7 @@ public sealed record PolicyReport(
         "disabled" => "Off: every request is rejected",
         "two_approvers" => "Needs two different human approvers",
         "auto" => "Runs on its own when every target is in the incident evidence; otherwise needs approval",
+        "on_instruction" => "Needs a human approver; an approver telling an agent to do it on the board counts as the approval",
         _ => "Needs a human approver",
     };
 
@@ -56,7 +59,11 @@ public sealed record PolicyReport(
             w.Add($"{k} is in auto_approve but is destructive, so it is ignored: it always needs a human approver");
         foreach (var k in p.AutoApprove.Where(p.RequireTwoApprovers.Contains))
             w.Add($"{k} is in both auto_approve and require_two_approvers: it needs two approvers");
-        foreach (var k in p.Disabled.Where(k => p.AutoApprove.Contains(k) || p.RequireTwoApprovers.Contains(k) || p.ConfirmTarget.Contains(k)))
+        foreach (var k in p.ActOnInstruction.Where(p.ConfirmTarget.Contains))
+            w.Add($"{k} is in both act_on_instruction and confirm_target: an approver must type the target, so instructions in chat are refused for it");
+        foreach (var k in p.ActOnInstruction.Where(k => Catalog.All.TryGetValue(k, out var d) && !d.Destructive && p.AutoApprove.Contains(k)))
+            w.Add($"{k} is in both act_on_instruction and auto_approve: it already runs on its own when the evidence matches");
+        foreach (var k in p.Disabled.Where(k => p.AutoApprove.Contains(k) || p.RequireTwoApprovers.Contains(k) || p.ConfirmTarget.Contains(k) || p.ActOnInstruction.Contains(k)))
             w.Add($"{k} is disabled, so its other settings have no effect");
         if (p.ProtectedUsers.Length == 0) w.Add("protected_users is empty: list break-glass and Global Admin accounts");
         if (p.ProtectedDevices.Length == 0) w.Add("protected_devices is empty: list domain controllers and other critical servers");

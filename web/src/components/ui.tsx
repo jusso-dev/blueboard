@@ -2,7 +2,10 @@
 
 /* Hallmark · component primitives · states: default · hover · focus · active · disabled · loading · error · success */
 
-import { forwardRef, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes } from "react";
+import { forwardRef, useCallback, useEffect, useState, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes } from "react";
+
+import { avatarTint, initials } from "../lib/chat";
+import { IconBoard } from "./icons";
 
 export function cx(...xs: (string | false | null | undefined)[]) {
   return xs.filter(Boolean).join(" ");
@@ -184,4 +187,79 @@ export function fmtDuration(s: number | null | undefined) {
   if (s < 3600) return `${Math.round(s / 60)}m`;
   if (s < 86400) return `${(s / 3600).toFixed(1)}h`;
   return `${(s / 86400).toFixed(1)}d`;
+}
+
+const TINTS = ["bg-tint-1", "bg-tint-2", "bg-tint-3", "bg-tint-4", "bg-tint-5", "bg-tint-6"];
+
+/**
+ * A person or agent: a rounded square with initials on a calm tint hashed from the handle (colour carries no meaning;
+ * the AGENT badge does). The board's own posts get a neutral tile with a line icon instead.
+ */
+export function Avatar({ handle, name, kind, size = 36, className }: { handle: string; name: string; kind: string; size?: 36 | 24 | 20; className?: string }) {
+  const box = size === 36 ? "size-9 rounded-[var(--radius-control)] text-[13px]" : size === 24 ? "size-6 rounded-[4px] text-[10px]" : "size-5 rounded-[4px] text-[9px]";
+  if (kind === "system")
+    return (
+      <span aria-hidden className={cx("inline-flex shrink-0 items-center justify-center bg-paper-3 text-muted", box, className)}>
+        <IconBoard size={size === 36 ? 18 : 12} />
+      </span>
+    );
+  return (
+    <span aria-hidden className={cx("inline-flex shrink-0 select-none items-center justify-center font-semibold leading-none tracking-wide text-ink", box, TINTS[avatarTint(handle) - 1], className)}>
+      {initials(name, handle)}
+    </span>
+  );
+}
+
+/** "AGENT" / "SYSTEM" after a name: the kind in words, never colour alone. */
+export function KindBadge({ kind }: { kind: string }) {
+  if (kind !== "agent" && kind !== "system") return null;
+  return (
+    <span className="inline-flex h-[15px] shrink-0 items-center rounded-[3px] bg-paper-3 px-1 text-[10px] font-semibold uppercase leading-none tracking-wide text-muted">
+      {kind === "agent" ? "Agent" : "System"}
+    </span>
+  );
+}
+
+/** Subscribe to a media query (false on the server). */
+export function useMediaQuery(query: string): boolean {
+  const [on, setOn] = useState(() => typeof window !== "undefined" && window.matchMedia(query).matches);
+  useEffect(() => {
+    const mq = window.matchMedia(query);
+    const update = () => setOn(mq.matches);
+    update();
+    mq.addEventListener("change", update);
+    return () => mq.removeEventListener("change", update);
+  }, [query]);
+  return on;
+}
+
+/** useState backed by localStorage (or sessionStorage). Storage failures (private mode, quota) fall back to memory. */
+export function useStoredState<T extends string>(key: string, initial: T | (() => T), store: "local" | "session" = "local"): [T, (v: T) => void] {
+  const get = () => {
+    try {
+      return (store === "local" ? localStorage : sessionStorage).getItem(key) as T | null;
+    } catch {
+      return null;
+    }
+  };
+  const [v, setV] = useState<T>(() => get() ?? (typeof initial === "function" ? (initial as () => T)() : initial));
+  useEffect(() => {
+    const stored = get();
+    setV(stored ?? (typeof initial === "function" ? (initial as () => T)() : initial));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+  const set = useCallback(
+    (next: T) => {
+      setV(next);
+      try {
+        const s = store === "local" ? localStorage : sessionStorage;
+        if (next === "") s.removeItem(key);
+        else s.setItem(key, next);
+      } catch {
+        /* memory only */
+      }
+    },
+    [key, store],
+  );
+  return [v, set];
 }

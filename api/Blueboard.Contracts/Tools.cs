@@ -16,6 +16,8 @@ public static class Tools
     public const string ListChannelsDoc = "Channels on the board with their topics and latest seq.";
     public const string ListParticipants = "list_participants";
     public const string ListParticipantsDoc = "Agents and people on the board (handles to @mention).";
+    public const string SetProfile = "set_profile";
+    public const string SetProfileDoc = "Agents only: set your own handle, display name and description. Allowed while your handle is still the auto-generated one (after that only an admin can rename you). Handles must be unique; display names may not match a person's.";
     public const string ReadFeed = "read_feed";
     public const string ReadFeedDoc = "Read board messages. Pass after_seq (the cursor from your last call) to get only new messages, oldest first. Filter by channel, incident, types, mentioning, open_requests.";
     public const string GetThread = "get_thread";
@@ -24,6 +26,10 @@ public static class Tools
     public const string SearchMessagesDoc = "Full-text search across board messages and exact IOC values (hashes, IPs, domains, UPNs) with filters for channel, incident, author, claim state, type and date.";
     public const string PostMessage = "post_message";
     public const string PostMessageDoc = "Post to a channel. type: chat | finding | question | ioc | verdict | status, with a typed payload object for ioc, verdict, finding and status. Use parent_id to reply in a thread and incident to link it.";
+    public const string React = "react";
+    public const string ReactDoc = "Add (or with remove=true, take off) an emoji reaction on a message, like Slack. Use a 👍 or ✅ to acknowledge a plain thanks or ok instead of posting a reply. Returns the message's reactions.";
+    public const string SetTyping = "set_typing";
+    public const string SetTypingDoc = "Show (active=true) or stop showing (active=false) that you are typing in a message's thread while you work on it. An active indicator lasts 30 seconds: call again to renew.";
     public const string ClaimMessage = "claim_message";
     public const string ClaimMessageDoc = "Claim a question/finding/ioc so others know you are handling it. Fails if someone else holds it. Leases expire: use renew_claim for long work.";
     public const string RenewClaim = "renew_claim";
@@ -59,7 +65,7 @@ public static class Tools
     public const string ListActions = "list_actions";
     public const string ListActionsDoc = "List brokered actions (filter by status such as 'open', 'pending_approval', 'succeeded' and/or by incident) to check existing proposals before requesting new ones.";
     public const string RequestAction = "request_action";
-    public const string RequestActionDoc = "Ask the board to perform a containment/eradication action. Policy runs first; destructive actions wait for a human approver. You'll see the outcome as an action_result message in #containment. Needs Board.RequestActions.";
+    public const string RequestActionDoc = "Ask the board to perform a containment/eradication action. Policy runs first; destructive actions wait for a human approver, unless a human approver told you to do it on the board and policy act_on_instruction lists the kind: then pass on_behalf_of = the id of their message. You'll see the outcome as an action_result message in #containment. Needs Board.RequestActions.";
     public const string GetAction = "get_action";
     public const string GetActionDoc = "Status and result of a brokered action.";
     public const string Subscribe = "subscribe";
@@ -78,10 +84,13 @@ public static class Tools
         new(WhoAmI, WhoAmIDoc, typeof(NoInput), null),
         new(ListChannels, ListChannelsDoc, typeof(NoInput), "poster"),
         new(ListParticipants, ListParticipantsDoc, typeof(NoInput), "poster"),
+        new(SetProfile, SetProfileDoc, typeof(ProfileInput), "poster"),
         new(ReadFeed, ReadFeedDoc, typeof(FeedQuery), "poster"),
         new(GetThread, GetThreadDoc, typeof(ThreadQuery), "poster"),
         new(SearchMessages, SearchMessagesDoc, typeof(SearchQuery), "poster"),
         new(PostMessage, PostMessageDoc, typeof(PostInput), "poster"),
+        new(React, ReactDoc, typeof(ReactInput), "poster"),
+        new(SetTyping, SetTypingDoc, typeof(SetTypingInput), "poster"),
         new(ClaimMessage, ClaimMessageDoc, typeof(ClaimInput), "poster"),
         new(RenewClaim, RenewClaimDoc, typeof(ClaimInput), "poster"),
         new(CompleteClaim, CompleteClaimDoc, typeof(CompleteClaimInput), "poster"),
