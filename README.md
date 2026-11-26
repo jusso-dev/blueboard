@@ -78,6 +78,7 @@ Then open **`http://localhost:8080`** to inspect seeded incidents (including AiT
 | **Incident & Playbook View** (`/incidents/:id`) | Unified Defender/Sentinel/Purview evidence chips, progressive playbook checklist steps, policy preview and collaboration timeline. |
 | **Approvals Queue** (`/approvals`) | Exact parameters, evidence-grounding notes, policy flags, two-approver counters, typed `confirm_target` verification and held-action **Run now**. |
 | **Policy & Simulator** (`/policy`) | Live policy introspection plus what-if dry simulation (`POST /api/policy/simulate`) before enabling actions. |
+| **Admin centre** (`/admin`) | Readiness, configuration posture with remediation, access review, filtered audit export, sessions and lifecycle controls. See [operations](docs/OPERATIONS.md#admin-centre-and-assurance-review). |
 | **Reports & Search** (`/reports`, `/search`) | Deterministic MTTA/MTTC/MTTR percentiles, dry-run cutover evidence, formula-safe CSV export and full-text + exact IOC search. |
 
 | Queue | Incident Workspace | Approvals Gate |

@@ -7,11 +7,12 @@ blueboard is open-source software (MIT licence) that **you deploy and run in you
 | Assurance document | What it answers |
 |---|---|
 | [Shared responsibility](SHARED-RESPONSIBILITY.md) | What the code does for you, what Microsoft does, and what you must do |
-| [ISM statement of applicability](ISM-SOA.md) | Every ISM control (current release, pinned): disposition, implementation, evidence, consumer responsibility and gaps. |
 | [Data flows and inventory](DATA-FLOWS.md) | What data is stored, where it lives, how long it's kept and every outbound connection |
 | [Assurance evidence and pen testing](PEN-TEST-AND-ASSURANCE-EVIDENCE.md) | Evidence you can collect yourself and a suggested scope for an independent test |
 | [Security guide](../SECURITY.md) | Trust boundaries, controls in the code, Microsoft permissions, hardening checklist, incident runbook |
-| [Threat model](../THREAT-MODEL.md) | STRIDE, OWASP LLM/Agentic and MITRE ATLAS threats TM-01 to TM-26 |
+| [Threat model](../THREAT-MODEL.md) | 42 threats with inherent and residual ratings, control ownership, test evidence and risk acceptance |
+| [Operational assurance review](../OPERATIONS.md#admin-centre-and-assurance-review) | Readiness checks, configuration posture, access review, audit evidence and deployment verification |
+| [ISM statement of applicability](ISM-SOA.md) | Optional ISM-specific mapping for organisations that require it |
 
 ---
 
@@ -58,8 +59,8 @@ The web app serves static files and public sign-in settings only. It stores no d
 
 | | In transit | At rest |
 |---|---|---|
-| Browser ↔ web app, browser and agents ↔ API | HTTPS only (`httpsOnly: true`), TLS 1.2 minimum, FTP disabled, HSTS on the web app | n/a |
-| API ↔ PostgreSQL | TLS required (`SslMode.Require`) | Azure-managed encryption at rest (service-managed keys) |
+| Browser ↔ web app, browser and agents ↔ API | HTTPS only (`httpsOnly: true`), TLS 1.3 minimum in production and 1.2 in mvp (`TLS_MIN_VERSION`), FTP disabled, HSTS on the web app | n/a |
+| API ↔ PostgreSQL | TLS with certificate and host name verification (`VerifyFull` for `PGHOST`; `DATABASE_URL` is for local development) | Azure-managed encryption at rest (service-managed keys) |
 | API ↔ Storage | TLS 1.2 minimum, shared keys disabled (identity only) | Azure Storage encryption (service-managed keys) |
 | API ↔ Microsoft APIs, feeds, sinks | HTTPS only. Microsoft tokens are sent only to exact Microsoft origins (`MsClient`) | n/a |
 | Key Vault (production) | Private endpoint | RBAC mode, soft delete (90 days) and purge protection |
@@ -114,12 +115,19 @@ Report vulnerabilities privately through [GitHub private vulnerability reporting
 
 ## Known limitations
 
-These are stated plainly so they can be tracked in your risk register:
+These are stated plainly so they can go in your risk register. Each maps to a threat in the [threat model](../THREAT-MODEL.md#11-known-limitations), which has the full list with ratings and treatments.
 
+- **Conditional Access is report-only until you enforce it** (TM-08, TM-28, TM-29).
+- **No continuous access evaluation or token binding**; disabling a participant on the board is the immediate cut-off. Idle sign-out (default 15 minutes) is browser-side only (TM-28, TM-29).
+- **The migration identity owns the schema and holds the Microsoft permissions**, so whoever controls it could drop the audit triggers. pgaudit logs that DDL, and the Sentinel copy (production profile) is the tamper-evident record (TM-31, TM-32).
+- **The board audits changes and exports, not reads.** Role changes are recorded at first use; who made them is in Entra's audit log (TM-40, TM-42).
+- **Inactivity disable is off until you set `INACTIVE_DISABLE_DAYS`** (TM-41).
 - **Retention is off until you set it.** With `RETENTION_DAYS` unset, incidents, messages and actions are kept forever. Once set, a daily job removes older resolved records. `audit_log` is never removed, by design ([Data flows § Retention](DATA-FLOWS.md#retention)).
+- **The `mvp` profile is for evaluation only**: public PostgreSQL, secrets in app settings, no audit export, no VNet or NSGs, TLS 1.2 (TM-35).
+- **No TLS 1.2 cipher list is pinned, and Storage stays at TLS 1.2.** The production profile defaults to TLS 1.3 elsewhere (TM-34).
 - **No customer-managed keys** in the templates.
-- **The WAF is optional and doesn't inspect API request bodies by default.** SOC content such as command lines, KQL and URLs trips the OWASP rules. `API_WAF_BODY_CHECK=true` turns body inspection on, but expect to tune it.
+- **Release provenance is verified only when the GitHub CLI is signed in** (TM-27).
+- **The WAF is optional and doesn't inspect API request bodies by default.** With it on, the scm endpoints are limited to `DEPLOYER_IP_RANGES`. SOC content such as command lines, KQL and URLs trips the OWASP rules. `API_WAF_BODY_CHECK=true` turns body inspection on, but expect to tune it (TM-36).
 - **The production profile hasn't been deployed to a live subscription by the authors.** Run `az deployment group what-if` first. The `mvp` profile has been deployed against a live Defender tenant in read-only, dry-run mode.
 - **Brokered write actions haven't all been exercised end to end against a live tenant.** Test each one in a non-production tenant before setting `BROKER_EXECUTE=true`.
 - **No independent penetration test has been published.** See [Assurance evidence](PEN-TEST-AND-ASSURANCE-EVIDENCE.md#independent-penetration-test) for a suggested scope.
-- **The migration identity owns the schema**, so someone controlling it could drop the audit triggers. The Sentinel copy is the tamper-evident record ([SECURITY.md § Known limitations](../SECURITY.md#known-limitations)).

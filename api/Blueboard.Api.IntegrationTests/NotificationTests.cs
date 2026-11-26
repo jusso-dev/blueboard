@@ -189,7 +189,7 @@ public sealed class NotificationTests(TestBoard t) : IClassFixture<TestBoard>
         var app = A1.Build(t, new Policy());
         var setup = new Setup(t.Db, t.Settings, new Policy(), t.Ms, notifier);
         var ops = new OpsApi(new Endpoint(app.Auth, Microsoft.Extensions.Logging.Abstractions.NullLogger<Endpoint>.Instance), setup, notifier,
-            new Participants(t.Db, t.Audit, t.Board, t.System), app.Broker);
+            new Participants(t.Db, t.Audit, t.Board, t.System), app.Broker, new AuditLog(t.Db, t.Audit), new Posture(t.Db, t.Settings, new Policy()));
 
         var (status, body) = A1.Read(await ops.GetNotificationSettings(A1.Request("reader")));
         Assert.Equal(200, status);

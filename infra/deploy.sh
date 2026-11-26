@@ -32,8 +32,17 @@
 #   WAF_MODE=Prevention     Prevention (block) or Detection (log only, while tuning)
 #   API_WAF_BODY_CHECK=false  inspect API request bodies too (SOC content trips the OWASP rules: tune before enabling)
 #   ALLOWED_COUNTRIES=…     two-letter country codes Front Door lets through (space or comma separated); empty: all
+#   DEPLOYER_IP_RANGES=…    with FRONT_DOOR=true: CIDRs allowed to the apps' deployment (scm) endpoints, space or comma
+#                           separated. Defaults to this machine's public IP (/32). az functionapp/webapp deploy go
+#                           through scm, so every later deploy must come from inside these ranges. none: leave scm open
+#   TLS_MIN_VERSION=1.3|1.2 minimum TLS for both apps, their scm endpoints and PostgreSQL (default 1.3 in production,
+#                           1.2 in mvp). Storage stays at 1.2 (Azure Storage offers no 1.3 minimum)
+#   PG_AUDIT_LOG=ddl,role,misc_set  pgaudit classes for the PostgreSQL log (empty: pgaudit off). Needs a server restart
+#                           the first time (docs/DEPLOYMENT.md § Network and TLS hardening)
 #   RETENTION_DAYS=0        data retention: 0 keeps everything; 30 or more removes resolved incidents, threads and finished
 #                           actions older than that, daily (audit_log is kept). Preview: blueboard retention --days N
+#   SESSION_IDLE_MINUTES=15 browser idle sign-out: 0 off, otherwise up to 480 minutes
+#   INACTIVE_DISABLE_DAYS=0 disable inactive participants daily: 0 off, otherwise at least 30 days
 #   DB_RUNTIME_ROLE=true    serve requests as a least-privilege PostgreSQL role (blueboard-id-db); false: the Entra admin
 #   EXTRA_CORS_ORIGINS=…    more web origins for the API's CORS list, space or comma separated (a custom domain:
 #                           https://board.example.com). The default web host is always allowed
@@ -81,6 +90,14 @@ CORS_JSON="$(jq -cn --arg o "${EXTRA_CORS_ORIGINS:-}" '[$o | splits("[ ,]+") | s
 ALERT_JSON="$(jq -cn --arg o "${ALERT_EMAILS:-}" '[$o | splits("[ ,]+") | select(length > 0)]')"
 DB_RUNTIME_ROLE="${DB_RUNTIME_ROLE:-true}"
 RETENTION_DAYS="${RETENTION_DAYS:-0}"
+SESSION_IDLE_MINUTES="${SESSION_IDLE_MINUTES:-15}"
+INACTIVE_DISABLE_DAYS="${INACTIVE_DISABLE_DAYS:-0}"
+if ! [[ "$SESSION_IDLE_MINUTES" =~ ^(0|[1-9][0-9]{0,2})$ ]] || [[ "$SESSION_IDLE_MINUTES" -gt 480 ]]; then
+  die "SESSION_IDLE_MINUTES must be 0 (off) to 480"
+fi
+if ! [[ "$INACTIVE_DISABLE_DAYS" =~ ^(0|[1-9][0-9]{0,8})$ ]] || { [[ "$INACTIVE_DISABLE_DAYS" -ne 0 ]] && [[ "$INACTIVE_DISABLE_DAYS" -lt 30 ]]; }; then
+  die "INACTIVE_DISABLE_DAYS must be 0 (off) or at least 30"
+fi
 FRONT_DOOR="${FRONT_DOOR:-false}"
 case "$FRONT_DOOR" in true | false) ;; *) die "FRONT_DOOR must be true or false" ;; esac
 WAF_MODE="${WAF_MODE:-Prevention}"
@@ -88,6 +105,27 @@ case "$WAF_MODE" in Prevention | Detection) ;; *) die "WAF_MODE must be Preventi
 API_WAF_BODY_CHECK="${API_WAF_BODY_CHECK:-false}"
 case "$API_WAF_BODY_CHECK" in true | false) ;; *) die "API_WAF_BODY_CHECK must be true or false" ;; esac
 COUNTRIES_JSON="$(jq -cn --arg o "${ALLOWED_COUNTRIES:-}" '[$o | splits("[ ,]+") | select(length > 0) | ascii_upcase]')"
+if [[ -z "${TLS_MIN_VERSION:-}" ]]; then
+  [[ "$BB_PROFILE" == "production" ]] && TLS_MIN_VERSION=1.3 || TLS_MIN_VERSION=1.2
+fi
+case "$TLS_MIN_VERSION" in 1.2 | 1.3) ;; *) die "TLS_MIN_VERSION must be 1.2 or 1.3" ;; esac
+PG_AUDIT_LOG="${PG_AUDIT_LOG-ddl,role,misc_set}"
+[[ "$PG_AUDIT_LOG" =~ ^[a-z_,]*$ ]] || die "PG_AUDIT_LOG must be pgaudit classes, comma separated (e.g. ddl,role,misc_set)"
+# Deployment (scm) endpoint lockdown, with Front Door only. The default is this machine's address, detected here.
+DEPLOYER_JSON='[]'
+if [[ "$FRONT_DOOR" == "true" && "${DEPLOYER_IP_RANGES:-}" != "none" ]]; then
+  if [[ -z "${DEPLOYER_IP_RANGES:-}" ]]; then
+    my_ip="$(curl -fsS --max-time 10 https://api.ipify.org 2>/dev/null || true)"
+    [[ "$my_ip" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] ||
+      die "FRONT_DOOR=true locks the deployment endpoints to DEPLOYER_IP_RANGES, and this machine's public IP couldn't be detected: set DEPLOYER_IP_RANGES=<cidr> (or none to leave scm open)"
+    # Detected, not chosen: used for this deploy only and not remembered, so a deploy from another machine detects its own.
+    DEPLOYER_IP_RANGES="$my_ip/32"
+    DEPLOYER_IP_DETECTED=1
+  fi
+  DEPLOYER_JSON="$(jq -cn --arg o "$DEPLOYER_IP_RANGES" '[$o | splits("[ ,]+") | select(length > 0)]')"
+  jq -e 'length > 0 and all(test("^[0-9]{1,3}(\\.[0-9]{1,3}){3}/[0-9]{1,2}$"))' <<<"$DEPLOYER_JSON" >/dev/null ||
+    die "DEPLOYER_IP_RANGES must be IPv4 CIDRs (e.g. 203.0.113.10/32), space or comma separated, or none"
+fi
 jq -e 'all(test("^[A-Z]{2}$"))' <<<"$COUNTRIES_JSON" >/dev/null || die "ALLOWED_COUNTRIES must be two-letter country codes"
 if ! [[ "$RETENTION_DAYS" =~ ^[0-9]+$ ]] || { [[ "$RETENTION_DAYS" -ne 0 ]] && [[ "$RETENTION_DAYS" -lt 30 ]]; }; then
   die "RETENTION_DAYS must be 0 (keep everything) or at least 30"
@@ -154,6 +192,14 @@ for v in NOTIFY_TEAMS_WEBHOOK_URL NOTIFY_WEBHOOK_URL NOTIFY_WEBHOOK_SECRET NVD_A
 done
 
 log "deploying blueboard $VERSION → $RESOURCE_GROUP ($LOCATION) · env $BB_ENV · profile $BB_PROFILE · broker execute: $BROKER_EXECUTE"
+log "TLS minimum $TLS_MIN_VERSION · pgaudit: ${PG_AUDIT_LOG:-off}"
+if [[ "$FRONT_DOOR" == "true" ]]; then
+  if [[ "$DEPLOYER_JSON" == "[]" ]]; then
+    warn "FRONT_DOOR=true with DEPLOYER_IP_RANGES=none: the deployment (scm) endpoints stay reachable from the internet (Entra-authenticated)"
+  else
+    log "deployment (scm) endpoints limited to: $(jq -r 'join(", ")' <<<"$DEPLOYER_JSON") (later deploys must come from these)"
+  fi
+fi
 confirm "Continue?"
 
 # 2. providers + resource group ----------------------------------------------------------------
@@ -175,17 +221,19 @@ trap 'rm -f "$params"' EXIT
 chmod 600 "$params"
 jq -n --rawfile policy "$POLICY_FILE" \
   --arg teams "${NOTIFY_TEAMS_WEBHOOK_URL:-}" --arg hook "${NOTIFY_WEBHOOK_URL:-}" --arg hmac "${NOTIFY_WEBHOOK_SECRET:-}" \
-  --arg nvd "${NVD_API_KEY:-}" --arg signing "${WEBHOOK_SIGNING_KEY:-}" --argjson cors "$CORS_JSON" --argjson alerts "$ALERT_JSON" --argjson countries "$COUNTRIES_JSON" \
+  --arg nvd "${NVD_API_KEY:-}" --arg signing "${WEBHOOK_SIGNING_KEY:-}" --argjson cors "$CORS_JSON" --argjson alerts "$ALERT_JSON" --argjson countries "$COUNTRIES_JSON" --argjson deployers "$DEPLOYER_JSON" \
   '{"$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#", contentVersion: "1.0.0.0",
     parameters: {policyJson: {value: $policy}, notifyTeamsWebhookUrl: {value: $teams}, notifyWebhookUrl: {value: $hook},
                  notifyWebhookSecret: {value: $hmac}, nvdApiKey: {value: $nvd}, webhookSigningKey: {value: $signing},
-                 extraCorsOrigins: {value: $cors}, alertEmails: {value: $alerts}, allowedCountries: {value: $countries}}}' >"$params"
+                 extraCorsOrigins: {value: $cors}, alertEmails: {value: $alerts}, allowedCountries: {value: $countries}, deployerIpRanges: {value: $deployers}}}' >"$params"
 out="$(az deployment group create -g "$RESOURCE_GROUP" -n "blueboard-main" -f infra/main.bicep \
   -p @"$params" \
   -p location="$LOCATION" webSkuName="$WEB_SKU" namePrefix="$PREFIX" profile="$BB_PROFILE" \
   boardApiClientId="$BOARD_API_CLIENT_ID" boardApiAudience="$BOARD_API_AUDIENCE" \
   ingestEnabled="$INGEST_ENABLED" brokerExecute="$BROKER_EXECUTE" dbRuntimeRole="$DB_RUNTIME_ROLE" retentionDays="$RETENTION_DAYS" \
+  sessionIdleMinutes="$SESSION_IDLE_MINUTES" inactiveDisableDays="$INACTIVE_DISABLE_DAYS" \
   frontDoor="$FRONT_DOOR" wafMode="$WAF_MODE" apiWafBodyCheck="$API_WAF_BODY_CHECK" \
+  tlsMinVersion="$TLS_MIN_VERSION" pgAuditLog="$PG_AUDIT_LOG" \
   notifyAllowedHosts="${NOTIFY_ALLOWED_HOSTS:-}" notifyMailFrom="${NOTIFY_MAIL_FROM:-}" notifyMailTo="${NOTIFY_MAIL_TO:-}" \
   notifyRemindMinutes="${NOTIFY_REMIND_MINUTES:-15}" webBaseUrl="${BOARD_WEB_URL:-}" \
   webhookAllowedHosts="${WEBHOOK_ALLOWED_HOSTS:-}" \
@@ -210,10 +258,12 @@ state_set BB_PROFILE "$BB_PROFILE"
 for v in LOCATION WEB_SKU PREFIX INGEST_ENABLED POLICY_FILE SENTINEL_WORKSPACE_ID ASSIGN_SENTINEL_CONTRIBUTOR \
   NOTIFY_ALLOWED_HOSTS NOTIFY_MAIL_FROM NOTIFY_MAIL_TO NOTIFY_REMIND_MINUTES BOARD_WEB_URL EXTRA_CORS_ORIGINS \
   ALERT_EMAILS DB_RUNTIME_ROLE RETENTION_DAYS FRONT_DOOR WAF_MODE API_WAF_BODY_CHECK ALLOWED_COUNTRIES \
+  TLS_MIN_VERSION PG_AUDIT_LOG SESSION_IDLE_MINUTES INACTIVE_DISABLE_DAYS \
   WEBHOOK_ALLOWED_HOSTS TI_PWNWATCH_ENABLED TI_KEV_ENABLED TI_EPSS_ENABLED TI_NVD_ENABLED TI_OSV_ENABLED \
   TI_SENTINEL_ENABLED TI_EXPOSURE_ENABLED TI_MSTI_ENABLED; do
   state_set "$v" "${!v:-}"
 done
+[[ -n "${DEPLOYER_IP_DETECTED:-}" ]] || state_set DEPLOYER_IP_RANGES "${DEPLOYER_IP_RANGES:-}"
 state_set SECURE_SETTINGS_PASSED "${passed# }"
 
 # 5. sign-in --------------------------------------------------------------------------------------

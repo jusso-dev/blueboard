@@ -20,7 +20,7 @@ public sealed record Check(string Id, string Name, string Status, string Detail,
 public sealed record SetupReport(DateTimeOffset CheckedAt, bool Ok, IReadOnlyList<Check> Checks);
 
 /// <summary>What the shell banner needs on every page: cheap, no Microsoft calls.</summary>
-public sealed record BoardStatus(string Broker, string? PausedBy, DateTimeOffset? PausedAt, string Policy, int Held);
+public sealed record BoardStatus(string Broker, string? PausedBy, DateTimeOffset? PausedAt, string Policy, int Held, int SessionIdleMinutes = 0);
 
 /// <summary>
 /// The setup checklist (issue #2): is the board ready, in plain words, with what to do next for each failing line.
@@ -248,7 +248,7 @@ public sealed class Setup(Db db, Settings settings, Policy policy, MsClient ms, 
         await using var cmd = db.Command("select count(*)::int from actions where status = 'approved' and held_at is not null");
         var held = (int)(await cmd.ExecuteScalarAsync(ct))!;
         var broker = pause?.Paused == true ? "paused" : settings.BrokerExecute ? "live" : "dry_run";
-        return new BoardStatus(broker, pause?.Paused == true ? pause.By : null, pause?.Paused == true ? pause.At : null, PolicyState, held);
+        return new BoardStatus(broker, pause?.Paused == true ? pause.By : null, pause?.Paused == true ? pause.At : null, PolicyState, held, settings.SessionIdleMinutes);
     }
 
     private string PolicyState => policy.Missing ? "missing" : policy.Source is null ? "default" : "loaded";

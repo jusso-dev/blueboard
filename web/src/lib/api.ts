@@ -129,6 +129,8 @@ export type BoardStatus = {
   paused_at: string | null;
   policy: "loaded" | "default" | "missing";
   held: number;
+  /** Sign out after this many minutes without input (SESSION_IDLE_MINUTES); 0 is off. */
+  session_idle_minutes?: number;
 };
 export type Me = { handle: string; display_name: string; kind: string; roles: string[] };
 

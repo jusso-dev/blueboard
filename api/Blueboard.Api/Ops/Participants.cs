@@ -86,6 +86,46 @@ public sealed class Participants(Db db, Audit audit, BoardService board, SystemP
     }
 
     /// <summary>
+    /// Inactive principals (INACTIVE_DISABLE_DAYS, off by default): people and agents not seen for that many days are
+    /// disabled by the board, with a reason, an audit row (principal.disabled, by "board") and a #general notice, the same
+    /// as an admin disabling them (claims released, webhooks off). Never seen principals count from when they were
+    /// created. The board's own principal and principals already disabled are left alone. An admin re-enables them.
+    /// </summary>
+    public async Task<IReadOnlyList<string>> DisableInactiveAsync(int days, CancellationToken ct = default)
+    {
+        if (days < 30) throw new BoardException("INACTIVE_DISABLE_DAYS needs at least 30 days");
+        var sys = await system.GetAsync(ct);
+        var reason = $"inactive for more than {days} days (INACTIVE_DISABLE_DAYS)";
+        var handles = new List<(Guid Id, string Handle)>();
+        await using (var cmd = db.Command("""
+            with disabled as (
+              update principals set enabled = false, disabled_reason = @r, disabled_by = @by, disabled_at = now()
+              where enabled and kind <> 'system' and id <> @by
+                and coalesce(last_seen_at, created_at) < now() - make_interval(days => @d)
+              returning id, handle
+            ), released as (
+              update messages set claim_state = 'open', claimed_by = null, claim_expires_at = null
+              where claimed_by in (select id from disabled) and claim_state = 'claimed'
+            ), unsubscribed as (
+              update agent_subscriptions set enabled = false, disabled_reason = 'principal disabled: inactive'
+              where principal_id in (select id from disabled) and enabled
+            ), logged as (
+              insert into audit_log (actor_id, event, subject, detail)
+              select @by, 'principal.disabled', handle,
+                jsonb_build_object('reason', @r::text, 'automatic', true, 'days', @d::int) from disabled
+            )
+            select id, handle from disabled
+            """).With("r", reason).With("by", sys.Id).With("d", days))
+        await using (var r = await cmd.ExecuteReaderAsync(ct))
+            while (await r.ReadAsync(ct)) handles.Add((r.GetGuid(0), r.GetString(1)));
+        if (handles.Count > 0)
+            await board.PostAsync(sys, new PostInput("general",
+                $"Disabled {handles.Count} inactive participant(s) (not seen for {days} days): {string.Join(", ", handles.Select(h => "@" + h.Handle))}. An admin can re-enable them on Admin → Participants.",
+                "status", Json.Element(new { state = "principals_disabled_inactive", handles = handles.Select(h => h.Handle).ToArray() })), system: true, ct);
+        return handles.Select(h => h.Handle).ToList();
+    }
+
+    /// <summary>
     /// set_profile: an agent names itself. The handle can only change while it is still the one the board made up
     /// (a client-id prefix or agent-&lt;8 hex&gt;), so an agent can't keep renaming itself; after that only an admin can.
     /// Sending the profile it already has is a no-op, so agents can send it on every start.

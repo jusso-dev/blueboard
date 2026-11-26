@@ -12,6 +12,8 @@ This guide takes a new Azure subscription to a running board in **Australia East
 - [Deploy a release from Azure Cloud Shell](#deploy-a-release-from-azure-cloud-shell)
 - [Access: groups and Conditional Access](#access-groups-and-conditional-access)
 - [Front Door and WAF](#front-door-and-waf)
+- [Network and TLS hardening](#network-and-tls-hardening)
+- [Session and account lifecycle controls](#session-and-account-lifecycle-controls)
 - [Connect agents](#connect-agents)
 - [What each script does](#what-each-script-does)
 - [Updating, rolling back and tearing down](#updating-rolling-back-and-tearing-down)
@@ -218,11 +220,55 @@ BB_ENV=prod FRONT_DOOR=true ./infra/deploy.sh                     # then: Preven
 What changes when it's on:
 
 - **WAF rules.** Microsoft default rule set 2.1 (OWASP), the bot manager rule set, and a per-client-IP rate limit (1,000 requests a minute for the web, 3,000 for the API).
-- **Origins are locked.** Both apps accept only Front Door's backend addresses carrying this profile's `X-Azure-FDID`, so the WAF can't be bypassed through `*.azurewebsites.net`. Deployments (`az functionapp deploy`, `az webapp deploy`) still work through the Entra-authenticated scm endpoint.
+- **Origins are locked.** Both apps accept only Front Door's backend addresses carrying this profile's `X-Azure-FDID`, so the WAF can't be bypassed through `*.azurewebsites.net`.
+- **Deployment endpoints are locked too.** The scm (Kudu) endpoints, which `az functionapp deploy` and `az webapp deploy` use, accept only `DEPLOYER_IP_RANGES`. This defaults to the deploying machine's public IP, detected with `api.ipify.org` and used for that deploy only. Every later deploy must come from inside the ranges. Set them explicitly for a team (`DEPLOYER_IP_RANGES="203.0.113.0/28 198.51.100.7/32"`, remembered in state), or `DEPLOYER_IP_RANGES=none` to leave scm reachable from the internet, where it is still Entra-authenticated with basic-auth publishing off. **Cloud Shell's outbound IP isn't stable**, so from Cloud Shell either pass `DEPLOYER_IP_RANGES=none` or deploy from a workstation with a fixed address.
 - **New host names.** The Front Door host names replace the app host names everywhere: the SPA's API URL, CORS, links in notifications, the sign-in redirect URI and the `up.sh` summary. **Agents must use the new MCP URL** (`https://<api-endpoint>.azurefd.net/runtime/webhooks/mcp`).
 - **Propagation.** A new endpoint can take 10 to 20 minutes to reach every edge location, and `deploy.sh` waits up to 15 minutes for it.
 - **Data path.** TLS from browsers and agents ends at the nearest Microsoft edge location, then travels on Microsoft's network to the Australian origins. No board data is stored at the edge. Record this in your data-flow assessment ([Data flows](assurance/DATA-FLOWS.md)).
 - **Cost.** Front Door Premium has a monthly base fee plus per-request and data charges. Check the Azure pricing calculator.
+
+## Network and TLS hardening
+
+What the templates enforce, by profile, and what they leave to you. Settings are for `deploy.sh` / `up.sh` and are remembered in state.
+
+| Control | mvp | production | Setting |
+|---|---|---|---|
+| Minimum TLS on the web app, Function App and their scm endpoints | 1.2 | **1.3** | `TLS_MIN_VERSION=1.2\|1.3` |
+| PostgreSQL: TLS required, minimum protocol | On, TLS 1.2 | On, **TLS 1.3** | follows `TLS_MIN_VERSION` (`require_secure_transport`, `ssl_min_protocol_version`) |
+| Board to PostgreSQL: server certificate verified | **Yes** (`VerifyFull`: chain and host name) | **Yes** | `PG_SSL_MODE` app setting: `VerifyFull` (default), `VerifyCA` or `Require` (encrypt without verifying, escape hatch only) |
+| PostgreSQL audit logging (pgaudit: `ddl,role,misc_set`), connection and disconnection logs, to Log Analytics | Yes | Yes | `PG_AUDIT_LOG` (empty: off) |
+| PostgreSQL network exposure | **Public endpoint**, Entra auth only, firewall `AllowAzureServices` (any Azure address) | Private endpoint only, public access disabled | profile |
+| Subnet NSGs | n/a (no VNet) | Functions subnet: inbound from the Internet denied. Endpoints subnet: VirtualNetwork to 5432 and 443 only, all else denied | profile |
+| Edge WAF, origin lockdown, scm lockdown | Optional | Optional | `FRONT_DOOR`, `DEPLOYER_IP_RANGES` ([Front Door and WAF](#front-door-and-waf)) |
+
+**Use the production profile for real incident data.** In mvp, PostgreSQL has a public endpoint. Only Entra-authenticated identities can sign in, but the `AllowAzureServices` rule admits connections from any Azure address, including other tenants'. The deployment output `pgPublic` says which you have.
+
+What the templates can't set:
+
+- **Storage minimum TLS is 1.2.** Azure Storage offers no 1.3 minimum. The board reaches Storage with its managed identity only, and in production through private endpoints.
+- **Front Door TLS policy.** The managed `*.azurefd.net` domains use Front Door's default TLS policy (1.2 minimum). A TLS policy can only be set on a custom domain, and blueboard's templates don't create one.
+- **Cipher suites.** App Service and Front Door choose suites from Microsoft's current list. With `TLS_MIN_VERSION=1.3`, only TLS 1.3 suites (AEAD with forward secrecy) can be negotiated on the apps.
+- **NSG flow logs** aren't configured: they need Network Watcher and a storage account. Add them with your organisation's Network Watcher if your policy requires them.
+
+**pgaudit needs a restart once.** Preloading the `pgaudit` library (`shared_preload_libraries`) only takes effect after a server restart, and the deployment doesn't restart the server. After the first deploy that adds pgaudit to the preload list, run this outside business hours:
+
+```sh
+az postgres flexible-server restart -g <resource-group> -n <server>   # deploy prints the server name
+```
+
+Until the library is loaded, configured audit classes do not prove audit events are being emitted. Plan for interruption during the restart; do not assume it is a zero-downtime failover. Setting `PG_AUDIT_LOG=` explicitly sets `pgaudit.log=none` on subsequent deployments while keeping the library available, so enabling or disabling statement classes does not require another preload restart. Check the server logs in Log Analytics afterwards (`AzureDiagnostics` or `PGSQLPgAudit`, depending on the workspace's resource-specific mode).
+
+**Changing `TLS_MIN_VERSION` to 1.3 drops clients that only speak 1.2.** Every supported browser, the Azure CLI and the reference agents speak 1.3. An agent runtime pinned to an old TLS library won't connect. Check agents with `curl --tlsv1.3 https://<api>/api/healthz` before you switch.
+
+## Session and account lifecycle controls
+
+`SESSION_IDLE_MINUTES` defaults to 15 (0 off, maximum 480). `INACTIVE_DISABLE_DAYS` defaults to 0 (off), or accepts at least 30 days. Both are remembered across redeploys. For example:
+
+```sh
+BB_ENV=prod SESSION_IDLE_MINUTES=15 INACTIVE_DISABLE_DAYS=90 ./infra/deploy.sh
+```
+
+Verify the settings under **Admin centre → Posture**, then test browser expiry and review inactive participants before the next daily job. Browser expiry does not revoke stolen access tokens; inactivity disable affects people and agents, including infrequently used admins. See [the operations guide](OPERATIONS.md#sessions-and-inactive-participants) for recovery and evidence checks.
 
 ## Connect agents
 

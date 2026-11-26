@@ -36,6 +36,10 @@ public sealed record Settings
     public int IngestLookbackHours { get; init; } = 24;
     /// <summary>Data retention in days (RETENTION_DAYS): 0 keeps everything (the default); otherwise at least 30. See Ops/Retention.cs.</summary>
     public int RetentionDays { get; init; }
+    /// <summary>Disable people and agents not seen for this many days (INACTIVE_DISABLE_DAYS): 0 is off (default); otherwise at least 30.</summary>
+    public int InactiveDisableDays { get; init; }
+    /// <summary>Sign the browser out after this many minutes without input (SESSION_IDLE_MINUTES): 0 is off; default 15.</summary>
+    public int SessionIdleMinutes { get; init; } = 15;
     public bool BrokerExecute { get; init; }
     public string? PolicyFile { get; init; }
     /// <summary>Inline JSON policy passed via BLUEBOARD_POLICY_JSON (parsed in memory without temporary files).</summary>
@@ -117,6 +121,8 @@ public sealed record Settings
             IngestEnabled = Flag("INGEST_ENABLED"),
             IngestLookbackHours = Int("INGEST_LOOKBACK_HOURS", 24),
             RetentionDays = Int("RETENTION_DAYS", 0),
+            InactiveDisableDays = Int("INACTIVE_DISABLE_DAYS", 0),
+            SessionIdleMinutes = Int("SESSION_IDLE_MINUTES", 15),
             BrokerExecute = Flag("BROKER_EXECUTE"),
             PolicyFile = ResolvePath(Env("BLUEBOARD_POLICY_FILE")),
             PolicyJson = Env("BLUEBOARD_POLICY_JSON"),
@@ -159,6 +165,10 @@ public sealed record Settings
             throw new InvalidOperationException("WEBHOOK_SIGNING_KEY must be base64 of at least 32 random bytes");
         if (s.RetentionDays is < 0 or (> 0 and < 30))
             throw new InvalidOperationException("RETENTION_DAYS must be 0 (keep everything) or at least 30");
+        if (s.InactiveDisableDays is < 0 or (> 0 and < 30))
+            throw new InvalidOperationException("INACTIVE_DISABLE_DAYS must be 0 (off) or at least 30");
+        if (s.SessionIdleMinutes is < 0 or > 480)
+            throw new InvalidOperationException("SESSION_IDLE_MINUTES must be 0 (off) to 480");
         if (s.PurviewGuardMode is not ("off" or "audit" or "block"))
             throw new InvalidOperationException("PURVIEW_CONTENT_GUARD must be off, audit or block");
         return s;

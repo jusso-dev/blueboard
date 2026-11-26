@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { PageHeader, useMe } from "../components/shell";
-import { api, ApiError, refreshAll, useLiveQuery } from "../lib/api";
+import { api, ApiError, download, refreshAll, useLiveQuery } from "../lib/api";
 import { Button, cx, Empty, ErrorLine, Input, Tag, Time } from "../components/ui";
 
 type Participant = {
@@ -98,6 +98,34 @@ function BrokerCard() {
   );
 }
 
+const DAY = 86_400_000;
+
+/** What an access reviewer should look at: privileged roles, inactivity, never signed in. Words, not colour alone. */
+export function reviewFlags(p: Pick<Participant, "kind" | "roles" | "last_seen_at" | "enabled">, now = Date.now()): string[] {
+  if (!p.enabled) return [];
+  const flags: string[] = [];
+  if (!p.last_seen_at) flags.push("never signed in");
+  else if (now - Date.parse(p.last_seen_at) > 30 * DAY) flags.push(`inactive ${Math.floor((now - Date.parse(p.last_seen_at)) / DAY)} days`);
+  if (p.kind === "human" && p.roles.includes("admin")) flags.push("privileged: admin");
+  else if (p.kind === "human" && p.roles.includes("approver")) flags.push("privileged: approver");
+  if (p.kind === "agent" && p.roles.includes("requester")) flags.push("can request actions");
+  return flags;
+}
+
+function Review({ p }: { p: Participant }) {
+  const flags = reviewFlags(p);
+  if (flags.length === 0) return <span className="label">{p.enabled ? "no flags" : "disabled"}</span>;
+  return (
+    <div className="flex flex-wrap gap-1">
+      {flags.map((f) => (
+        <Tag key={f} tone={f.startsWith("inactive") || f === "never signed in" ? "warning" : "neutral"}>
+          {f}
+        </Tag>
+      ))}
+    </div>
+  );
+}
+
 function ParticipantRow({ p, self }: { p: Participant; self: boolean }) {
   const [open, setOpen] = useState(false);
   const toggle = async (reason: string) => {
@@ -119,8 +147,8 @@ function ParticipantRow({ p, self }: { p: Participant; self: boolean }) {
         <td className="py-2 pr-4">{p.last_seen_at ? <Time iso={p.last_seen_at} /> : <span className="label">never</span>}</td>
         <td className="tnum py-2 pr-4 text-right">{p.posts24h}</td>
         <td className="tnum py-2 pr-4 text-right">{p.actions24h}</td>
-        <td className="label py-2 pr-4" title="Per-principal rate limits are added separately">
-          {p.rate_limit ? JSON.stringify(p.rate_limit) : "not tracked"}
+        <td className="py-2 pr-4">
+          <Review p={p} />
         </td>
         <td className="py-2 pr-5">
           <div className="flex items-center justify-end gap-2">
@@ -157,14 +185,21 @@ export default function ParticipantsPage() {
   if (me && !isAdmin) {
     return (
       <>
-        <PageHeader title="Participants" />
+        <PageHeader title="Access review" />
         <Empty title="Participants are for board admins">Ask an admin for the Board.Admin role.</Empty>
       </>
     );
   }
   return (
     <>
-      <PageHeader title="Participants" sub="Agents and people on the board. Roles are as last seen in Entra; assign them in Entra, not here." />
+      <PageHeader
+        title="Access review"
+        sub="People and agents on the board. Roles are as last seen in Entra: grant or remove them in Entra (groups, PIM). Disable here to cut access at once."
+      >
+        <Button onClick={() => void download("/manage/audit?event=principal.&format=csv", `blueboard-access-changes-${new Date().toISOString().slice(0, 10)}.csv`)}>
+          Export access changes
+        </Button>
+      </PageHeader>
       <div className="min-h-0 flex-1 overflow-y-auto">
         {isAdmin && <BrokerCard />}
         {error && <Empty title="Couldn't load participants">{error.message}</Empty>}
@@ -178,7 +213,7 @@ export default function ParticipantsPage() {
                 <th className="py-2 pr-4 font-normal">Last seen</th>
                 <th className="py-2 pr-4 text-right font-normal">Posts 24h</th>
                 <th className="py-2 pr-4 text-right font-normal">Actions 24h</th>
-                <th className="py-2 pr-4 font-normal">Rate limit</th>
+                <th className="py-2 pr-4 font-normal">Review</th>
                 <th className="py-2 pr-5 text-right font-normal">Access</th>
               </tr>
             </thead>

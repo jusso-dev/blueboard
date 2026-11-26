@@ -2,6 +2,15 @@
 // it to Microsoft.App/environments) and one for private endpoints, plus the private DNS zones those endpoints need.
 // Outbound traffic from the Function App (Graph, Defender, notifications, Azure Monitor) leaves through a NAT gateway,
 // so it has one fixed public IP and doesn't depend on default outbound access.
+//
+// Each subnet has a network security group:
+//   functions  outbound-only (Flex Consumption VNet integration): inbound from the Internet is denied. The default
+//              VirtualNetwork and AzureLoadBalancer allows stay, because the delegated subnet's platform may rely on
+//              them; requests reach the Function App through its own front end, never this subnet.
+//   endpoints  private endpoints for PostgreSQL (5432) and Storage / Key Vault (443): only the VNet may reach them,
+//              on those ports. privateEndpointNetworkPolicies is Enabled so the NSG applies to the endpoints.
+// NSG flow logs aren't configured: VNet flow logs need a storage account and Network Watcher per region, and the
+// endpoints carry only the board's own traffic. Add them with your organisation's Network Watcher if required.
 
 param location string
 param namePrefix string
@@ -26,6 +35,76 @@ resource nat 'Microsoft.Network/natGateways@2024-05-01' = {
   properties: { publicIpAddresses: [{ id: natIp.id }], idleTimeoutInMinutes: 10 }
 }
 
+resource functionsNsg 'Microsoft.Network/networkSecurityGroups@2024-05-01' = {
+  name: '${namePrefix}-functions-nsg'
+  location: location
+  properties: {
+    securityRules: [
+      {
+        name: 'DenyInternetInbound'
+        properties: {
+          priority: 4000
+          direction: 'Inbound'
+          access: 'Deny'
+          protocol: '*'
+          sourceAddressPrefix: 'Internet'
+          sourcePortRange: '*'
+          destinationAddressPrefix: '*'
+          destinationPortRange: '*'
+        }
+      }
+    ]
+  }
+}
+
+resource endpointsNsg 'Microsoft.Network/networkSecurityGroups@2024-05-01' = {
+  name: '${namePrefix}-endpoints-nsg'
+  location: location
+  properties: {
+    securityRules: [
+      {
+        name: 'AllowVnetToPostgres'
+        properties: {
+          priority: 100
+          direction: 'Inbound'
+          access: 'Allow'
+          protocol: 'Tcp'
+          sourceAddressPrefix: 'VirtualNetwork'
+          sourcePortRange: '*'
+          destinationAddressPrefix: endpointsPrefix
+          destinationPortRange: '5432'
+        }
+      }
+      {
+        name: 'AllowVnetToHttps'
+        properties: {
+          priority: 110
+          direction: 'Inbound'
+          access: 'Allow'
+          protocol: 'Tcp'
+          sourceAddressPrefix: 'VirtualNetwork'
+          sourcePortRange: '*'
+          destinationAddressPrefix: endpointsPrefix
+          destinationPortRange: '443'
+        }
+      }
+      {
+        name: 'DenyAllInbound'
+        properties: {
+          priority: 4000
+          direction: 'Inbound'
+          access: 'Deny'
+          protocol: '*'
+          sourceAddressPrefix: '*'
+          sourcePortRange: '*'
+          destinationAddressPrefix: '*'
+          destinationPortRange: '*'
+        }
+      }
+    ]
+  }
+}
+
 resource vnet 'Microsoft.Network/virtualNetworks@2024-05-01' = {
   name: '${namePrefix}-vnet'
   location: location
@@ -37,6 +116,7 @@ resource vnet 'Microsoft.Network/virtualNetworks@2024-05-01' = {
         properties: {
           addressPrefix: functionsPrefix
           natGateway: { id: nat.id }
+          networkSecurityGroup: { id: functionsNsg.id }
           defaultOutboundAccess: false
           delegations: [{ name: 'flex', properties: { serviceName: 'Microsoft.App/environments' } }]
         }
@@ -45,8 +125,9 @@ resource vnet 'Microsoft.Network/virtualNetworks@2024-05-01' = {
         name: 'endpoints'
         properties: {
           addressPrefix: endpointsPrefix
+          networkSecurityGroup: { id: endpointsNsg.id }
           defaultOutboundAccess: false
-          privateEndpointNetworkPolicies: 'Disabled'
+          privateEndpointNetworkPolicies: 'Enabled'
         }
       }
     ]

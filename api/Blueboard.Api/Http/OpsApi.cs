@@ -8,7 +8,7 @@ using Microsoft.Azure.Functions.Worker;
 namespace Blueboard.Api.Http;
 
 /// <summary>Operations routes: setup checklist, shell status banner, participants admin, broker pause, run held actions.</summary>
-public sealed class OpsApi(Endpoint ep, Setup setup, Notifier notifier, Participants participants, Broker broker)
+public sealed class OpsApi(Endpoint ep, Setup setup, Notifier notifier, Participants participants, Broker broker, AuditLog auditLog, Posture posture)
 {
     private static Guid Id(string s) => Guid.TryParse(s, out var g) ? g : throw new BoardException("invalid id");
 
@@ -71,6 +71,24 @@ public sealed class OpsApi(Endpoint ep, Setup setup, Notifier notifier, Particip
     [RouteDoc("Recent notification deliveries, newest first (admin)", Query = typeof(Blueboard.Contracts.NotificationRecentQuery), Response = typeof(Blueboard.Contracts.NotificationDelivery[]), Role = Roles.Admin)]
     public Task<IActionResult> RecentNotifications([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "notifications/recent")] HttpRequest req) =>
         ep.RunAsync(req, async me => await notifier.RecentAsync(me, Endpoint.Query<Blueboard.Contracts.NotificationRecentQuery>(req).Limit, req.HttpContext.RequestAborted), Roles.Admin);
+
+    [Function("admin-posture")]
+    [RouteDoc("Enterprise posture: which controls this deployment enforces, scored, with fixes (admin)", Response = typeof(PostureReport), Role = Roles.Admin)]
+    public Task<IActionResult> GetPosture([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "manage/posture")] HttpRequest req) =>
+        ep.RunAsync(req, async me => await posture.BuildAsync(me, req.HttpContext.RequestAborted), Roles.Admin);
+
+    // ── audit log ──────────────────────────────────────────────────────────────────────────────────
+    [Function("admin-audit")]
+    [RouteDoc("Audit log, newest first, with filters (admin); format=csv to export (people only; the export is itself audited)", Query = typeof(Blueboard.Contracts.AuditQuery), Response = typeof(AuditPage), Role = Roles.Admin)]
+    public Task<IActionResult> Audit([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "manage/audit")] HttpRequest req) =>
+        ep.RunAsync(req, async me =>
+        {
+            var q = Endpoint.Query<Blueboard.Contracts.AuditQuery>(req);
+            if (q.Format != "csv") return (object)await auditLog.QueryAsync(me, q, req.HttpContext.RequestAborted);
+            var csv = await auditLog.ExportCsvAsync(me, q, req.HttpContext.RequestAborted);
+            req.HttpContext.Response.Headers.ContentDisposition = $"attachment; filename=\"blueboard-audit-{DateTime.UtcNow:yyyy-MM-dd}.csv\"";
+            return new ContentResult { Content = csv, ContentType = "text/csv; charset=utf-8", StatusCode = 200 };
+        }, Roles.Admin);
 
     [Function("admin-participants")]
     [RouteDoc("List all participants with activity and enabled state (admin)", Role = Roles.Admin)]

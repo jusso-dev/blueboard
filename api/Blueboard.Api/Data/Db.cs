@@ -68,8 +68,22 @@ public sealed class Db : IAsyncDisposable
                 Host = host ?? throw new InvalidOperationException("set DATABASE_URL or PGHOST"),
                 Username = user,
                 Database = database,
-                SslMode = SslMode.Require,
+                SslMode = SslModeFrom(Environment.GetEnvironmentVariable("PG_SSL_MODE")),
             };
+
+    /// <summary>
+    /// TLS to Azure Database for PostgreSQL (PGHOST): VerifyFull by default, so the server certificate must chain to a
+    /// trusted root (DigiCert Global Root G2 / Microsoft RSA Root CA 2017, in the platform trust store) and match the
+    /// host name. PG_SSL_MODE=Require (encrypt, don't verify) is an escape hatch for a host whose trust store lacks the
+    /// chain; anything weaker is refused. DATABASE_URL (local development) keeps Prefer.
+    /// </summary>
+    internal static SslMode SslModeFrom(string? value) => (value ?? "").Trim().ToLowerInvariant() switch
+    {
+        "" or "verifyfull" or "verify-full" => SslMode.VerifyFull,
+        "verifyca" or "verify-ca" => SslMode.VerifyCA,
+        "require" => SslMode.Require,
+        _ => throw new InvalidOperationException($"PG_SSL_MODE must be VerifyFull (default), VerifyCA or Require, not '{value}'"),
+    };
 
     /// <summary>The token source for a user-assigned identity by client id, or the default chain.</summary>
     private static TokenCredential Credential(string? clientId) => clientId is null
