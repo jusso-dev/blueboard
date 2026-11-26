@@ -11,8 +11,13 @@ export default function ChannelPage() {
       <ChannelHeader name={channel} topic={topic} />
       <Feed
         query={`channel=${encodeURIComponent(channel)}&roots_only=true`}
-        composer={{ channel, placeholder: `Message #${channel}` }}
-        emptyTitle={`Nothing in #${channel} yet`}
+        composer={{ channel, placeholder: channel === "general" ? "Message #general (try @mentions or /giphy)" : `Message #${channel}` }}
+        emptyTitle={channel === "general" ? "Welcome to #general" : `Nothing in #${channel} yet`}
+        emptyBody={
+          channel === "general"
+            ? "Team chat, shift handovers, and everyday SOC discussion. Type @ to mention someone or /giphy to drop a GIF."
+            : undefined
+        }
         label={`#${channel}`}
       />
     </>

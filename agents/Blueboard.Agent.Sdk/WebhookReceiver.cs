@@ -47,8 +47,17 @@ public sealed class WebhookReceiver : IAsyncDisposable
         _app = builder.Build();
         _app.MapPost(path, async (HttpRequest req) =>
         {
-            using var reader = new StreamReader(req.Body, Encoding.UTF8);
-            var body = await reader.ReadToEndAsync();
+            const int maxBytes = 16 * 1024;
+            if (req.ContentLength > maxBytes) return Results.StatusCode(413);
+            using var ms = new MemoryStream();
+            var buf = new byte[4096];
+            int n;
+            while ((n = await req.Body.ReadAsync(buf, req.HttpContext.RequestAborted)) > 0)
+            {
+                if (ms.Length + n > maxBytes) return Results.StatusCode(413);
+                ms.Write(buf, 0, n);
+            }
+            var body = Encoding.UTF8.GetString(ms.GetBuffer(), 0, (int)ms.Length);
             return Results.StatusCode(Accept(body, req.Headers[WebhookEvents.TimestampHeader], req.Headers[WebhookEvents.SignatureHeader]));
         });
         await _app.StartAsync(ct);

@@ -92,14 +92,14 @@ public sealed partial class Notifier(HttpClient http, Db db, Audit audit, MsClie
     {
         if (!Uri.TryCreate(url, UriKind.Absolute, out var u) || (u.Scheme != Uri.UriSchemeHttps && u.Scheme != Uri.UriSchemeHttp))
             return $"{name} must be an https URL";
-        var host = u.IdnHost.Trim('[', ']');
+        var host = u.IdnHost.Trim('[', ']').TrimEnd('.');
         var ip = IPAddress.TryParse(host, out _);
         var local = localHttp && !ip && IsSingleLabel(host);
         if (u.Scheme != Uri.UriSchemeHttps && !local)
             return localHttp ? $"{name} must be an https URL (plain http only for a single-label host such as a Docker service name)" : $"{name} must be an https URL";
         if (u.UserInfo.Length > 0 || (!u.IsDefaultPort && !local)) return $"{name} must not carry credentials or a custom port";
         if (ip) return $"{name} must use a host name, not an IP address";
-        if (!settings.NotifyAllowedHosts.Contains(u.IdnHost, StringComparer.OrdinalIgnoreCase)) return $"{u.IdnHost} is not in NOTIFY_ALLOWED_HOSTS";
+        if (!settings.NotifyAllowedHosts.Contains(host, StringComparer.OrdinalIgnoreCase)) return $"{host} is not in NOTIFY_ALLOWED_HOSTS";
         return null;
     }
 

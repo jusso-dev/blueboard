@@ -12,11 +12,11 @@ public sealed record Watchable(string Title, string Text, IReadOnlyCollection<st
 /// </summary>
 public static class Watches
 {
-    public static readonly string[] Kinds = ["tag", "product", "cve", "keyword"];
+    public static readonly string[] Kinds = ["stack", "vendor", "product", "tag", "cve", "keyword"];
 
     public static string Normalise(string kind, string value)
     {
-        if (!Kinds.Contains(kind)) throw new BoardException("kind must be tag, product, cve or keyword");
+        if (!Kinds.Contains(kind)) throw new BoardException("kind must be stack, vendor, product, tag, cve or keyword");
         var v = Regex.Replace(value.Trim(), @"\s+", " ");
         if (kind == "cve") return Indicators.NormaliseCve(v) ?? throw new BoardException("invalid CVE id");
         v = v.ToLowerInvariant();
@@ -30,6 +30,10 @@ public static class Watches
         "cve" => r.Cves.Contains(w.Value),
         "tag" => r.Tags.Contains(w.Value),
         "product" => r.Products.Any(p => Word(w.Value).IsMatch(p)) || Word(w.Value).IsMatch(r.Title),
+        "stack" or "vendor" => r.Products.Any(p => Word(w.Value).IsMatch(p))
+            || r.Tags.Any(t => string.Equals(t, w.Value, StringComparison.OrdinalIgnoreCase) || Word(w.Value).IsMatch(t))
+            || Word(w.Value).IsMatch(r.Title)
+            || Word(w.Value).IsMatch(r.Text),
         "keyword" => Word(w.Value).IsMatch(r.Title) || Word(w.Value).IsMatch(r.Text),
         _ => false,
     };

@@ -151,6 +151,9 @@ public sealed class BoardConnection : IAsyncDisposable
     public Task<JsonElement> LookupPurviewContextAsync(string user, bool includeLabels = true, CancellationToken ct = default) => Call<JsonElement>(Tools.LookupPurviewContext, new PurviewLookupInput(user, includeLabels), ct);
     public Task<JsonElement> LookupIntelAsync(string key, CancellationToken ct = default) => Call<JsonElement>(Tools.LookupIntel, new IntelLookupInput(key), ct);
     public Task<JsonElement> CheckCveExposureAsync(string[] cveIds, CancellationToken ct = default) => Call<JsonElement>(Tools.CheckCveExposure, new ExposureInput(cveIds), ct);
+    public Task<JsonElement> ListTiWatchesAsync(CancellationToken ct = default) => Call<JsonElement>(Tools.ListTiWatches, null, ct);
+    public Task<TiFinding[]> ListTiFindingsAsync(TiFindingsQuery? query = null, CancellationToken ct = default) => Call<TiFinding[]>(Tools.ListTiFindings, query ?? new TiFindingsQuery(), ct);
+    public Task<TiFinding> PostTiFindingAsync(TiFindingInput finding, CancellationToken ct = default) => Call<TiFinding>(Tools.PostTiFinding, finding, ct);
     public Task<JsonElement> ListActionTypesAsync(CancellationToken ct = default) => Call<JsonElement>(Tools.ListActionTypes, null, ct);
     public Task<ActionRow[]> ListActionsAsync(ActionsQuery? query = null, CancellationToken ct = default) => Call<ActionRow[]>(Tools.ListActions, query ?? new ActionsQuery(), ct);
     public Task<ActionRow> RequestActionAsync(ActionRequest request, CancellationToken ct = default) => Call<ActionRow>(Tools.RequestAction, request, ct);

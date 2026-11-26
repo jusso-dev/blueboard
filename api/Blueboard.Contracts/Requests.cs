@@ -94,6 +94,35 @@ public sealed record IntelLookupInput(
 public sealed record ExposureInput(
     [Description("CVE ids, e.g. [\"CVE-2021-44228\",\"CVE-2024-3400\"] (1-100)")] string[] CveIds);
 
+public sealed record TiFindingIndicatorInput(
+    [Description("ip | domain | url | sha256 | sha1 | md5 | email | cve")][AllowedValues("ip", "domain", "url", "sha256", "sha1", "md5", "email", "cve")] string Kind,
+    [Description("Public indicator value (private/internal IPs are refused)")][StringLength(2048, MinimumLength = 1)] string Value);
+
+public sealed record TiFindingInput(
+    [Description("Short headline of the threat intel finding (3-300 characters)")][StringLength(300, MinimumLength = 3)] string Title,
+    [Description("Concise summary of the threat, affected versions, and impact on the tech stack (5-8000 characters)")][StringLength(8000, MinimumLength = 5)] string Summary,
+    [Description("critical | high | medium | low | informational")][AllowedValues("critical", "high", "medium", "low", "informational")] string Severity,
+    [Description("Source name, e.g. CISA KEV, Vendor Advisory, pwn.watch, MSRC, Agent research")][StringLength(200, MinimumLength = 1)] string Source,
+    [Description("Tech stack / product / vendor tags this finding pertains to (e.g. [\"fortios\", \"entra-id\"])")] string[]? TechStack = null,
+    [Description("Related CVE ids (e.g. [\"CVE-2026-1234\"])")] string[]? Cves = null,
+    [Description("Optional public indicators (private IPs are rejected)")] TiFindingIndicatorInput[]? Indicators = null,
+    [Description("Optional https reference URL")][StringLength(2048)] string? SourceUrl = null,
+    [Description("Recommended mitigation, patch version, or detection action")][StringLength(2000)] string? Recommendation = null,
+    [Description("Confidence 0-1 (optional)")][Range(0, 1)] double? Confidence = null,
+    [Description("Optional idempotency key so recurring bot runs update rather than duplicate findings")][StringLength(200)] string? DedupeKey = null,
+    [Description("Also cross-post a brief summary to #intel (default true)")] bool PostToChannel = true);
+
+public sealed record TiFindingsQuery(
+    [Description("Filter by status: open (new+reviewing), new, reviewing, mitigated, dismissed, or all")][AllowedValues("open", "new", "reviewing", "mitigated", "dismissed", "all")] string? Status = null,
+    [Description("Filter by severity: critical, high, medium, low, informational")][AllowedValues("critical", "high", "medium", "low", "informational")] string? Severity = null,
+    [Description("Filter by tech stack item or watch value")][StringLength(200)] string? Stack = null,
+    [Description("Filter by CVE id")][StringLength(40)] string? Cve = null,
+    [Description("Substring search across title, summary, source and stack")][StringLength(200)] string? Q = null,
+    [Description("1-200, default 50")][Range(1, 200)] int Limit = 50);
+
+public sealed record TiFindingStatusInput(
+    [Description("new | reviewing | mitigated | dismissed")][AllowedValues("new", "reviewing", "mitigated", "dismissed")] string Status);
+
 public sealed record ActionRequest(
     [Description("Action kind from list_action_types")] string Kind,
     [Description("Action params, matching the kind's schema from list_action_types")] JsonElement Params,

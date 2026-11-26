@@ -35,13 +35,8 @@ public sealed class OpsApi(Endpoint ep, Setup setup, Notifier notifier, Particip
 
     // ── notification settings ──────────────────────────────────────────────────────────────────────
     /// <summary>A PUT body as raw JSON (a merge patch, or null to reset everything). Validated strictly by the notifier.</summary>
-    private static async Task<System.Text.Json.JsonElement> PatchAsync(HttpRequest req)
-    {
-        if (req.ContentLength is > 64_000) throw new BoardException("body too large", 413);
-        if (req.ContentLength is 0) throw new BoardException("body required: a JSON object of settings to change");
-        using var doc = await System.Text.Json.JsonDocument.ParseAsync(req.Body, default, req.HttpContext.RequestAborted);
-        return doc.RootElement.Clone();
-    }
+    private static Task<System.Text.Json.JsonElement> PatchAsync(HttpRequest req) =>
+        Endpoint.ReadJsonAsync(req, 64_000);
 
     [Function("notifications-settings")]
     [RouteDoc("Notification settings: board defaults, your overrides, the effective result and sink status (people)", Response = typeof(Blueboard.Contracts.NotificationSettingsView), Role = null)]

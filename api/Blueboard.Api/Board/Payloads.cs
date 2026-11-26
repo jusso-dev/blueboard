@@ -17,7 +17,7 @@ public static class Payloads
     {
         if (payload.ValueKind != JsonValueKind.Object) throw new BoardException($"invalid {type} payload: must be an object");
         if (payload.GetRawText().Length > MaxPayloadBytes) throw new BoardException("payload must be at most 64 KB");
-        return type switch
+        var validated = type switch
         {
             "ioc" => Ioc(payload),
             "verdict" => Verdict(payload),
@@ -25,6 +25,14 @@ public static class Payloads
             "status" => Status(payload, system),
             _ => payload,
         };
+        if (payload.TryGetProperty("gif", out var gifEl) && gifEl.ValueKind != JsonValueKind.Null)
+        {
+            var cleanGif = Gifs.ValidatePayload(gifEl);
+            var node = JsonNode.Parse(validated.GetRawText())!.AsObject();
+            node["gif"] = cleanGif;
+            return JsonSerializer.SerializeToElement(node);
+        }
+        return validated;
     }
 
     private static JsonElement Ioc(JsonElement p)

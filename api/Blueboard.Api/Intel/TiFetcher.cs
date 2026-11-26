@@ -82,7 +82,7 @@ public sealed class TiFetcher
     public TiFetcher(IFetchCache cache, TiSettings settings, HttpMessageHandler? handler = null,
         Func<DateTimeOffset>? now = null, Func<TimeSpan, CancellationToken, Task>? sleep = null)
     {
-        _http = new HttpClient(handler ?? new SocketsHttpHandler { AllowAutoRedirect = false, AutomaticDecompression = DecompressionMethods.All }, disposeHandler: handler is null)
+        _http = new HttpClient(handler ?? new SocketsHttpHandler { AllowAutoRedirect = false, UseProxy = false, UseCookies = false, AutomaticDecompression = DecompressionMethods.All }, disposeHandler: handler is null)
         {
             Timeout = System.Threading.Timeout.InfiniteTimeSpan, // per request, below
         };
@@ -100,9 +100,11 @@ public sealed class TiFetcher
     {
         if (!Uri.TryCreate(url, UriKind.Absolute, out var u) || u.Scheme != Uri.UriSchemeHttps)
             throw new TiFetchException($"{policy.SourceId}: refusing non-https URL");
-        if (!u.IsDefaultPort || !policy.Hosts.Contains(u.Host, StringComparer.OrdinalIgnoreCase))
-            throw new TiFetchException($"{policy.SourceId}: host {u.Host} is not on this source's allowlist");
+        var host = u.IdnHost.TrimEnd('.');
+        if (!u.IsDefaultPort || !policy.Hosts.Contains(host, StringComparer.OrdinalIgnoreCase))
+            throw new TiFetchException($"{policy.SourceId}: host {host} is not on this source's allowlist");
         if (u.UserInfo.Length > 0) throw new TiFetchException($"{policy.SourceId}: refusing URL with credentials");
+        if (u.Fragment.Length > 0) throw new TiFetchException($"{policy.SourceId}: refusing URL with fragment");
         return u;
     }
 

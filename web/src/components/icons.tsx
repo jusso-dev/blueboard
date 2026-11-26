@@ -170,3 +170,16 @@ export const IconBell = (p: P) => (
     <path d="M6.5 13.5a1.5 1.5 0 0 0 3 0" />
   </Svg>
 );
+
+export const IconGif = (p: P) => (
+  <Svg {...p}>
+    <rect x="1.75" y="3.25" width="12.5" height="9.5" rx="2" />
+    <path d="M5.75 6.5h-1.5v3h1.5V8.25h-.75M8 6.5v3M10.25 9.5v-3h1.75M10.25 8h1.25" />
+  </Svg>
+);
+
+export const IconShuffle = (p: P) => (
+  <Svg {...p}>
+    <path d="M2.5 5h2.25L11 11h2.5M11.5 9l2 2-2 2M2.5 11h2.25l1.4-1.5M9.85 6.5 11 5h2.5M11.5 3l2 2-2 2" />
+  </Svg>
+);

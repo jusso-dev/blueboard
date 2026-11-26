@@ -287,7 +287,8 @@ public static class PolicyEngine
 
     /// <summary>
     /// A value matches when it, or the host it names, equals a protected entry or is a subdomain of one. URLs are
-    /// reduced to their host (so https://login.microsoftonline.com/x matches microsoftonline.com) and a trailing dot
+    /// reduced to their host (so https://login.microsoftonline.com/x matches microsoftonline.com), IP addresses are
+    /// canonicalised (so uncompressed IPv6 and IPv4-mapped IPv6 cannot bypass a protected IP), and a trailing dot
     /// is ignored.
     /// </summary>
     internal static bool MatchesProtectedIndicator(string value, IReadOnlySet<string> protectedLower)
@@ -295,21 +296,35 @@ public static class PolicyEngine
         if (protectedLower.Count == 0) return false;
         var v = value.Trim().ToLowerInvariant().TrimEnd('.');
         if (protectedLower.Contains(v)) return true;
+        var canonicalValueIp = CanonicalIp(v);
         var host = HostOf(v);
-        if (host is null) return false;
+        var canonicalHostIp = host is null ? null : CanonicalIp(host);
         foreach (var entry in protectedLower)
         {
-            var eh = entry.Contains("://") || entry.Contains('/') ? HostOf(entry) : entry;
-            if (eh is not null && (host == eh || host.EndsWith('.' + eh))) return true;
+            var entryIp = CanonicalIp(entry);
+            if (entryIp is not null && (entryIp == canonicalValueIp || entryIp == canonicalHostIp)) return true;
+            var eh = entry.Contains("://") || entry.Contains('/') ? HostOf(entry) : entry.Trim('[', ']');
+            if (eh is null) continue;
+            var ehIp = CanonicalIp(eh);
+            if (ehIp is not null && (ehIp == canonicalValueIp || ehIp == canonicalHostIp)) return true;
+            if (host is not null && (host == eh || host.EndsWith('.' + eh))) return true;
         }
         return false;
     }
 
+    private static string? CanonicalIp(string raw)
+    {
+        var stripped = raw.Trim().Trim('[', ']');
+        if (!System.Net.IPAddress.TryParse(stripped, out var ip)) return null;
+        if (ip.IsIPv4MappedToIPv6) ip = ip.MapToIPv4();
+        return ip.ToString();
+    }
+
     private static string? HostOf(string v)
     {
-        var withScheme = v.Contains("://") ? v : "http://" + v;
+        var withScheme = v.Contains("://") ? v : (v.Contains(':') && System.Net.IPAddress.TryParse(v.Trim('[', ']'), out _) ? $"http://[{v.Trim('[', ']')}]" : "http://" + v);
         if (!Uri.TryCreate(withScheme, UriKind.Absolute, out var u) || u.Host.Length == 0) return null;
-        return u.IdnHost.ToLowerInvariant().TrimEnd('.');
+        return u.IdnHost.Trim('[', ']').ToLowerInvariant().TrimEnd('.');
     }
 
     /// <summary>Every name a target is known by in the evidence: device MDE id ↔ DNS name ↔ host name; user oid ↔ UPN; app object id ↔ app id ↔ display name.</summary>

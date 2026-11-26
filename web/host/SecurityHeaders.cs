@@ -11,16 +11,20 @@ public sealed class SecurityHeaders
 
     private SecurityHeaders(KeyValuePair<string, string>[] common, KeyValuePair<string, string>[] page) => (_common, _page) = (common, page);
 
+    private const string GifImgSources =
+        "https://media.giphy.com https://media0.giphy.com https://media1.giphy.com https://media2.giphy.com https://media3.giphy.com https://media4.giphy.com https://i.giphy.com https://media.tenor.com https://c.tenor.com";
+
     public static SecurityHeaders For(WebConfig cfg)
     {
         var api = cfg.ApiOrigin.GetLeftPart(UriPartial.Authority);
         // The local demo has no Entra sign-in, so nothing to allow for it.
         var login = cfg.DevAuth ? "" : " " + cfg.Authority.GetLeftPart(UriPartial.Authority);
+        var imgSrc = cfg.GifsEnabled ? $"img-src 'self' data: {GifImgSources}" : "img-src 'self' data:";
         var csp = string.Join("; ",
             "default-src 'self'",
             "script-src 'self'",
             "style-src 'self' 'unsafe-inline'",
-            "img-src 'self' data:",
+            imgSrc,
             "font-src 'self' data:",
             $"connect-src 'self' {api}{login}",
             // MSAL renews tokens in a hidden iframe: Entra, which then redirects back to /redirect on this origin.

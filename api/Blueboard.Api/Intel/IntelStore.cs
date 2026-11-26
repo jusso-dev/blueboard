@@ -212,6 +212,135 @@ public sealed class IntelStore(Db db)
         return await cmd.ExecuteNonQueryAsync(ct) == 1;
     }
 
+    public async Task<bool> DeleteWatchAsync(Guid id, CancellationToken ct = default)
+    {
+        await using var cmd = db.Command("delete from ti_watches where id = @id").With("id", id);
+        return await cmd.ExecuteNonQueryAsync(ct) == 1;
+    }
+
+    // ── findings table (bot & analyst findings tied to tech stack / watchlists) ──────────────────
+    private const string FindingCols = """
+        f.id, f.title, f.summary, f.severity, f.status, f.confidence, f.tech_stack, f.matched_watches, f.cves,
+        f.indicators::text, f.source, f.source_url, f.recommendation,
+        a.handle, a.display_name, a.kind, f.message_id, f.dedupe_key, f.created_at, f.updated_at
+        """;
+
+    private static Blueboard.Contracts.TiFinding ReadFinding(NpgsqlDataReader r) => new(
+        r.GetGuid(0),
+        r.GetString(1),
+        r.GetString(2),
+        r.GetString(3),
+        r.GetString(4),
+        r.IsDBNull(5) ? null : r.GetDouble(5),
+        r.GetFieldValue<string[]>(6),
+        r.GetFieldValue<string[]>(7),
+        r.GetFieldValue<string[]>(8),
+        JsonSerializer.Deserialize<Blueboard.Contracts.TiFindingIndicator[]>(r.GetString(9), Blueboard.Contracts.BoardJson.Options) ?? [],
+        r.GetString(10),
+        r.Get<string>("source_url"),
+        r.Get<string>("recommendation"),
+        new Blueboard.Contracts.Author(r.GetString(13), r.GetString(14), r.GetString(15)),
+        r.Get<Guid?>("message_id"),
+        r.Get<string>("dedupe_key"),
+        r.GetFieldValue<DateTimeOffset>(18),
+        r.GetFieldValue<DateTimeOffset>(19));
+
+    public async Task<Blueboard.Contracts.TiFinding?> GetFindingAsync(Guid id, CancellationToken ct = default)
+    {
+        await using var cmd = db.Command($"select {FindingCols} from ti_findings f join principals a on a.id = f.author_id where f.id = @id").With("id", id);
+        await using var r = await cmd.ExecuteReaderAsync(ct);
+        return await r.ReadAsync(ct) ? ReadFinding(r) : null;
+    }
+
+    public async Task<IReadOnlyList<Blueboard.Contracts.TiFinding>> ListFindingsAsync(Blueboard.Contracts.TiFindingsQuery q, CancellationToken ct = default)
+    {
+        var where = new List<string> { "true" };
+        await using var cmd = db.Command("");
+        switch (q.Status)
+        {
+            case null or "" or "all": break;
+            case "open": where.Add("f.status in ('new', 'reviewing')"); break;
+            default: where.Add("f.status = @st"); cmd.With("st", q.Status); break;
+        }
+        if (!string.IsNullOrWhiteSpace(q.Severity)) { where.Add("f.severity = @sev"); cmd.With("sev", q.Severity); }
+        if (!string.IsNullOrWhiteSpace(q.Stack))
+        {
+            var stack = q.Stack.Trim().ToLowerInvariant();
+            where.Add("(@stack = any(f.tech_stack) or exists (select 1 from unnest(f.matched_watches) mw where lower(mw) = @stack or lower(mw) like '%:' || @stack))");
+            cmd.With("stack", stack);
+        }
+        if (!string.IsNullOrWhiteSpace(q.Cve))
+        {
+            var cve = Indicators.NormaliseCve(q.Cve) ?? q.Cve.Trim().ToUpperInvariant();
+            where.Add("@cve = any(f.cves)");
+            cmd.With("cve", cve);
+        }
+        if (!string.IsNullOrWhiteSpace(q.Q))
+        {
+            var needle = q.Q.Trim().ToLowerInvariant();
+            where.Add("(strpos(lower(f.title), @q) > 0 or strpos(lower(f.summary), @q) > 0 or strpos(lower(f.source), @q) > 0 or exists (select 1 from unnest(f.tech_stack) ts where strpos(lower(ts), @q) > 0) or exists (select 1 from unnest(f.cves) cv where strpos(lower(cv), @q) > 0))");
+            cmd.With("q", needle);
+        }
+        cmd.With("lim", Math.Clamp(q.Limit, 1, 200));
+        cmd.CommandText = $"""
+            select {FindingCols} from ti_findings f join principals a on a.id = f.author_id
+            where {string.Join(" and ", where)}
+            order by case f.status when 'new' then 0 when 'reviewing' then 1 when 'mitigated' then 2 else 3 end,
+                     case f.severity when 'critical' then 0 when 'high' then 1 when 'medium' then 2 when 'low' then 3 else 4 end,
+                     f.updated_at desc
+            limit @lim
+            """;
+        var list = new List<Blueboard.Contracts.TiFinding>();
+        await using var r = await cmd.ExecuteReaderAsync(ct);
+        while (await r.ReadAsync(ct)) list.Add(ReadFinding(r));
+        return list;
+    }
+
+    public async Task<(Guid Id, bool Created, Guid? ExistingMessageId)> UpsertFindingAsync(
+        Guid authorId, string title, string summary, string severity, double? confidence,
+        string[] techStack, string[] matchedWatches, string[] cves, Blueboard.Contracts.TiFindingIndicator[] indicators,
+        string source, string? sourceUrl, string? recommendation, string? dedupeKey, CancellationToken ct = default)
+    {
+        var sql = dedupeKey is null
+            ? """
+              insert into ti_findings (title, summary, severity, confidence, tech_stack, matched_watches, cves, indicators, source, source_url, recommendation, author_id)
+              values (@t, @s, @sev, @conf, @ts, @mw, @cves, @ind, @src, @url, @rec, @au)
+              returning id, true as created, message_id
+              """
+            : """
+              insert into ti_findings (title, summary, severity, confidence, tech_stack, matched_watches, cves, indicators, source, source_url, recommendation, author_id, dedupe_key)
+              values (@t, @s, @sev, @conf, @ts, @mw, @cves, @ind, @src, @url, @rec, @au, @dk)
+              on conflict (dedupe_key) do update set
+                title = excluded.title, summary = excluded.summary, severity = excluded.severity,
+                confidence = coalesce(excluded.confidence, ti_findings.confidence),
+                tech_stack = excluded.tech_stack, matched_watches = excluded.matched_watches,
+                cves = excluded.cves, indicators = excluded.indicators,
+                source = excluded.source, source_url = coalesce(excluded.source_url, ti_findings.source_url),
+                recommendation = coalesce(excluded.recommendation, ti_findings.recommendation),
+                updated_at = now()
+              returning id, (xmax = 0) as created, message_id
+              """;
+        await using var cmd = db.Command(sql)
+            .With("t", title).With("s", summary).With("sev", severity).With("conf", confidence)
+            .With("ts", techStack).With("mw", matchedWatches).With("cves", cves).WithJson("ind", indicators)
+            .With("src", source).With("url", sourceUrl).With("rec", recommendation).With("au", authorId).With("dk", dedupeKey);
+        await using var r = await cmd.ExecuteReaderAsync(ct);
+        await r.ReadAsync(ct);
+        return (r.GetGuid(0), r.GetBoolean(1), r.Get<Guid?>("message_id"));
+    }
+
+    public async Task SetFindingMessageAsync(Guid findingId, Guid messageId, CancellationToken ct = default)
+    {
+        await using var cmd = db.Command("update ti_findings set message_id = @m where id = @id").With("m", messageId).With("id", findingId);
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    public async Task<bool> UpdateFindingStatusAsync(Guid id, string status, CancellationToken ct = default)
+    {
+        await using var cmd = db.Command("update ti_findings set status = @s, updated_at = now() where id = @id").With("s", status).With("id", id);
+        return await cmd.ExecuteNonQueryAsync(ct) == 1;
+    }
+
     // ── posts and rate budgets ───────────────────────────────────────────────────────────────────
     /// <summary>Records that a board post for this hash has happened. False if it already had.</summary>
     public async Task<bool> ClaimPostAsync(string hash, string threadKey, CancellationToken ct = default)

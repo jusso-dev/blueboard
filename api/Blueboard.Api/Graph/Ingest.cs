@@ -74,6 +74,7 @@ public sealed class Ingest(Db db, BoardService board, MsClient ms, SystemPrincip
         await using (var r = await pc.ExecuteReaderAsync(ct))
             if (await r.ReadAsync(ct)) prev = (r.GetString(0), r.GetString(1), r.GetInt32(2), r.Get<string>("classification"));
 
+        var safeWebUrl = Intel.J.SafeUrl(Str(inc, "incidentWebUrl"));
         Guid incidentId;
         await using (var up = db.Command("""
             insert into incidents (graph_id, display_name, severity, status, classification, determination, assigned_to,
@@ -87,7 +88,7 @@ public sealed class Ingest(Db db, BoardService board, MsClient ms, SystemPrincip
             returning id
             """).With("g", graphId).With("n", Str(inc, "displayName") ?? graphId).With("sev", severity).With("st", status)
                 .With("cl", classification).With("det", Str(inc, "determination")).With("as", Str(inc, "assignedTo"))
-                .With("ac", alertCount).With("url", Str(inc, "incidentWebUrl"))
+                .With("ac", alertCount).With("url", safeWebUrl)
                 .With("cr", Time(inc, "createdDateTime")).With("upd", Time(inc, "lastUpdateDateTime")).WithJson("data", inc))
             incidentId = (Guid)(await up.ExecuteScalarAsync(ct))!;
 
@@ -98,10 +99,9 @@ public sealed class Ingest(Db db, BoardService board, MsClient ms, SystemPrincip
             var alerts = al.ValueKind == JsonValueKind.Array
                 ? string.Join("\n", al.EnumerateArray().Take(10).Select(a => $"- [{Str(a, "severity") ?? "?"}] {Str(a, "title") ?? Str(a, "id")} ({Str(a, "serviceSource") ?? "unknown source"})"))
                 : "";
-            var webUrl = Str(inc, "incidentWebUrl");
             var announced = await board.PostAsync(boardPrincipal, new PostInput("incidents",
                 $"**{severity.ToUpperInvariant()}** incident {graphId}: {Str(inc, "displayName")}\n\n{Summary(entities)}\n\n{alerts}"
-                + (webUrl is not null && webUrl.StartsWith("https://", StringComparison.Ordinal) ? $"\n\n[Open in Defender]({webUrl})" : ""),
+                + (safeWebUrl is not null ? $"\n\n[Open in Defender]({safeWebUrl})" : ""),
                 "incident", Json.Element(new { graph_id = graphId, severity, status, alert_count = alertCount, entities }), null, incidentId.ToString()), system: true, ct);
             // First sight: attach the first matching playbook; its steps become claimable questions in this thread.
             if (playbooks is not null) await playbooks.AttachAsync(incidentId, inc, announced.Id, ct);

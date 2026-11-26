@@ -53,6 +53,12 @@ public sealed record Settings
     public string PlaybooksDir { get; init; } = Path.Combine(AppContext.BaseDirectory, "playbooks");
     /// <summary>Threat intel and CVE sources (all off by default).</summary>
     public TiSettings Ti { get; init; } = new();
+    /// <summary>Slack-like GIF picker and /giphy support (enabled by default; set GIFS_ENABLED=false for air-gapped environments).</summary>
+    public bool GifsEnabled { get; init; } = true;
+    /// <summary>Optional GIPHY API key for server-side GIF search (never sent to browsers).</summary>
+    public string? GiphyApiKey { get; init; }
+    /// <summary>Optional Tenor API key for server-side GIF search (never sent to browsers).</summary>
+    public string? TenorApiKey { get; init; }
 
     /// <summary>Public base URL of the web app (deep links in notifications), e.g. https://blueboard-web-x.azurewebsites.net.</summary>
     public string? WebBaseUrl { get; init; }
@@ -152,6 +158,9 @@ public sealed record Settings
             AuditStream = Env("AUDIT_STREAM") ?? "Custom-BlueboardAudit_CL",
             PlaybooksDir = Env("BLUEBOARD_PLAYBOOKS_DIR") ?? Path.Combine(AppContext.BaseDirectory, "playbooks"),
             Ti = TiSettings.From(Env, Env("WEBSITE_INSTANCE_ID") is not null),
+            GifsEnabled = Env("GIFS_ENABLED") is not ("false" or "0" or "False"),
+            GiphyApiKey = Env("GIPHY_API_KEY"),
+            TenorApiKey = Env("TENOR_API_KEY"),
         };
         // WEBSITE_INSTANCE_ID / WEBSITE_SITE_NAME are set on every Azure Functions host, and AZURE_TENANT_ID means a
         // real tenant is configured: never allow dev auth or the demo in either case.

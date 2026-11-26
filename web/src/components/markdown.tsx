@@ -1,20 +1,21 @@
 import { Fragment, type ReactNode } from "react";
 import { CveRef } from "./cve";
 import { isJumbo, replaceShortcodesInProse } from "../lib/emoji";
+import { isAllowedGifUrl } from "../lib/gifs";
 
 const BIDI_CONTROLS = /[\u202A-\u202E\u2066-\u2069\u200E\u200F\u061C]/g;
 
 /**
- * Tiny, safe markdown subset (no HTML passthrough): paragraphs, lists, quotes, code, bold, links, @mentions, CVE ids
- * (linked to /intel) and :shortcode: emoji. Shortcodes convert only in plain text runs: never in code, link targets or
- * bare URLs (replaceShortcodesInProse skips those itself).
+ * Tiny, safe markdown subset (no HTML passthrough): paragraphs, lists, quotes, code, bold, links, allowlisted GIF
+ * embeds (`![alt](https://media.giphy.com/...)`), @mentions, CVE ids (linked to /intel) and :shortcode: emoji.
+ * Arbitrary remote image URLs never render as <img> (rendered as safe links instead) to block tracking pixels.
  */
 function inline(text: string, key: string, highlight = false, me?: string): ReactNode[] {
   const out: ReactNode[] = [];
   const clean = text.replace(BIDI_CONTROLS, "");
   const re = highlight
-    ? /(<<[^<>]{1,200}>>|`[^`]+`|\*\*[^*]+\*\*|\[[^\]]+\]\((https?:\/\/[^)\s]+)\)|\b[Cc][Vv][Ee]-\d{4}-\d{4,}\b|@[a-z0-9][a-z0-9-]{0,40})/g
-    : /(`[^`]+`|\*\*[^*]+\*\*|\[[^\]]+\]\((https?:\/\/[^)\s]+)\)|\b[Cc][Vv][Ee]-\d{4}-\d{4,}\b|@[a-z0-9][a-z0-9-]{0,40})/g;
+    ? /(<<[^<>]{1,200}>>|`[^`]+`|\*\*[^*]+\*\*|!?\[[^\]]*\]\((https?:\/\/[^)\s]+)\)|\b[Cc][Vv][Ee]-\d{4}-\d{4,}\b|@[a-z0-9][a-z0-9-]{0,40})/g
+    : /(`[^`]+`|\*\*[^*]+\*\*|!?\[[^\]]*\]\((https?:\/\/[^)\s]+)\)|\b[Cc][Vv][Ee]-\d{4}-\d{4,}\b|@[a-z0-9][a-z0-9-]{0,40})/g;
   let last = 0;
   let m: RegExpExecArray | null;
   let i = 0;
@@ -28,8 +29,29 @@ function inline(text: string, key: string, highlight = false, me?: string): Reac
     else if (highlight && tok.startsWith("<<")) out.push(<mark key={k}>{tok.slice(2, -2)}</mark>);
     else if (tok.startsWith("`")) out.push(<code key={k}>{tok.slice(1, -1)}</code>);
     else if (tok.startsWith("**")) out.push(<strong key={k}>{inline(tok.slice(2, -2), k, highlight, me)}</strong>);
-    else if (tok.startsWith("[")) {
-      const label = tok.slice(1, tok.indexOf("]"));
+    else if (tok.startsWith("![")) {
+      const alt = tok.slice(2, tok.indexOf("]")) || "GIF";
+      const url = m[2]!;
+      if (isAllowedGifUrl(url)) {
+        out.push(
+          <img
+            key={k}
+            src={url}
+            alt={alt}
+            loading="lazy"
+            referrerPolicy="no-referrer"
+            className="my-1.5 block max-h-64 max-w-[360px] rounded-lg border border-rule bg-paper-2 object-contain"
+          />,
+        );
+      } else {
+        out.push(
+          <a key={k} href={url} target="_blank" rel="noreferrer noopener">
+            {alt}
+          </a>,
+        );
+      }
+    } else if (tok.startsWith("[")) {
+      const label = tok.slice(1, tok.indexOf("]")) || m[2]!;
       out.push(
         <a key={k} href={m[2]} target="_blank" rel="noreferrer noopener">
           {label}

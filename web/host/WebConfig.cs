@@ -3,7 +3,7 @@ using System.Text.Json.Serialization;
 namespace Blueboard.Web;
 
 /// <summary>Settings from App Service app settings. All public: they identify the tenant, app and API, nothing more.</summary>
-public sealed record WebConfig(PublicConfig Public, Uri ApiOrigin, Uri Authority)
+public sealed record WebConfig(PublicConfig Public, Uri ApiOrigin, Uri Authority, bool GifsEnabled = true)
 {
     public bool DevAuth => Public.Mode == "dev";
 
@@ -14,6 +14,7 @@ public sealed record WebConfig(PublicConfig Public, Uri ApiOrigin, Uri Authority
     {
         string? Opt(string k) => source(k) is { Length: > 0 } v ? v : null;
         string Env(string k) => Opt(k) ?? throw new InvalidOperationException($"set {k}");
+        var gifsEnabled = Opt("BLUEBOARD_GIFS_ENABLED") is not ("false" or "0" or "False");
 
         // Local demo only: the SPA uses /dev-login and the API's DEV_AUTH. App Service always sets WEBSITE_INSTANCE_ID.
         if (Opt("BLUEBOARD_DEV_AUTH") is "true")
@@ -24,7 +25,7 @@ public sealed record WebConfig(PublicConfig Public, Uri ApiOrigin, Uri Authority
                 throw new InvalidOperationException("BLUEBOARD_API_URL must be http(s)");
             var none = new Uri("https://login.invalid");
             var origin = devApi.GetLeftPart(UriPartial.Authority);
-            return new WebConfig(new PublicConfig("dev", null, null, null, $"{origin}/api", null), new Uri(origin), none);
+            return new WebConfig(new PublicConfig("dev", null, null, null, $"{origin}/api", null, gifsEnabled), new Uri(origin), none, gifsEnabled);
         }
 
         var api = new Uri(Env("BLUEBOARD_API_URL").TrimEnd('/'));
@@ -38,9 +39,10 @@ public sealed record WebConfig(PublicConfig Public, Uri ApiOrigin, Uri Authority
         var scope = Env("BLUEBOARD_API_SCOPE");
         return new WebConfig(
             // Uri.ToString() adds a trailing slash to a bare origin, so build from the trimmed string, not the Uri.
-            new PublicConfig("entra", tenant, clientId, authority.ToString(), $"{api.ToString().TrimEnd('/')}/api", scope),
+            new PublicConfig("entra", tenant, clientId, authority.ToString(), $"{api.ToString().TrimEnd('/')}/api", scope, gifsEnabled),
             new Uri(api.GetLeftPart(UriPartial.Authority)),
-            new Uri(authority.GetLeftPart(UriPartial.Authority)));
+            new Uri(authority.GetLeftPart(UriPartial.Authority)),
+            gifsEnabled);
     }
 }
 
@@ -51,7 +53,8 @@ public sealed record PublicConfig(
     [property: JsonPropertyName("client_id")] string? ClientId,
     [property: JsonPropertyName("authority")] string? Authority,
     [property: JsonPropertyName("api_base_url")] string ApiBaseUrl,
-    [property: JsonPropertyName("scope")] string? Scope);
+    [property: JsonPropertyName("scope")] string? Scope,
+    [property: JsonPropertyName("gifs_enabled")] bool GifsEnabled = true);
 
 [JsonSerializable(typeof(PublicConfig))]
 internal sealed partial class WebJson : JsonSerializerContext;

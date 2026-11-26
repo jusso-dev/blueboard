@@ -35,7 +35,7 @@ public sealed record CveBadge(string Cve, bool KnownExploited, string? DueDate, 
 /// </summary>
 public sealed partial class IntelService(
     Db db, IntelStore store, TiFetcher fetcher, MicrosoftIntel microsoft, BoardService board, Search search,
-    SystemPrincipal system, Settings settings, ILogger<IntelService> log)
+    SystemPrincipal system, Settings settings, ILogger<IntelService> log, RateLimiter? limiter = null)
 {
     private TiSettings Ti => settings.Ti;
     private static readonly TimeSpan Day = TimeSpan.FromHours(24);
@@ -509,10 +509,12 @@ public sealed partial class IntelService(
         return set;
     }
 
-    /// <summary>Sentinel TI matches for up to 100 indicators, one KQL query, cached 1 hour per indicator.</summary>
+    /// <summary>Sentinel TI matches for up to 100 indicators, one KQL query, cached 1 hour per indicator. Private/non-routable IPs are skipped.</summary>
     public async Task<IReadOnlyDictionary<string, StoredRecord>> SentinelAsync(Guid? actor, IReadOnlyList<IntelKey> keys, CancellationToken ct = default)
     {
-        var valid = keys.Where(k => k.Kind != "cve" && k.Kind != "ghsa").DistinctBy(k => $"{k.Kind}:{k.Value}").Take(Kql.MaxValues).ToList();
+        var valid = keys.Where(k => k.Kind != "cve" && k.Kind != "ghsa" && !Indicators.IsPrivateIntelKey(k))
+            .DistinctBy(k => $"{k.Kind}:{k.Value}").Take(Kql.MaxValues).ToList();
+        if (valid.Count == 0) return new Dictionary<string, StoredRecord>();
         var ids = valid.Select(k => $"{k.Kind}:{k.Value}").ToList();
         var have = (await store.GetManyAsync(Sources.Sentinel, ids, ct)).ToDictionary(r => r.Key);
         var stale = valid.Where(k => !have.TryGetValue($"{k.Kind}:{k.Value}", out var r) || DateTimeOffset.UtcNow - r.RetrievedAt > TimeSpan.FromHours(1)).ToList();
@@ -537,10 +539,11 @@ public sealed partial class IntelService(
         return have;
     }
 
-    /// <summary>Microsoft Threat Intelligence: vulnerability profile for a CVE, host reputation for an IP, domain or URL host. Cached 24 hours.</summary>
+    /// <summary>Microsoft Threat Intelligence: vulnerability profile for a CVE, host reputation for a public IP, domain or URL host. Cached 24 hours.</summary>
     public async Task<StoredRecord> MstiAsync(IntelKey key, CancellationToken ct = default)
     {
-        var host = key.Kind == "url" ? new Uri(key.Value).Host.ToLowerInvariant() : key.Value;
+        if (Indicators.IsPrivateIntelKey(key)) throw new BoardException("private / non-routable IP addresses are not queried in Microsoft Threat Intelligence");
+        var host = key.Kind == "url" ? new Uri(key.Value).Host.Trim('[', ']').ToLowerInvariant() : key.Value;
         var cacheKey = key.IsCve ? key.Value : $"host:{host}";
         if (await store.GetAsync(Sources.Msti, cacheKey, ct) is { } cached && DateTimeOffset.UtcNow - cached.RetrievedAt < Day) return cached;
         if (!key.IsCve && Indicators.Normalise("domain", host) is null && Indicators.Normalise("ip", host) is null) throw new BoardException("invalid host");
@@ -634,6 +637,7 @@ public sealed partial class IntelService(
             .Concat(e.Files.SelectMany(f => new[] { ("sha256", f.Sha256), ("sha1", f.Sha1) }).Where(x => x.Item2 is not null).Select(x => (x.Item1, x.Item2!)))
             .Concat(e.Emails.Where(m => m.Sender is not null).Select(m => ("email", m.Sender!)));
         return raw.Select(x => Indicators.Normalise(x.Item1, x.Item2) is { } v ? new IntelKey(x.Item1, v) : null).OfType<IntelKey>()
+            .Where(k => !Indicators.IsPrivateIntelKey(k))
             .DistinctBy(k => $"{k.Kind}:{k.Value}").Take(Kql.MaxValues).ToList();
     }
 
@@ -674,6 +678,11 @@ public sealed partial class IntelService(
         foreach (var src in Sources.All.Where(s => s.Kinds.Contains(key.Kind) || (key.Kind is "domain" or "ip" or "url" && s.Id == Sources.Msti)))
         {
             if (!s_enabled(src)) { cards.Add(Off(src)); continue; }
+            if (Indicators.IsPrivateIntelKey(key) && src.Id is Sources.Sentinel or Sources.Msti)
+            {
+                cards.Add(NotChecked(src, "private / non-routable IP — not queried in threat intel"));
+                continue;
+            }
             if (TenantSources.Contains(src.Id) && !me.Has(Roles.Hunter)) { cards.Add(NotChecked(src, "needs the Board.Hunt role")); continue; }
             try
             {
@@ -938,12 +947,13 @@ public sealed partial class IntelService(
         JsonElement? tags = null;
         await using (var cmd = db.Command("select value::text from kv_state where key = 'ti.pwnwatch.tags'"))
             if (await cmd.ExecuteScalarAsync(ct) is string t) tags = JsonDocument.Parse(t).RootElement.Clone();
+        var findings = await store.ListFindingsAsync(new TiFindingsQuery(Limit: 50), ct);
         return new
         {
             any_enabled = Ti.AnyEnabled,
             fixture_mode = Ti.FixturesDir is not null,
             can_hunt = me.Has(Roles.Hunter),
-            sources, watches, recent, pwnwatch_tags = tags,
+            sources, watches, recent, findings, pwnwatch_tags = tags,
         };
     }
 
@@ -951,16 +961,23 @@ public sealed partial class IntelService(
     public async Task<object> PwnBriefAsync(string slug, CancellationToken ct = default)
     {
         if (!Ti.PwnWatch) throw new BoardException("pwn.watch is off: set TI_PWNWATCH_ENABLED=true");
+        if (!PwnWatchParser.IsValidSlug(slug)) throw new BoardException("invalid pwn.watch incident slug");
         if (await store.GetAsync(Sources.PwnWatch, slug, ct) is not { } rec) throw BoardException.NotFound("pwn.watch incident");
         var res = await fetcher.GetAsync(PwnSlowPolicy, PwnWatchParser.DetailUrl(slug), $"pwnwatch/incident-{slug}.json", ct: ct);
         return new { slug, url = rec.Url, retrieved_at = res.FetchedAt, brief = PwnWatchParser.AgentBrief(res.Body), attribution = Sources.Get(Sources.PwnWatch).Attribution };
     }
 
-    public async Task<Watch> AddWatchAsync(Principal me, string kind, string value, CancellationToken ct = default)
+    public Task<IReadOnlyList<Watch>> ListWatchesAsync(bool enabledOnly = false, CancellationToken ct = default) =>
+        store.WatchesAsync(enabledOnly, ct);
+
+    public async Task<Watch> AddWatchAsync(Principal me, string kind, string value, string? label = null, CancellationToken ct = default)
     {
         me.Require(Roles.Hunter);
-        var w = await store.AddWatchAsync(kind, Watches.Normalise(kind, value), "manual", null, ct);
-        await new Audit(db).WriteAsync(me.Id, "ti.watch_added", $"{w.Kind}:{w.Value}", null, ct);
+        var cleanLabel = string.IsNullOrWhiteSpace(label) ? null : label.Trim();
+        if (cleanLabel is { Length: > 120 } || cleanLabel?.Any(char.IsControl) == true)
+            throw new BoardException("watch label must be one line of up to 120 characters");
+        var w = await store.AddWatchAsync(kind, Watches.Normalise(kind, value), "manual", cleanLabel, ct);
+        await new Audit(db).WriteAsync(me.Id, "ti.watch_added", $"{w.Kind}:{w.Value}", new { label = cleanLabel }, ct);
         return w;
     }
 
@@ -970,6 +987,117 @@ public sealed partial class IntelService(
         if (!await store.SetWatchEnabledAsync(id, enabled, ct)) throw BoardException.NotFound("watch");
         await new Audit(db).WriteAsync(me.Id, enabled ? "ti.watch_enabled" : "ti.watch_disabled", id.ToString(), null, ct);
         return new { id, enabled };
+    }
+
+    public async Task<object> DeleteWatchAsync(Principal me, Guid id, CancellationToken ct = default)
+    {
+        me.Require(Roles.Hunter);
+        if (!await store.DeleteWatchAsync(id, ct)) throw BoardException.NotFound("watch");
+        await new Audit(db).WriteAsync(me.Id, "ti.watch_deleted", id.ToString(), null, ct);
+        return new { id, deleted = true };
+    }
+
+    // ── Threat Intel findings table (bots & analysts) ───────────────────────────────────────────
+
+    public static readonly string[] FindingSeverities = ["critical", "high", "medium", "low", "informational"];
+    public static readonly string[] FindingStatuses = ["new", "reviewing", "mitigated", "dismissed"];
+
+    public Task<IReadOnlyList<TiFinding>> ListFindingsAsync(TiFindingsQuery q, CancellationToken ct = default) =>
+        store.ListFindingsAsync(q, ct);
+
+    /// <summary>
+    /// Post a structured threat intel finding to the TI findings table (and optionally cross-post a brief card to #intel).
+    /// Auto-matches against the org's enabled tech stack / watches and refuses private IPs or leaked secrets.
+    /// </summary>
+    public async Task<TiFinding> PostFindingAsync(Principal me, TiFindingInput input, CancellationToken ct = default)
+    {
+        me.Require(Roles.Poster);
+        if (limiter is not null) await limiter.TakeAsync(me, "post", ct);
+        var title = input.Title.Trim();
+        var summary = input.Summary.Trim();
+        var source = input.Source.Trim();
+        var recommendation = string.IsNullOrWhiteSpace(input.Recommendation) ? null : input.Recommendation.Trim();
+        var dedupeKey = string.IsNullOrWhiteSpace(input.DedupeKey) ? null : input.DedupeKey.Trim();
+        if (title.Length is < 3 or > 300 || title.Contains('\0')) throw new BoardException("title must be 3–300 characters");
+        if (summary.Length is < 5 or > 8000 || summary.Contains('\0')) throw new BoardException("summary must be 5–8000 characters");
+        if (source.Length is < 1 or > 200 || source.Any(char.IsControl)) throw new BoardException("source must be 1–200 characters on one line");
+        if (recommendation is { Length: > 2000 } || recommendation?.Contains('\0') == true) throw new BoardException("recommendation must be at most 2000 characters");
+        if (dedupeKey is { Length: > 200 } || dedupeKey?.Any(char.IsControl) == true) throw new BoardException("dedupe_key must be at most 200 characters on one line");
+        var severity = input.Severity.Trim().ToLowerInvariant();
+        if (!FindingSeverities.Contains(severity)) throw new BoardException($"severity must be one of {string.Join(", ", FindingSeverities)}");
+        if (input.Confidence is < 0 or > 1) throw new BoardException("confidence must be between 0 and 1");
+        if (BoardService.DetectSecretLeak(title) is not null || BoardService.DetectSecretLeak(summary) is not null || BoardService.DetectSecretLeak(recommendation) is not null)
+            throw new BoardException("refusing to post raw credentials, private keys or bearer tokens");
+
+        string? sourceUrl = null;
+        if (!string.IsNullOrWhiteSpace(input.SourceUrl))
+            sourceUrl = J.SafeUrl(input.SourceUrl.Trim()) ?? throw new BoardException("source_url must be a valid https URL");
+
+        var techStack = (input.TechStack ?? [])
+            .Select(s => Regex.Replace(s.Trim(), @"\s+", " ").ToLowerInvariant())
+            .Where(s => s.Length is >= 2 and <= 100 && !s.Any(char.IsControl))
+            .Distinct().Take(30).ToArray();
+
+        var cves = (input.Cves ?? [])
+            .Select(c => Indicators.NormaliseCve(c) ?? throw new BoardException($"invalid CVE id '{c}'"))
+            .Concat(Indicators.CvesIn($"{title} {summary}"))
+            .Distinct().Take(50).ToArray();
+
+        var indicators = new List<TiFindingIndicator>();
+        foreach (var ind in (input.Indicators ?? []).Take(50))
+        {
+            var norm = Indicators.Normalise(ind.Kind, ind.Value) ?? throw new BoardException($"invalid {ind.Kind} indicator '{ind.Value}'");
+            var key = new IntelKey(ind.Kind, norm);
+            if (Indicators.IsPrivateIntelKey(key))
+                throw new BoardException($"refusing private / non-routable IP '{norm}' in threat intel finding indicators");
+            if (!indicators.Any(x => x.Kind == ind.Kind && x.Value == norm))
+                indicators.Add(new TiFindingIndicator(ind.Kind, norm));
+        }
+
+        var watches = await store.WatchesAsync(enabledOnly: true, ct);
+        var watchable = new Watchable(title, $"{summary} {recommendation ?? ""}", techStack, cves, techStack);
+        var matched = Watches.Matching(watches, watchable).Distinct().ToArray();
+
+        var (id, created, existingMsg) = await store.UpsertFindingAsync(
+            me.Id, title, summary, severity, input.Confidence, techStack, matched, cves, indicators.ToArray(),
+            source, sourceUrl, recommendation, dedupeKey, ct);
+
+        if (input.PostToChannel && existingMsg is null)
+        {
+            var sb = new StringBuilder($"**[{severity.ToUpperInvariant()}] Threat Intel Finding:** {Clean(title)}\n\n");
+            sb.Append(summary.Length > 1500 ? summary[..1500] + "…" : summary).Append("\n\n");
+            if (techStack.Length > 0) sb.Append($"- Tech stack: {string.Join(", ", techStack.Select(Clean))}\n");
+            if (matched.Length > 0) sb.Append($"- Matched watches: {string.Join(", ", matched.Select(Clean))}\n");
+            if (cves.Length > 0) sb.Append($"- CVEs: {string.Join(", ", cves.Take(10))}\n");
+            if (recommendation is not null) sb.Append($"- Recommendation: {Clean(recommendation)}\n");
+            if (sourceUrl is not null) sb.Append($"\n[Open reference]({sourceUrl})\n");
+            sb.Append($"\nSource: {Clean(source)}");
+            var posted = await board.PostAsync(me, new PostInput("intel", sb.ToString(), "finding", Json.Element(new
+            {
+                ti_finding_id = id,
+                severity,
+                source,
+                source_url = sourceUrl,
+                tech_stack = techStack,
+                matched_watches = matched,
+                cves,
+            })), ct: ct);
+            await store.SetFindingMessageAsync(id, posted.Id, ct);
+        }
+
+        await new Audit(db).WriteAsync(me.Id, created ? "ti.finding_posted" : "ti.finding_updated", id.ToString(),
+            new { severity, source, tech_stack = techStack, matched_watches = matched, cves }, ct);
+        return (await store.GetFindingAsync(id, ct))!;
+    }
+
+    public async Task<TiFinding> UpdateFindingStatusAsync(Principal me, Guid id, string status, CancellationToken ct = default)
+    {
+        me.Require(Roles.Poster);
+        status = status.Trim().ToLowerInvariant();
+        if (!FindingStatuses.Contains(status)) throw new BoardException($"status must be one of {string.Join(", ", FindingStatuses)}");
+        if (!await store.UpdateFindingStatusAsync(id, status, ct)) throw BoardException.NotFound("threat intel finding");
+        await new Audit(db).WriteAsync(me.Id, "ti.finding_status_changed", id.ToString(), new { status }, ct);
+        return (await store.GetFindingAsync(id, ct))!;
     }
 
     /// <summary>"Post to #intel": a finding by the caller summarising every card, each line crediting its source.</summary>

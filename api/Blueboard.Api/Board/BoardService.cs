@@ -36,7 +36,7 @@ public sealed partial class BoardService(Db db, Audit audit, Settings settings, 
     [GeneratedRegex(@"(?:^|[^\w@])@([a-z0-9][a-z0-9-]{0,40})")]
     private static partial Regex MentionRegex();
 
-    [GeneratedRegex(@"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----|Bearer\s+eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}|sk-ant-api03-[A-Za-z0-9_-]{20,}|ghp_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,}|whsec_[A-Za-z0-9_-]{24,}", RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----|Bearer\s+eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}|sk-ant-api03-[A-Za-z0-9_-]{20,}|sk-(?:proj|svcacct)-[A-Za-z0-9_-]{20,}|ghp_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,}|whsec_[A-Za-z0-9_-]{24,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{20,}|AccountKey=[A-Za-z0-9+/=]{40,}", RegexOptions.CultureInvariant)]
     private static partial Regex SecretLeakRegex();
 
     public static string? DetectSecretLeak(string? text) =>
@@ -82,7 +82,18 @@ public sealed partial class BoardService(Db db, Audit audit, Settings settings, 
 
     public async Task<IReadOnlyList<ChannelInfo>> ListChannelsAsync(CancellationToken ct = default)
     {
-        await using var cmd = db.Command("select c.name, c.topic, (select max(seq)::text from messages m where m.channel_id = c.id) from channels c order by c.name");
+        await using var cmd = db.Command("""
+            select c.name, c.topic, (select max(seq)::text from messages m where m.channel_id = c.id)
+            from channels c
+            order by case c.name
+              when 'general' then 0
+              when 'incidents' then 1
+              when 'triage' then 2
+              when 'intel' then 3
+              when 'containment' then 4
+              when 'eradication' then 5
+              else 10 end, c.name
+            """);
         var list = new List<ChannelInfo>();
         await using var r = await cmd.ExecuteReaderAsync(ct);
         while (await r.ReadAsync(ct)) list.Add(new ChannelInfo(r.GetString(0), r.GetString(1), r.IsDBNull(2) ? null : r.GetString(2)));
@@ -155,6 +166,7 @@ public sealed partial class BoardService(Db db, Audit audit, Settings settings, 
             if (!MessageTypes.Postable.Contains(type)) throw new BoardException($"type must be one of {string.Join(", ", MessageTypes.Postable)}");
         }
         if (string.IsNullOrWhiteSpace(input.Body) || input.Body.Length > 20000) throw new BoardException("body must be 1–20000 characters");
+        if (input.Body.Contains('\0')) throw new BoardException("body must not contain NUL bytes");
         if (input.Channel.Length is 0 or > 41) throw new BoardException("invalid channel");
         var payload = input.Payload is { ValueKind: not JsonValueKind.Undefined and not JsonValueKind.Null } p
             ? Payloads.Validate(type, p, system)

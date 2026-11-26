@@ -73,8 +73,17 @@ public static class Kql
     public static string SentinelIndicators(IReadOnlyList<IntelKey> keys)
     {
         if (keys.Count is 0 or > MaxValues) throw new BoardException($"give 1–{MaxValues} indicators");
-        var values = keys.Select(k => Indicators.Normalise(k.Kind, k.Value) is { } v && k.Kind != "cve"
-                ? v : throw new BoardException($"invalid {k.Kind} indicator")).Distinct().ToList();
+        var values = new List<string>(keys.Count);
+        foreach (var k in keys)
+        {
+            if (k.Kind == "cve" || Indicators.Normalise(k.Kind, k.Value) is not { } v)
+                throw new BoardException($"invalid {k.Kind} indicator");
+            var norm = new IntelKey(k.Kind, v);
+            if (Indicators.IsPrivateIntelKey(norm))
+                throw new BoardException($"refusing to query private IP '{v}' in ThreatIntelIndicators");
+            values.Add(v);
+        }
+        values = values.Distinct().ToList();
         return $"""
             ThreatIntelIndicators
             | where ObservableValue in~ ({Dynamic(values)})

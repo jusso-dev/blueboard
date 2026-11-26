@@ -207,6 +207,18 @@ public sealed class BoardTools(Authenticator auth, BoardService board, Search se
             };
         });
 
+    [Function(nameof(ListTiWatches))]
+    public Task<string> ListTiWatches([McpToolTrigger(Tools.ListTiWatches, Tools.ListTiWatchesDoc)] ToolInvocationContext ctx) =>
+        Call(ctx, async _ => await intel.ListWatchesAsync(enabledOnly: true));
+
+    [Function(nameof(ListTiFindings))]
+    public Task<string> ListTiFindings([McpToolTrigger(Tools.ListTiFindings, Tools.ListTiFindingsDoc)] ToolInvocationContext ctx) =>
+        Call<TiFindingsQuery>(ctx, async (_, q) => await intel.ListFindingsAsync(q));
+
+    [Function(nameof(PostTiFinding))]
+    public Task<string> PostTiFinding([McpToolTrigger(Tools.PostTiFinding, Tools.PostTiFindingDoc)] ToolInvocationContext ctx) =>
+        Call<TiFindingInput>(ctx, async (me, f) => await intel.PostFindingAsync(me, f));
+
     [Function(nameof(RunHuntingQuery))]
     public Task<string> RunHuntingQuery([McpToolTrigger(Tools.RunHuntingQuery, Tools.RunHuntingQueryDoc)] ToolInvocationContext ctx) =>
         Call<HuntInput>(ctx, async (me, h) => await enrich.HuntAsync(me, h.Query, h.Timespan));

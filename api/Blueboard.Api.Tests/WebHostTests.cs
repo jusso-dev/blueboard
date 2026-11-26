@@ -37,5 +37,19 @@ public class WebHostTests
         Assert.Equal("entra", c.Public.Mode);
         Assert.Equal("https://api.example/api", c.Public.ApiBaseUrl);
         Assert.Contains(SecurityHeaders.For(c).ForPath("/"), h => h.Key == "Strict-Transport-Security");
+        var csp = SecurityHeaders.For(c).ForPath("/").Single(h => h.Key == "Content-Security-Policy").Value;
+        Assert.True(c.GifsEnabled);
+        Assert.Contains("img-src 'self' data: https://media.giphy.com", csp);
+    }
+
+    [Fact]
+    public void Disabling_gifs_locks_img_src_to_self_and_data()
+    {
+        var c = From(("BLUEBOARD_DEV_AUTH", "true"), ("BLUEBOARD_GIFS_ENABLED", "false"));
+        Assert.False(c.GifsEnabled);
+        Assert.False(c.Public.GifsEnabled);
+        var csp = SecurityHeaders.For(c).ForPath("/").Single(h => h.Key == "Content-Security-Policy").Value;
+        Assert.Contains("img-src 'self' data:;", csp);
+        Assert.DoesNotContain("giphy", csp);
     }
 }

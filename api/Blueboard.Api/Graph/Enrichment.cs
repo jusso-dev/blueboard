@@ -13,7 +13,8 @@ namespace Blueboard.Api.Graph;
 /// </summary>
 public sealed partial class Enrichment(Db db, Audit audit, BoardService board, MsClient ms, RateLimiter? limiter = null, Settings? settings = null)
 {
-    [GeneratedRegex(@"^\s*\.", RegexOptions.Multiline)] private static partial Regex MgmtCommand();
+    [GeneratedRegex(@"(?:^|;)\s*\.", RegexOptions.Multiline)] private static partial Regex MgmtCommand();
+    [GeneratedRegex(@"\b(externaldata|http_request|http_request_post|sql_request|cosmosdb_sql_request|mysql_request|postgresql_request|azure_digital_twins_query_request|python|r)\s*\(", RegexOptions.IgnoreCase)] private static partial Regex OutboundPluginCall();
     [GeneratedRegex(@"\b(externaldata|http_request|http_request_post|sql_request|cosmosdb_sql_request|mysql_request|postgresql_request|azure_digital_twins_query_request)\b", RegexOptions.IgnoreCase)] private static partial Regex OutboundPlugin();
     [GeneratedRegex(@"^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?)?$")] private static partial Regex IsoDuration();
     [GeneratedRegex("^[0-9a-f]{40}$", RegexOptions.IgnoreCase)] private static partial Regex MdeId();
@@ -146,7 +147,8 @@ public sealed partial class Enrichment(Db db, Audit audit, BoardService board, M
         var stripped = StripCommentsAndStrings(query, out var unclosedComment);
         if (unclosedComment) throw new BoardException("unclosed comment in KQL query");
         if (MgmtCommand().IsMatch(stripped)) throw new BoardException("management commands are not allowed");
-        if (OutboundPlugin().IsMatch(stripped)) throw new BoardException("external data and outbound network plugins are not allowed in hunting queries");
+        if (OutboundPlugin().IsMatch(stripped) || OutboundPluginCall().IsMatch(stripped))
+            throw new BoardException("external data and outbound network plugins are not allowed in hunting queries");
         return span;
     }
 
@@ -278,6 +280,7 @@ public sealed partial class Enrichment(Db db, Audit audit, BoardService board, M
         {
             case "user":
             {
+                if (!UserOrGuid().IsMatch(value)) throw new BoardException("user must be an Entra user UPN or object id (GUID)");
                 var user = await Try(MsApi.Graph, $"/v1.0/users/{e}?$select=id,displayName,userPrincipalName,accountEnabled,jobTitle,department,officeLocation,createdDateTime,userType,onPremisesSyncEnabled,signInActivity")
                            ?? await ms.SendAsync(MsApi.Graph, $"/v1.0/users/{e}?$select=id,displayName,userPrincipalName,accountEnabled,jobTitle,department,userType", ct: ct);
                 var uid = user?.GetProperty("id").GetString();
@@ -311,6 +314,7 @@ public sealed partial class Enrichment(Db db, Audit audit, BoardService board, M
                 }
                 if (machine is not { } mc) return new { found = false };
                 var mid = mc.GetProperty("id").GetString()!;
+                if (!MdeId().IsMatch(mid)) throw new BoardException("invalid device id from Defender");
                 var pick = new JsonObject();
                 foreach (var k in new[] { "id", "computerDnsName", "osPlatform", "osVersion", "healthStatus", "riskScore", "exposureLevel", "isolationState", "lastSeen", "lastIpAddress", "machineTags", "onboardingStatus" })
                     if (mc.TryGetProperty(k, out var v)) pick[k] = JsonNode.Parse(v.GetRawText());
@@ -336,8 +340,10 @@ public sealed partial class Enrichment(Db db, Audit audit, BoardService board, M
             }
             case "ip":
             {
-                var stats = await Try(MsApi.Defender, $"/api/ips/{e}/stats?lookBackHours=720");
-                var alerts = await Try(MsApi.Defender, $"/api/ips/{e}/alerts");
+                var ip = Intel.Indicators.Normalise("ip", value) ?? throw new BoardException("invalid ip address");
+                var ipEnc = Uri.EscapeDataString(ip);
+                var stats = await Try(MsApi.Defender, $"/api/ips/{ipEnc}/stats?lookBackHours=720");
+                var alerts = await Try(MsApi.Defender, $"/api/ips/{ipEnc}/alerts");
                 return new
                 {
                     stats,
@@ -346,7 +352,14 @@ public sealed partial class Enrichment(Db db, Audit audit, BoardService board, M
                 };
             }
             case "file":
-                return new { file = await Try(MsApi.Defender, $"/api/files/{e}"), stats = await Try(MsApi.Defender, $"/api/files/{e}/stats?lookBackHours=720") };
+            {
+                var hash = Intel.Indicators.Normalise("sha256", value)
+                           ?? Intel.Indicators.Normalise("sha1", value)
+                           ?? Intel.Indicators.Normalise("md5", value)
+                           ?? throw new BoardException("file must be a valid sha256, sha1 or md5 hash");
+                var hashEnc = Uri.EscapeDataString(hash);
+                return new { file = await Try(MsApi.Defender, $"/api/files/{hashEnc}"), stats = await Try(MsApi.Defender, $"/api/files/{hashEnc}/stats?lookBackHours=720") };
+            }
             case "url":
             {
                 var raw = value.Trim();
@@ -373,8 +386,9 @@ public sealed partial class Enrichment(Db db, Audit audit, BoardService board, M
                 }
                 if (sp is not { } found) return new { found = false };
                 var spId = Str(found, "id");
-                var grants = spId is null ? null : await Try(MsApi.Graph, $"/v1.0/servicePrincipals/{spId}/oauth2PermissionGrants?$top=20");
-                var roles = spId is null ? null : await Try(MsApi.Graph, $"/v1.0/servicePrincipals/{spId}/appRoleAssignments?$top=20");
+                var safeSpId = spId is not null && GuidId().IsMatch(spId) ? spId : null;
+                var grants = safeSpId is null ? null : await Try(MsApi.Graph, $"/v1.0/servicePrincipals/{safeSpId}/oauth2PermissionGrants?$top=20");
+                var roles = safeSpId is null ? null : await Try(MsApi.Graph, $"/v1.0/servicePrincipals/{safeSpId}/appRoleAssignments?$top=20");
                 return new
                 {
                     service_principal = found,

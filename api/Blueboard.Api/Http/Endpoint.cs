@@ -52,13 +52,27 @@ public sealed class Endpoint(Authenticator auth, ILogger<Endpoint> log)
         }
     }
 
-    /// <summary>Reads and validates a JSON body against its contract record.</summary>
-    public static async Task<T> BodyAsync<T>(HttpRequest req) where T : class
+    /// <summary>Reads a JSON body with a hard streaming byte cap (enforced even under chunked transfer encoding).</summary>
+    public static async Task<JsonElement> ReadJsonAsync(HttpRequest req, int maxBytes = 1_000_000)
     {
-        if (req.ContentLength is > 1_000_000) throw new BoardException("body too large", 413);
-        using var doc = await JsonDocument.ParseAsync(req.Body, default, req.HttpContext.RequestAborted);
-        return Contract.Read<T>(doc.RootElement);
+        if (req.ContentLength is > 0 && req.ContentLength > maxBytes) throw new BoardException("body too large", 413);
+        using var ms = new MemoryStream();
+        var buf = new byte[Math.Min(16_384, maxBytes + 1)];
+        int n;
+        while ((n = await req.Body.ReadAsync(buf.AsMemory(0, buf.Length), req.HttpContext.RequestAborted)) > 0)
+        {
+            if (ms.Length + n > maxBytes) throw new BoardException("body too large", 413);
+            ms.Write(buf, 0, n);
+        }
+        if (ms.Length == 0) throw new BoardException("body required");
+        ms.Position = 0;
+        using var doc = await JsonDocument.ParseAsync(ms, default, req.HttpContext.RequestAborted);
+        return doc.RootElement.Clone();
     }
+
+    /// <summary>Reads and validates a JSON body against its contract record.</summary>
+    public static async Task<T> BodyAsync<T>(HttpRequest req) where T : class =>
+        Contract.Read<T>(await ReadJsonAsync(req, 1_000_000));
 
     /// <summary>
     /// Reads and validates the query string against a contract record: booleans become true/false, list fields take

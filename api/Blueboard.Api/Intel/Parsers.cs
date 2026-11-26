@@ -38,10 +38,14 @@ internal static class J
 
     public static string? Cap(string? s, int max) => s is null ? null : s.Length <= max ? s : s[..max] + "…";
 
-    /// <summary>Only absolute https (or http for reference lists) links are kept; anything else becomes null.</summary>
-    public static string? SafeUrl(string? raw, bool allowHttp = false) =>
-        Uri.TryCreate(raw, UriKind.Absolute, out var u) && (u.Scheme == Uri.UriSchemeHttps || (allowHttp && u.Scheme == Uri.UriSchemeHttp)) && u.Host.Length > 0
+    /// <summary>Only absolute https (or http for reference lists) links without whitespace, control chars or Markdown link delimiters are kept; anything else becomes null.</summary>
+    public static string? SafeUrl(string? raw, bool allowHttp = false)
+    {
+        if (string.IsNullOrWhiteSpace(raw) || raw.Any(char.IsControl) || raw.IndexOfAny([' ', '\t', '\r', '\n', '(', ')', '<', '>']) >= 0)
+            return null;
+        return Uri.TryCreate(raw, UriKind.Absolute, out var u) && (u.Scheme == Uri.UriSchemeHttps || (allowHttp && u.Scheme == Uri.UriSchemeHttp)) && u.Host.Length > 0
             ? u.ToString() : null;
+    }
 }
 
 public sealed record ParseResult(IReadOnlyList<TiRecord> Records, int Skipped, DateTimeOffset? DataAsOf);
@@ -60,6 +64,12 @@ public static class PwnWatchParser
     public const string TagsUrl = Base + "/tags.json";
     public static string DetailUrl(string slug) => $"{Base}/i/{Uri.EscapeDataString(slug)}.json";
 
+    public static bool IsValidSlug([System.Diagnostics.CodeAnalysis.NotNullWhen(true)] string? slug) =>
+        slug is { Length: > 0 and <= 200 }
+        && !slug.Contains("..", StringComparison.Ordinal)
+        && char.IsAsciiLetterOrDigit(slug[0])
+        && slug.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_' or '.');
+
     public static ParseResult Incidents(string json, DateTimeOffset retrievedAt)
     {
         using var doc = JsonDocument.Parse(json);
@@ -70,7 +80,7 @@ public static class PwnWatchParser
         {
             var slug = J.Str(i, "slug");
             var title = J.Str(i, "title");
-            if (i.ValueKind != JsonValueKind.Object || slug is not { Length: > 0 and <= 200 } || title is null || slug.Contains('/')) { skipped++; continue; }
+            if (i.ValueKind != JsonValueKind.Object || !IsValidSlug(slug) || title is null) { skipped++; continue; }
             if (J.Bool(i, "isExample") == true) continue;
             var cves = J.Strs(i, "cveIds").Select(Indicators.NormaliseCve).OfType<string>().Distinct().ToList();
             var tags = J.Strs(i, "tags").Concat(J.Strs(i, "stacks")).Select(t => t.ToLowerInvariant()).Distinct().ToList();

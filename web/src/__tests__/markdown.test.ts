@@ -33,6 +33,14 @@ describe("Markdown", () => {
     expect(html("[x](javascript:alert(1))")).not.toContain("href");
     expect(html("[x](https://security.microsoft.com)")).toContain('href="https://security.microsoft.com"');
   });
+  it("renders allowlisted GIF images as <img> and downgrades untrusted image URLs to links", () => {
+    const ok = html("![This is fine](https://media.giphy.com/media/QMHoU66sBXqqLqYvGO/giphy.gif)");
+    expect(ok).toContain("<img");
+    expect(ok).toContain('referrerPolicy="no-referrer"');
+    const bad = html("![Tracker](https://evil.example/pixel.png)");
+    expect(bad).not.toContain("<img");
+    expect(bad).toContain('href="https://evil.example/pixel.png"');
+  });
 });
 
 describe("Markdown mentions", () => {

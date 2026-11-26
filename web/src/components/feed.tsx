@@ -7,12 +7,14 @@ import { iocPayload, IOC_KINDS, IOC_VERDICTS, type IocDraft } from "../lib/ioc";
 import { MessageRow } from "./message";
 import { useAutocomplete, useMentionSource } from "./mentions";
 import { EmojiPicker, useEmojiSource, usePicker } from "./emoji";
+import { GifPicker, GifShuffleBar } from "./gifs";
 import { TypingLine, useTyping, useTypingPing } from "./typing";
 import { completeShortcode, insertAtCaret, replaceShortcodes } from "../lib/emoji";
+import { isAllowedGifUrl, parseGifCommand, searchLocalGifs, type GifItem, type GifPayload, type GifSearchResponse } from "../lib/gifs";
 import { useMe } from "./shell";
 import { useListNav } from "./shortcuts";
 import { cx, Empty, ErrorLine, Input, Select, Spinner, useMediaQuery, useStoredState } from "./ui";
-import { IconArrowDown, IconAt, IconBack, IconClose, IconSend, IconSmilePlus } from "./icons";
+import { IconArrowDown, IconAt, IconBack, IconClose, IconGif, IconSend, IconSmilePlus } from "./icons";
 
 const POST_TYPES = ["chat", "question", "finding", "ioc", "verdict", "status"] as const;
 const NEW_IOC: IocDraft = { kind: "ip", value: "", verdict: "suspicious" };
@@ -50,6 +52,8 @@ export function Composer({
   const sources = useMemo(() => [mentionSource, emojiSource], [mentionSource, emojiSource]);
   const mention = useAutocomplete({ value: body, setValue: setBody, textarea: ta, sources });
   const picker = usePicker();
+  const gifPicker = usePicker();
+  const [shuffle, setShuffle] = useState<{ query: string; items: GifItem[]; index: number; loading: boolean } | null>(null);
   const scope = { channel, incident, thread: parentId };
   const typing = useTyping(scope);
   const ping = useTypingPing(scope);
@@ -66,7 +70,64 @@ export function Composer({
     el.style.overflowY = el.scrollHeight > max ? "auto" : "hidden";
   }, [body, ta]);
 
+  const sendGif = async (gif: GifPayload, caption?: string) => {
+    if (busy) return;
+    setBusy(true);
+    setErr(null);
+    const text = replaceShortcodes((caption ?? "").trim()) || `GIF: ${gif.title || "GIF"}`;
+    try {
+      await api("/messages", {
+        method: "POST",
+        body: JSON.stringify({
+          channel,
+          type: type === "ioc" ? "chat" : type,
+          body: text,
+          payload: { gif },
+          parent_id: parentId,
+          incident: incident ?? undefined,
+        }),
+      });
+      setBody("");
+      setShuffle(null);
+      gifPicker.close();
+      ping.reset();
+      setType("chat");
+      onSent?.();
+      refreshAll();
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const startGifShuffle = async (query: string) => {
+    setErr(null);
+    setShuffle({ query, items: [], index: 0, loading: true });
+    try {
+      const res = await api<GifSearchResponse>(`/gifs/search?q=${encodeURIComponent(query)}&limit=16`);
+      if (!res.enabled) {
+        setShuffle(null);
+        setErr("GIFs are disabled on this board (GIFS_ENABLED=false).");
+        return;
+      }
+      const items = res.items.filter((g) => isAllowedGifUrl(g.url));
+      setShuffle({ query, items, index: 0, loading: false });
+    } catch {
+      setShuffle({ query, items: searchLocalGifs(query, 16), index: 0, loading: false });
+    }
+  };
+
   const submit = async () => {
+    if (!isIoc) {
+      const cmd = parseGifCommand(body);
+      if (cmd) {
+        setBody("");
+        ping.reset();
+        await startGifShuffle(cmd.query);
+        return;
+      }
+    }
     const payload = isIoc ? iocPayload(ioc) : undefined;
     if (typeof payload === "string") return setErr(payload);
     // An IOC needs no prose: the body defaults to a one-line description of the indicator.
@@ -102,6 +163,21 @@ export function Composer({
       }}
     >
       <div className="relative" data-mention-anchor>
+        {shuffle && (
+          <GifShuffleBar
+            query={shuffle.query}
+            items={shuffle.items}
+            index={shuffle.index}
+            loading={shuffle.loading}
+            busy={busy}
+            onShuffle={() => setShuffle((s) => (s ? { ...s, index: s.index + 1 } : null))}
+            onSend={(gif) => void sendGif(gif)}
+            onCancel={() => {
+              setShuffle(null);
+              ta.current?.focus();
+            }}
+          />
+        )}
         {mention.popup}
         <div
           className={cx(
@@ -195,13 +271,34 @@ export function Composer({
               aria-haspopup="dialog"
               aria-expanded={!!picker.anchor}
               onMouseDown={(e) => e.preventDefault()}
-              onClick={(e) => picker.toggle(e.currentTarget)}
+              onClick={(e) => {
+                gifPicker.close();
+                picker.toggle(e.currentTarget);
+              }}
               className={cx(
                 "inline-flex size-9 items-center justify-center rounded-[4px] transition-colors duration-150 hover:bg-paper-3 hover:text-ink [@media(pointer:coarse)]:size-11",
                 picker.anchor ? "bg-paper-3 text-ink" : "text-muted",
               )}
             >
               <IconSmilePlus />
+            </button>
+            <button
+              type="button"
+              aria-label="GIF"
+              title="Send a GIF (or type /giphy)"
+              aria-haspopup="dialog"
+              aria-expanded={!!gifPicker.anchor}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={(e) => {
+                picker.close();
+                gifPicker.toggle(e.currentTarget);
+              }}
+              className={cx(
+                "inline-flex size-9 items-center justify-center rounded-[4px] transition-colors duration-150 hover:bg-paper-3 hover:text-ink [@media(pointer:coarse)]:size-11",
+                gifPicker.anchor ? "bg-paper-3 text-ink" : "text-muted",
+              )}
+            >
+              <IconGif />
             </button>
             <button
               type="submit"
@@ -234,6 +331,16 @@ export function Composer({
           }}
           onClose={(restore) => {
             picker.close();
+            if (restore) ta.current?.focus();
+          }}
+        />
+      )}
+      {gifPicker.anchor && (
+        <GifPicker
+          anchor={gifPicker.anchor}
+          onPick={(gif) => void sendGif(gif, body)}
+          onClose={(restore) => {
+            gifPicker.close();
             if (restore) ta.current?.focus();
           }}
         />
@@ -530,6 +637,7 @@ export function Feed({
   query,
   composer,
   emptyTitle,
+  emptyBody,
   showChannel,
   thread: controlled,
   onThread,
@@ -538,6 +646,7 @@ export function Feed({
   query: string;
   composer: { channel: string; incident?: string | null; placeholder: string };
   emptyTitle: string;
+  emptyBody?: string;
   showChannel?: boolean;
   thread?: string | null;
   onThread?: (id: string | null) => void;
@@ -685,7 +794,9 @@ export function Feed({
                 <Spinner />
               </div>
             )}
-            {data && visible.length === 0 && <Empty title={emptyTitle}>Start the conversation below. Type @ to mention a person or an agent.</Empty>}
+            {data && visible.length === 0 && (
+              <Empty title={emptyTitle}>{emptyBody ?? "Start the conversation below. Type @ to mention a person or an agent, or /giphy for a GIF."}</Empty>
+            )}
             <div ref={content}>
             {days.map((d) => (
               <DaySection key={d.key} label={d.label}>

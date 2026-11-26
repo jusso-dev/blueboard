@@ -8,6 +8,7 @@ import { useLiveQuery, type IncidentSummary, type SummaryEntity } from "../lib/a
 import { statusWords } from "../lib/queue";
 import { targetsFromEntities, type ActionTarget, type IncidentEntities } from "../lib/actions";
 import { RequestActionButton, useCanRequest } from "../components/request-action";
+import { safeHref } from "../lib/gifs";
 import { Button, Empty, Severity, useStoredState } from "../components/ui";
 import { CveRef } from "../components/cve";
 
@@ -77,9 +78,9 @@ export default function IncidentPage() {
         </Button>
         <RequestActionButton targets={targets} incident={inc.id} />
         <CopySummaryButton markdown={inc.summary.markdown} />
-        {inc.web_url && (
+        {safeHref(inc.web_url) && (
           <a
-            href={inc.web_url}
+            href={safeHref(inc.web_url)!}
             target="_blank"
             rel="noreferrer noopener"
             className="whitespace-nowrap text-ui text-accent underline-offset-4 hover:underline"

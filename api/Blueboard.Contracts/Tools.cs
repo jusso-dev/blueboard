@@ -60,6 +60,12 @@ public static class Tools
     public const string LookupIntelDoc = "Threat intel for a CVE id, GHSA id, IP, domain, URL, email or file hash: one card per source (pwn.watch, CISA KEV, FIRST EPSS, NVD, OSV, Sentinel TI, Microsoft TI, Defender exposure), each with source, url and retrieved_at. Sources that are off or failing say not_checked, which is not the same as no data. Needs Board.Hunt.";
     public const string CheckCveExposure = "check_cve_exposure";
     public const string CheckCveExposureDoc = "Are we exposed? For up to 100 CVE ids, how many devices in this tenant have each one (Defender Vulnerability Management), up to 20 device names, software, severity, remediation and how many of those devices are in open incidents. Cached 6 hours; read only. Needs Board.Hunt.";
+    public const string ListTiWatches = "list_ti_watches";
+    public const string ListTiWatchesDoc = "List the organisation's configured tech stack, vendors, products, tags, CVEs and keywords to monitor for threat intelligence.";
+    public const string ListTiFindings = "list_ti_findings";
+    public const string ListTiFindingsDoc = "Read rows from the Threat Intel findings table (filter by status, severity, tech stack, CVE or text) so you can see what has already been posted and its triage status.";
+    public const string PostTiFinding = "post_ti_finding";
+    public const string PostTiFindingDoc = "Post a structured threat intelligence finding into the Threat Intel findings table pertaining to the org's tech stack or watchlists (optionally cross-posting to #intel). Never include private/internal IPs as indicators.";
     public const string ListActionTypes = "list_action_types";
     public const string ListActionTypesDoc = "Containment / eradication actions the board can broker, with JSON schemas for params.";
     public const string ListActions = "list_actions";
@@ -106,6 +112,9 @@ public static class Tools
         new(LookupPurviewContext, LookupPurviewContextDoc, typeof(PurviewLookupInput), "hunter"),
         new(LookupIntel, LookupIntelDoc, typeof(IntelLookupInput), "hunter"),
         new(CheckCveExposure, CheckCveExposureDoc, typeof(ExposureInput), "hunter"),
+        new(ListTiWatches, ListTiWatchesDoc, typeof(NoInput), "poster"),
+        new(ListTiFindings, ListTiFindingsDoc, typeof(TiFindingsQuery), "poster"),
+        new(PostTiFinding, PostTiFindingDoc, typeof(TiFindingInput), "poster"),
         new(ListActionTypes, ListActionTypesDoc, typeof(NoInput), "poster"),
         new(ListActions, ListActionsDoc, typeof(ActionsQuery), "poster"),
         new(RequestAction, RequestActionDoc, typeof(ActionRequest), "requester"),

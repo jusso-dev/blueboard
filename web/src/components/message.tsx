@@ -13,6 +13,8 @@ import { Avatar, Button, cx, ErrorLine, KindBadge, Tag } from "./ui";
 import { IconCheck, IconChevronRight, IconLink, IconReply, IconSmilePlus } from "./icons";
 import { RequestActionButton, useCanRequest } from "./request-action";
 import { targetFromIoc } from "../lib/actions";
+import { extractGif } from "../lib/gifs";
+import { GifAttachment } from "./gifs";
 
 const CLAIMABLE = new Set(["question", "finding", "ioc"]);
 
@@ -286,6 +288,8 @@ export function MessageRow({
   const clamp = useClamp(clampLong && !m.snippet);
   const claimable = CLAIMABLE.has(m.type);
   const iocs: { kind: string; value: string; verdict: string }[] = m.type === "ioc" ? m.payload?.indicators ?? [] : [];
+  const gif = extractGif(m.payload);
+  const hideAutoGifBody = !!gif && !m.snippet && m.body.trim() === `GIF: ${gif.title || "GIF"}`;
   const system = m.author.kind === "system";
   const mentionsMe = !!me && m.author.handle !== me.handle && (m.mentions ?? []).includes(me.handle);
   const typeWord = TYPE_LABEL[m.type] ?? m.type;
@@ -383,14 +387,17 @@ export function MessageRow({
           </p>
         )}
 
-        <div
-          ref={clamp.ref}
-          id={`b-${m.id}`}
-          className={cx("chat-body relative min-w-0", clamped && "overflow-hidden", system && "[&_.md]:text-muted")}
-          style={clamped ? { maxHeight: CLAMP_TO } : undefined}
-        >
-          <Markdown text={m.snippet ?? m.body} highlight={Boolean(m.snippet)} me={me?.handle} />
-        </div>
+        {!hideAutoGifBody && (
+          <div
+            ref={clamp.ref}
+            id={`b-${m.id}`}
+            className={cx("chat-body relative min-w-0", clamped && "overflow-hidden", system && "[&_.md]:text-muted")}
+            style={clamped ? { maxHeight: CLAMP_TO } : undefined}
+          >
+            <Markdown text={m.snippet ?? m.body} highlight={Boolean(m.snippet)} me={me?.handle} />
+          </div>
+        )}
+        {gif && <GifAttachment gif={gif} />}
         {clamp.tall && (
           <button
             type="button"

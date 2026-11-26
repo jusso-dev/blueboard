@@ -19,7 +19,7 @@ namespace Blueboard.Api.Http;
 /// [RouteDoc] feeds /api/openapi.json.
 /// </summary>
 public sealed class BoardApi(Endpoint ep, BoardService board, Search search, Reporting reporting, Broker broker, Enrichment enrich, Ingest ingest, WebhookService hooks, Db db, Policy policy,
-    IncidentQueries incidents, PlaybookRunner playbookRunner, PlaybookSet playbooks, IntelService intel, Audit audit)
+    IncidentQueries incidents, PlaybookRunner playbookRunner, PlaybookSet playbooks, IntelService intel, Audit audit, GifService gifs)
 {
     /// <summary>The web app sends ?type=a&amp;type=b; the contract field is types.</summary>
     private static readonly Dictionary<string, string> TypeAlias = new() { ["type"] = "types" };
@@ -50,6 +50,16 @@ public sealed class BoardApi(Endpoint ep, BoardService board, Search search, Rep
     [RouteDoc("Post a message", Body = typeof(PostInput), Response = typeof(Message))]
     public Task<IActionResult> Post([HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "messages")] HttpRequest req) =>
         ep.RunAsync(req, async me => await board.PostAsync(me, await Endpoint.BodyAsync<PostInput>(req), ct: Ct(req)));
+
+    [Function("gifs-search")]
+    [RouteDoc("Search allowlisted reaction GIFs (curated out of the box, or GIPHY/Tenor when configured)")]
+    public Task<IActionResult> SearchGifs([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "gifs/search")] HttpRequest req) =>
+        ep.RunAsync(req, async me =>
+        {
+            var q = req.Query["q"].FirstOrDefault();
+            int? limit = int.TryParse(req.Query["limit"].FirstOrDefault(), out var l) ? l : null;
+            return await gifs.SearchAsync(me, q, limit, Ct(req));
+        });
 
     [Function("thread")]
     [RouteDoc("A thread root and its replies", Response = typeof(ThreadResult))]
@@ -154,10 +164,10 @@ public sealed class BoardApi(Endpoint ep, BoardService board, Search search, Rep
         });
 
     // ── threat intel (/intel pages) ────────────────────────────────────────────────────────────
-    public sealed record WatchBody(string? Kind, string? Value, bool? Enabled);
+    public sealed record WatchBody(string? Kind, string? Value, bool? Enabled, string? Label = null);
 
     [Function("intel-index")]
-    [RouteDoc("Threat intel index: newest records, watches, source status")]
+    [RouteDoc("Threat intel index: newest records, findings table, watches, source status")]
     public Task<IActionResult> IntelIndex([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "intel")] HttpRequest req) =>
         ep.RunAsync(req, async me => await intel.IndexAsync(me, Ct(req)));
 
@@ -182,27 +192,52 @@ public sealed class BoardApi(Endpoint ep, BoardService board, Search search, Rep
         ep.RunAsync(req, async _ => await intel.PwnBriefAsync(slug, Ct(req)));
 
     [Function("intel-exposure")]
-    [RouteDoc("Defender exposure for CVE ids")]
+    [RouteDoc("Defender exposure for CVE ids", Role = Roles.Hunter)]
     public Task<IActionResult> IntelExposure([HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "intel/exposure")] HttpRequest req) =>
-        ep.RunAsync(req, async me => await intel.ExposureAsync(me, (await Endpoint.BodyAsync<ExposureInput>(req)).CveIds ?? [], Ct(req)));
+        ep.RunAsync(req, async me => await intel.ExposureAsync(me, (await Endpoint.BodyAsync<ExposureInput>(req)).CveIds ?? [], Ct(req)), Roles.Hunter);
+
+    [Function("intel-watches-list")]
+    [RouteDoc("List configured tech stack and threat intel watchlists")]
+    public Task<IActionResult> WatchList([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "intel/watches")] HttpRequest req) =>
+        ep.RunAsync(req, async _ => await intel.ListWatchesAsync(enabledOnly: req.Query["enabled"] == "true", Ct(req)));
 
     [Function("intel-watch-add")]
-    [RouteDoc("Add a watch")]
+    [RouteDoc("Add a tech stack item or threat intel watch", Body = typeof(WatchBody), Role = Roles.Hunter)]
     public Task<IActionResult> WatchAdd([HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "intel/watches")] HttpRequest req) =>
         ep.RunAsync(req, async me =>
         {
             var b = await Endpoint.BodyAsync<WatchBody>(req);
-            return await intel.AddWatchAsync(me, b.Kind ?? "", b.Value ?? "", Ct(req));
-        });
+            return await intel.AddWatchAsync(me, b.Kind ?? "", b.Value ?? "", b.Label, Ct(req));
+        }, Roles.Hunter);
 
     [Function("intel-watch-set")]
-    [RouteDoc("Turn a watch on or off")]
+    [RouteDoc("Turn a watch on or off", Body = typeof(WatchBody), Role = Roles.Hunter)]
     public Task<IActionResult> WatchSet([HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "intel/watches/{id:guid}")] HttpRequest req, string id) =>
         ep.RunAsync(req, async me =>
         {
             var b = await Endpoint.BodyAsync<WatchBody>(req);
             return await intel.SetWatchAsync(me, Id(id), b.Enabled ?? throw new BoardException("enabled required"), Ct(req));
-        });
+        }, Roles.Hunter);
+
+    [Function("intel-watch-delete")]
+    [RouteDoc("Delete a watch or tech stack item", Role = Roles.Hunter)]
+    public Task<IActionResult> WatchDelete([HttpTrigger(AuthorizationLevel.Anonymous, "delete", Route = "intel/watches/{id:guid}")] HttpRequest req, string id) =>
+        ep.RunAsync(req, async me => await intel.DeleteWatchAsync(me, Id(id), Ct(req)), Roles.Hunter);
+
+    [Function("intel-findings-list")]
+    [RouteDoc("List Threat Intel findings posted by bots and analysts", Query = typeof(TiFindingsQuery), Response = typeof(TiFinding[]))]
+    public Task<IActionResult> IntelFindings([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "intel/findings")] HttpRequest req) =>
+        ep.RunAsync(req, async _ => await intel.ListFindingsAsync(Endpoint.Query<TiFindingsQuery>(req), Ct(req)));
+
+    [Function("intel-findings-post")]
+    [RouteDoc("Post a Threat Intel finding tied to the org's tech stack or watchlists", Body = typeof(TiFindingInput), Response = typeof(TiFinding))]
+    public Task<IActionResult> IntelFindingPost([HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "intel/findings")] HttpRequest req) =>
+        ep.RunAsync(req, async me => await intel.PostFindingAsync(me, await Endpoint.BodyAsync<TiFindingInput>(req), Ct(req)));
+
+    [Function("intel-finding-status")]
+    [RouteDoc("Update triage status of a Threat Intel finding", Body = typeof(TiFindingStatusInput), Response = typeof(TiFinding))]
+    public Task<IActionResult> IntelFindingStatus([HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "intel/findings/{id:guid}/status")] HttpRequest req, string id) =>
+        ep.RunAsync(req, async me => await intel.UpdateFindingStatusAsync(me, Id(id), (await Endpoint.BodyAsync<TiFindingStatusInput>(req)).Status, Ct(req)));
 
     [Function("actions-list")]
     [RouteDoc("Brokered actions (or the catalogue with catalog=true)", Query = typeof(ActionsQuery), Response = typeof(ActionRow[]))]

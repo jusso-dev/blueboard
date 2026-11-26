@@ -5,6 +5,7 @@ import { MessageRow } from "../components/message";
 import { Markdown } from "../components/markdown";
 import { BadgeTags, pct, useCveBadge } from "../components/cve";
 import { api, refreshAll, useLiveQuery, type Message } from "../lib/api";
+import { safeHref } from "../lib/gifs";
 import { Button, cx, Empty, ErrorLine, Severity, Tag, Time } from "../components/ui";
 
 type Card = {
@@ -77,7 +78,7 @@ export default function IntelKeyPage() {
         sub={data ? <>Checked <Time iso={data.checked_at} />. Outside text is shown as quoted data.</> : " "}
       >
         {posted ? (
-          <Link to="/?channel=intel" className="text-ui text-accent underline-offset-4 hover:underline">
+          <Link to={`/channels/intel#m-${posted}`} className="text-ui text-accent underline-offset-4 hover:underline">
             Posted to #intel
           </Link>
         ) : (
@@ -323,8 +324,8 @@ function SourceCard({ c }: { c: Card }) {
               retrieved <Time iso={c.retrieved_at} />
             </span>
           )}
-          {c.url && (
-            <a href={c.url} target="_blank" rel="noreferrer noopener" className="whitespace-nowrap text-xs text-accent underline-offset-4 hover:underline">
+          {safeHref(c.url) && (
+            <a href={safeHref(c.url)!} target="_blank" rel="noreferrer noopener" className="whitespace-nowrap text-xs text-accent underline-offset-4 hover:underline">
               Open source ↗
             </a>
           )}

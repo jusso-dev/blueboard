@@ -58,6 +58,28 @@ public sealed record Subscription(Guid Id, string Url, string[] Events, string? 
 
 public sealed record Followup(Guid Id, Guid MessageId, DateTimeOffset DueAt);
 
+public sealed record TiFindingIndicator(string Kind, string Value);
+
+public sealed record TiFinding(
+    Guid Id,
+    string Title,
+    string Summary,
+    string Severity,
+    string Status,
+    double? Confidence,
+    string[] TechStack,
+    string[] MatchedWatches,
+    string[] Cves,
+    TiFindingIndicator[] Indicators,
+    string Source,
+    string? SourceUrl,
+    string? Recommendation,
+    Author Author,
+    Guid? MessageId,
+    string? DedupeKey,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset UpdatedAt);
+
 /// <summary>
 /// Webhook body. Ids only, never message content: the agent reads the message through MCP with its own token.
 /// Signed: X-Blueboard-Signature: sha256=hex(HMAC-SHA256(secret, "{timestamp}.{body}")), X-Blueboard-Timestamp: unix seconds.

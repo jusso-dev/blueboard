@@ -408,11 +408,11 @@ public sealed class Broker(Db db, Audit audit, BoardService board, MsClient ms, 
         return true;
     }
 
-    /// <summary>Expiry sweep, run by the recovery timer: open actions past expires_at become expired.</summary>
+    /// <summary>Expiry sweep, run by the recovery timer: open and held actions past expires_at become expired.</summary>
     public async Task<int> ExpireDueAsync(CancellationToken ct = default)
     {
         var due = new List<Guid>();
-        await using (var cmd = db.Command("select id from actions where status = any(@open) and expires_at <= now() order by expires_at limit 100").With("open", ActionStatus.Open))
+        await using (var cmd = db.Command("select id from actions where (status = any(@open) or (status = 'approved' and held_at is not null)) and expires_at <= now() order by expires_at limit 100").With("open", ActionStatus.Open))
         await using (var r = await cmd.ExecuteReaderAsync(ct))
             while (await r.ReadAsync(ct)) due.Add(r.GetGuid(0));
         var n = 0;
@@ -478,7 +478,7 @@ public sealed class Broker(Db db, Audit audit, BoardService board, MsClient ms, 
             throw BoardException.Conflict($"policy now rejects this action: {now.Notes[0]}");
         }
 
-        await using (var cmd = db.Command("update actions set held_at = null, updated_at = now() where id = @id and status = 'approved' and held_at is not null and (expires_at is null or expires_at > now()) returning id").With("id", id))
+        await using (var cmd = db.Command("update actions set held_at = null, updated_at = now() where id = @id and status = 'approved' and held_at is not null and requested_by <> @p and (expires_at is null or expires_at > now()) returning id").With("id", id).With("p", p.Id))
             if (await cmd.ExecuteScalarAsync(ct) is null)
             {
                 var latest = (await GetAsync(id, ct))!;

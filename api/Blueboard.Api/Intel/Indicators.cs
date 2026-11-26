@@ -40,6 +40,61 @@ public static partial class Indicators
     public static IReadOnlyList<string> CvesIn(string? text) =>
         text is null ? [] : CveInText().Matches(text).Select(m => m.Value.ToUpperInvariant()).Distinct().ToList();
 
+    /// <summary>
+    /// True when the input is a private, loopback, link-local, CGNAT, multicast, unspecified or otherwise non-routable
+    /// IP address (RFC 1918, RFC 6598, RFC 4193, link-local, loopback, IPv4-mapped IPv6, etc.). RFC 5737 documentation
+    /// ranges (192.0.2/24, 198.51.100/24, 203.0.113/24, 2001:db8::/32) are treated as routable examples for demo/tests.
+    /// </summary>
+    public static bool IsPrivateIp(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return false;
+        var trimmed = raw.Trim().Trim('[', ']');
+        if (!IPAddress.TryParse(trimmed, out var ip)) return false;
+        return IsPrivateIp(ip);
+    }
+
+    public static bool IsPrivateIp(IPAddress ip)
+    {
+        if (ip.IsIPv4MappedToIPv6) ip = ip.MapToIPv4();
+        if (IPAddress.IsLoopback(ip) || ip.Equals(IPAddress.Any) || ip.Equals(IPAddress.IPv6Any) || ip.Equals(IPAddress.Broadcast))
+            return true;
+        if (ip.AddressFamily == AddressFamily.InterNetwork)
+        {
+            var b = ip.GetAddressBytes();
+            return b[0] == 0                                        // 0.0.0.0/8 unspecified
+                || b[0] == 10                                       // 10.0.0.0/8 RFC 1918
+                || b[0] == 127                                      // 127.0.0.0/8 loopback
+                || (b[0] == 100 && b[1] >= 64 && b[1] <= 127)       // 100.64.0.0/10 CGNAT / Tailscale
+                || (b[0] == 169 && b[1] == 254)                     // 169.254.0.0/16 link-local / cloud metadata
+                || (b[0] == 172 && b[1] >= 16 && b[1] <= 31)        // 172.16.0.0/12 RFC 1918
+                || (b[0] == 192 && b[1] == 168)                     // 192.168.0.0/16 RFC 1918
+                || (b[0] == 192 && b[1] == 0 && b[2] == 0)          // 192.0.0.0/24 IETF protocol assignments
+                || (b[0] == 198 && (b[1] == 18 || b[1] == 19))      // 198.18.0.0/15 benchmarking
+                || b[0] >= 224;                                     // 224.0.0.0/4 multicast + 240.0.0.0/4 reserved
+        }
+        if (ip.AddressFamily == AddressFamily.InterNetworkV6)
+        {
+            if (ip.IsIPv6LinkLocal || ip.IsIPv6SiteLocal || ip.IsIPv6Multicast || ip.IsIPv6UniqueLocal || ip.IsIPv6Teredo)
+                return true;
+            var b = ip.GetAddressBytes();
+            // Documentation prefix 2001:db8::/32 is allowed for demo/test examples; all other non-global-unicast ranges are private/non-routable.
+            if (b[0] == 0x20 && b[1] == 0x01 && b[2] == 0x0d && b[3] == 0xb8) return false;
+            if ((b[0] & 0xE0) != 0x20) return true;                 // outside 2000::/3 (::/96, 64:ff9b::/96, 100::/64, etc.)
+            if (b[0] == 0x20 && b[1] == 0x02) return true;          // 2002::/16 6to4 (can embed RFC1918/loopback IPv4)
+            if (b[0] == 0x20 && b[1] == 0x01 && b[2] == 0x00 && b[3] == 0x00) return true; // 2001::/32 Teredo
+            return false;
+        }
+        return true;
+    }
+
+    /// <summary>True when an intel key is a private/non-routable IP or a URL whose host is a private/non-routable IP.</summary>
+    public static bool IsPrivateIntelKey(IntelKey key) => key.Kind switch
+    {
+        "ip" => IsPrivateIp(key.Value),
+        "url" => Uri.TryCreate(key.Value, UriKind.Absolute, out var u) && IsPrivateIp(u.Host),
+        _ => false,
+    };
+
     /// <summary>Validated, normalised value for a kind, or null if it doesn't fit.</summary>
     public static string? Normalise(string kind, string? raw)
     {
