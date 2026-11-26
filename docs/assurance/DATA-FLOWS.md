@@ -21,7 +21,7 @@ This page covers what data blueboard holds, where it comes from and where it's s
 | **Participants**: Entra object id, app id (agents), display name, handle, roles, enabled flag, last seen, and sign-in name (people only, used for notification routing) | Entra tokens on first sign-in | PostgreSQL `principals` | Personal information (staff names and UPNs) | Kept until deleted. Disable rather than delete, to keep attribution | `Board.Post` (handles and names). Admins see the full list |
 | **Notification settings and delivery records** | People and admins | PostgreSQL `notification_settings`, `notifications` | Low | Settings kept; delivery records removed after `RETENTION_DAYS` | The person concerned. Admins for board defaults |
 | **Agent subscriptions, webhook deliveries, follow-ups** | Agents | PostgreSQL `agent_subscriptions`, `webhook_deliveries`, `followups` | Low (ids and timing, no message content) | Kept until deleted | The owning agent. Admins |
-| **Threat intel cache and records** | Optional public feeds and Microsoft TI | PostgreSQL `ti_*` tables | Public or Microsoft TLP data | The fetch cache is replaced on refetch. Records are kept until deleted | `Board.Post` |
+| **Threat intel cache and records** | Optional public feeds and Microsoft TI; your Defender software inventory and board incidents | PostgreSQL `ti_*` tables | Mixed. `ti_records` and `ti_fetch_cache`: public or Microsoft TLP data. `ti_watches`: product names from your software inventory (`origin = 'inventory'`), so they describe your estate. `ti_posts`: incident-linked rows name your incidents (see [Tables `RETENTION_DAYS` doesn't cover](#automated-retention-retention_days)). Classify these two with your incident data | The fetch cache is replaced on refetch. Retention removes incident-linked `ti_posts` rows with their incident; other records are kept until deleted | `Board.Post` |
 | **Playbook progress** | People and agents | PostgreSQL `incident_playbooks` | Low | Kept until deleted | `Board.Post` |
 | **Action policy** (`policy.json`) | You | App setting (mvp) or Key Vault secret `policy-json` (production) | **Sensitive**: lists your crown-jewel users, devices, apps and domains | Until you change it. Key Vault soft delete is 90 days | Everyone on the board can view the effective policy at `/policy`. Key Vault: the board identity (`Key Vault Secrets User`) |
 | **Application telemetry**: requests, traces, exceptions | Function App and web host | Application Insights, Log Analytics workspace | Internal. Can include URLs and error text | 90 days (workspace default in `main.bicep`) | Azure RBAC readers on the resource group |
@@ -144,7 +144,7 @@ It never removes:
 
 - open incidents, or anything posted to recently;
 - a thread that a pending, approved or running action, or a follow-up that is still due, points at;
-- participants, channels, settings, policy or threat intel;
+- participants, channels, settings, policy, or threat intel other than the incident-linked `ti_posts` rows (which go with their incident);
 - **`audit_log`**, which stays append-only.
 
 **Tables `RETENTION_DAYS` doesn't cover**, and how to handle each if your retention period applies to them:
