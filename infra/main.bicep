@@ -103,6 +103,9 @@ param sentinelWorkspaceResourceId string = ''
 @description('publish_ti_indicator: assign Microsoft Sentinel Contributor on that workspace to the board identity. Needs Owner or User Access Administrator on the workspace.')
 param assignSentinelContributor bool = false
 
+@description('Data retention in days: 0 keeps everything (default); otherwise at least 30. A daily job removes resolved incidents, threads and finished actions older than this; audit_log is never removed (docs/assurance/DATA-FLOWS.md).')
+param retentionDays int = 0
+
 @description('Serve requests as a separate, least-privilege PostgreSQL role (id-db) instead of the Entra admin. Migrations still run as the admin (id-api).')
 param dbRuntimeRole bool = true
 @description('PostgreSQL automated backup retention in days (7 to 35).')
@@ -359,6 +362,7 @@ resource apiSettings 'Microsoft.Web/sites/config@2024-04-01' = {
     BOARD_API_CLIENT_ID: boardApiClientId
     INGEST_ENABLED: string(ingestEnabled)
     BROKER_EXECUTE: string(brokerExecute)
+    RETENTION_DAYS: string(retentionDays)
   }, dbSettings, productionSettings, notifySettings, tiSettings)
   dependsOn: isProd ? [kvSecretsRole, kvPolicySecret] : []
 }

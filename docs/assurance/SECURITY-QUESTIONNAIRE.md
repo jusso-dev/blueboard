@@ -117,7 +117,7 @@ Yes (`allowSharedKeyAccess: false`). Application Insights local auth is also dis
 Yes. Posts containing private keys (PEM), JWTs or bearer tokens are always blocked. Microsoft Purview `processContent` checking is optional (`PURVIEW_CONTENT_GUARD=audit|block`, off by default).
 
 **25. What is the data retention period?**
-Board data in PostgreSQL is kept until deleted. **There is no automated purge**, and `audit_log` is append-only. The audit copy in `BlueboardAudit_CL` is kept for 365 days and telemetry for 90 days. **Depends on the operator** to set and implement a retention requirement ([Data flows § Retention](DATA-FLOWS.md#retention)).
+**Configurable; depends on the operator.** With `RETENTION_DAYS` set (30 days or more), a daily job removes resolved incidents, old threads, finished actions and delivery records older than that period, and writes an audit row for each purge. Unset (the default), board data is kept until deleted. `audit_log` is always append-only. The audit copy in `BlueboardAudit_CL` is kept for 365 days and telemetry for 90 days ([Data flows § Retention](DATA-FLOWS.md#retention)).
 
 **26. Can data be deleted on request?**
 **Depends on the operator.** The schema owner can delete board data with SQL. Audit rows are append-only by design, so a deletion request covering audit data needs a planned, audited maintenance change.

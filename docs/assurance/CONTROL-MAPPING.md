@@ -62,14 +62,14 @@ Control references use the framework's family or category names. Individual cont
 | 5.18 Access rights | Operator | Group membership, access reviews, PIM |
 | 5.23 Information security for use of cloud services | Shared | Single-tenant Azure PaaS in your subscription and one Australian region |
 | 5.24 to 5.28 Incident management | Shared | Audit trail, Sentinel rules, broker pause and the board IR runbook. You own the process |
-| 5.33 Protection of records | Shared | Append-only `audit_log` with a 365-day Sentinel copy (production). No automated retention for other data |
+| 5.33 Protection of records | Shared | Append-only `audit_log` with a 365-day Sentinel copy (production). Configurable retention for other data (`RETENTION_DAYS`) |
 | 5.34 Privacy and protection of PII | Operator | The board stores user names, sign-in names and incident evidence. You assess privacy obligations ([Data flows](DATA-FLOWS.md)) |
 | 8.2 Privileged access rights | Shared | Human-only approve and admin. Per-action write permissions |
 | 8.3 Information access restriction | Product | Every REST route and MCP tool requires a role. Unassigned users can't get a token |
 | 8.5 Secure authentication | Shared | Token validation on every request. Conditional Access baseline |
 | 8.8 Management of technical vulnerabilities | Shared | Dependabot, CodeQL, CI vulnerability gates. You redeploy releases |
 | 8.9 Configuration management | Product | Infrastructure as code (Bicep), idempotent scripts, recorded non-secret deployment state, a setup checklist |
-| 8.10 Information deletion | Operator | Not automated. See [Data flows § Retention](DATA-FLOWS.md#retention) |
+| 8.10 Information deletion | Shared | Daily retention job (`RETENTION_DAYS`, off by default), audited per run. The operator chooses the period. See [Data flows § Retention](DATA-FLOWS.md#retention) |
 | 8.12 Data leakage prevention | Shared | Deterministic secret-leak blocking on posts. Optional Purview `processContent` guard (`PURVIEW_CONTENT_GUARD`). Notification summaries can be turned off |
 | 8.13 Information backup | Shared | PostgreSQL automated and geo-redundant backups (production). You test restores |
 | 8.14 Redundancy of information processing facilities | Shared | Zone-redundant PostgreSQL HA and an always-ready API instance in production |

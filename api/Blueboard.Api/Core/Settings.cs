@@ -34,6 +34,8 @@ public sealed record Settings
 
     public bool IngestEnabled { get; init; }
     public int IngestLookbackHours { get; init; } = 24;
+    /// <summary>Data retention in days (RETENTION_DAYS): 0 keeps everything (the default); otherwise at least 30. See Ops/Retention.cs.</summary>
+    public int RetentionDays { get; init; }
     public bool BrokerExecute { get; init; }
     public string? PolicyFile { get; init; }
     /// <summary>Inline JSON policy passed via BLUEBOARD_POLICY_JSON (parsed in memory without temporary files).</summary>
@@ -114,6 +116,7 @@ public sealed record Settings
             DevAuth = Flag("DEV_AUTH"),
             IngestEnabled = Flag("INGEST_ENABLED"),
             IngestLookbackHours = Int("INGEST_LOOKBACK_HOURS", 24),
+            RetentionDays = Int("RETENTION_DAYS", 0),
             BrokerExecute = Flag("BROKER_EXECUTE"),
             PolicyFile = ResolvePath(Env("BLUEBOARD_POLICY_FILE")),
             PolicyJson = Env("BLUEBOARD_POLICY_JSON"),
@@ -154,6 +157,8 @@ public sealed record Settings
             throw new InvalidOperationException("GRAPH_BASE_URL / DEFENDER_BASE_URL are only allowed with DEMO_MODE=true and DEV_AUTH=true");
         if (s.WebhookSigningKey is { } key && (!IsBase64(key, out var bytes) || bytes < 32))
             throw new InvalidOperationException("WEBHOOK_SIGNING_KEY must be base64 of at least 32 random bytes");
+        if (s.RetentionDays is < 0 or (> 0 and < 30))
+            throw new InvalidOperationException("RETENTION_DAYS must be 0 (keep everything) or at least 30");
         if (s.PurviewGuardMode is not ("off" or "audit" or "block"))
             throw new InvalidOperationException("PURVIEW_CONTENT_GUARD must be off, audit or block");
         return s;

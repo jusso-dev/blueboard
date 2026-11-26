@@ -49,7 +49,7 @@ if (cmd == "playbooks")
 
 if (cmd == "help")
 {
-    Console.WriteLine("usage: blueboard migrate | seed-dev [--sample] | policy-check [file] | doctor [--json] | playbooks [dir]");
+    Console.WriteLine("usage: blueboard migrate | seed-dev [--sample] | policy-check [file] | doctor [--json] | retention [--days n] [--apply] | playbooks [dir]");
     return 0;
 }
 
@@ -82,6 +82,30 @@ switch (cmd)
         Console.WriteLine("seeded");
         break;
 
+    case "retention":
+    {
+        // Preview by default; --apply removes. --days overrides RETENTION_DAYS. Runs as the board's runtime database role.
+        int? days = null;
+        var i = Array.IndexOf(args, "--days");
+        if (i >= 0 && (i + 1 >= args.Length || !int.TryParse(args[i + 1], out var parsed) || parsed < Retention.MinimumDays))
+        {
+            Console.Error.WriteLine($"--days needs a number of at least {Retention.MinimumDays}");
+            return 1;
+        }
+        else if (i >= 0) days = int.Parse(args[i + 1]);
+        if (days is null && settings.RetentionDays <= 0)
+        {
+            Console.Error.WriteLine("RETENTION_DAYS is off: pass --days <n> to preview a retention period");
+            return 1;
+        }
+        var apply = args.Contains("--apply");
+        var r = await new Retention(db, new Audit(db), new SystemPrincipal(db), settings).RunAsync(dryRun: !apply, days, CancellationToken.None);
+        Console.WriteLine($"{(apply ? "removed" : "would remove")} (older than {r.Days} days, before {r.Cutoff:yyyy-MM-dd}): " +
+                          $"{r.Incidents} incident(s), {r.Messages} message(s), {r.Actions} action(s), {r.Deliveries} delivery record(s)");
+        if (!apply) Console.WriteLine("dry run: nothing was removed (pass --apply to remove; the first preview counts one batch of up to " + Retention.BatchSize + " incidents and threads)");
+        break;
+    }
+
     case "doctor":
     {
         // Run with the board's own settings and identity (on the Function App, or locally with az login as a stand-in).
@@ -94,7 +118,7 @@ switch (cmd)
     }
 
     default:
-        Console.WriteLine("usage: blueboard migrate | seed-dev [--sample] | policy-check [file] | doctor [--json] | playbooks [dir]");
+        Console.WriteLine("usage: blueboard migrate | seed-dev [--sample] | policy-check [file] | doctor [--json] | retention [--days n] [--apply] | playbooks [dir]");
         return 1;
 }
 return 0;

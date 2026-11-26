@@ -6,6 +6,7 @@ How to tell whether the board is ready, who gets told when an action waits or an
 - [Notifications](#notifications)
 - [Participants and the broker pause](#participants-and-the-broker-pause)
 - [Production profile](#production-profile)
+- [Data retention](#data-retention)
 - [Audit log in Microsoft Sentinel](#audit-log-in-microsoft-sentinel)
 
 ---
@@ -349,6 +350,17 @@ The Function App has two user-assigned identities:
 `audit_log` also has triggers that refuse `UPDATE`, `DELETE` and `TRUNCATE` for every role, the owner included. On first start after deployment, the migrator creates the `blueboard-id-db` role from its object id (`pgaadauth_create_principal_with_oid`) and grants it `blueboard_app`. The Setup page's **Database** check shows which role requests run as, and warns if that role owns the schema.
 
 `DB_RUNTIME_ROLE=false ./infra/deploy.sh` goes back to a single identity (requests as the Entra admin). Keep that only as a break-glass option: the append-only triggers still apply, but the owner can drop them.
+
+## Data retention
+
+Off by default: the board keeps everything. To keep data for a set period, choose it from your records obligations, preview it, then deploy it:
+
+```sh
+blueboard retention --days 365            # counts what would be removed (one batch), removes nothing
+RETENTION_DAYS=365 ./infra/deploy.sh      # 30 or more; 0 switches it off again
+```
+
+The `retention` timer then runs daily at 02:00 Sydney standard time. It removes resolved incidents with their threads and actions, old channel threads, finished actions and old delivery records. It never removes open work, anything still pointed at by a pending action or due follow-up, or `audit_log`, and each purge writes a `retention.purged` audit row. The setup check *Data retention* shows the last run. Removed rows stay in PostgreSQL backups until those expire. Full rules: [Data flows § Retention](assurance/DATA-FLOWS.md#retention).
 
 ## Backup and restore
 

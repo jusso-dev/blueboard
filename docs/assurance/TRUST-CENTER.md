@@ -114,7 +114,7 @@ Report vulnerabilities privately through [GitHub private vulnerability reporting
 
 These are stated plainly so they can be tracked in your risk register:
 
-- **No automated data retention or purge.** Incidents, messages, actions and `audit_log` rows are kept until you delete them, and `audit_log` can't be deleted by design. Set your retention requirement and plan for it ([Data flows](DATA-FLOWS.md#retention)).
+- **Retention is off until you set it.** With `RETENTION_DAYS` unset, incidents, messages and actions are kept forever. Once set, a daily job removes older resolved records. `audit_log` is never removed, by design ([Data flows § Retention](DATA-FLOWS.md#retention)).
 - **No customer-managed keys** in the templates.
 - **No WAF or Front Door** in the templates.
 - **The production profile hasn't been deployed to a live subscription by the authors.** Run `az deployment group what-if` first. The `mvp` profile has been deployed against a live Defender tenant in read-only, dry-run mode.

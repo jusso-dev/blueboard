@@ -27,6 +27,8 @@
 #   NOTIFY_TEAMS_WEBHOOK_URL, NOTIFY_WEBHOOK_URL, NOTIFY_WEBHOOK_SECRET, NOTIFY_ALLOWED_HOSTS,
 #   NOTIFY_MAIL_FROM, NOTIFY_MAIL_TO, NOTIFY_REMIND_MINUTES (default 15), BOARD_WEB_URL (custom domain)
 #   ALERT_EMAILS=…          operational alert recipients, space or comma separated (infra/alerts.bicep; docs/OPERATIONS.md)
+#   RETENTION_DAYS=0        data retention: 0 keeps everything; 30 or more removes resolved incidents, threads and finished
+#                           actions older than that, daily (audit_log is kept). Preview: blueboard retention --days N
 #   DB_RUNTIME_ROLE=true    serve requests as a least-privilege PostgreSQL role (blueboard-id-db); false: the Entra admin
 #   EXTRA_CORS_ORIGINS=…    more web origins for the API's CORS list, space or comma separated (a custom domain:
 #                           https://board.example.com). The default web host is always allowed
@@ -73,6 +75,10 @@ POLICY_FILE="${POLICY_FILE:-$BB_ROOT/policy.example.json}"
 CORS_JSON="$(jq -cn --arg o "${EXTRA_CORS_ORIGINS:-}" '[$o | splits("[ ,]+") | select(length > 0)]')"
 ALERT_JSON="$(jq -cn --arg o "${ALERT_EMAILS:-}" '[$o | splits("[ ,]+") | select(length > 0)]')"
 DB_RUNTIME_ROLE="${DB_RUNTIME_ROLE:-true}"
+RETENTION_DAYS="${RETENTION_DAYS:-0}"
+if ! [[ "$RETENTION_DAYS" =~ ^[0-9]+$ ]] || { [[ "$RETENTION_DAYS" -ne 0 ]] && [[ "$RETENTION_DAYS" -lt 30 ]]; }; then
+  die "RETENTION_DAYS must be 0 (keep everything) or at least 30"
+fi
 case "$DB_RUNTIME_ROLE" in true | false) ;; *) die "DB_RUNTIME_ROLE must be true or false" ;; esac
 
 RELEASE_DIR=""
@@ -165,7 +171,7 @@ out="$(az deployment group create -g "$RESOURCE_GROUP" -n "blueboard-main" -f in
   -p @"$params" \
   -p location="$LOCATION" webSkuName="$WEB_SKU" namePrefix="$PREFIX" profile="$BB_PROFILE" \
   boardApiClientId="$BOARD_API_CLIENT_ID" boardApiAudience="$BOARD_API_AUDIENCE" \
-  ingestEnabled="$INGEST_ENABLED" brokerExecute="$BROKER_EXECUTE" dbRuntimeRole="$DB_RUNTIME_ROLE" \
+  ingestEnabled="$INGEST_ENABLED" brokerExecute="$BROKER_EXECUTE" dbRuntimeRole="$DB_RUNTIME_ROLE" retentionDays="$RETENTION_DAYS" \
   notifyAllowedHosts="${NOTIFY_ALLOWED_HOSTS:-}" notifyMailFrom="${NOTIFY_MAIL_FROM:-}" notifyMailTo="${NOTIFY_MAIL_TO:-}" \
   notifyRemindMinutes="${NOTIFY_REMIND_MINUTES:-15}" webBaseUrl="${BOARD_WEB_URL:-}" \
   webhookAllowedHosts="${WEBHOOK_ALLOWED_HOSTS:-}" \
@@ -189,7 +195,7 @@ state_set BB_PROFILE "$BB_PROFILE"
 # The non-secret settings this deploy used, so a bare re-run deploys the same configuration.
 for v in LOCATION WEB_SKU PREFIX INGEST_ENABLED POLICY_FILE SENTINEL_WORKSPACE_ID ASSIGN_SENTINEL_CONTRIBUTOR \
   NOTIFY_ALLOWED_HOSTS NOTIFY_MAIL_FROM NOTIFY_MAIL_TO NOTIFY_REMIND_MINUTES BOARD_WEB_URL EXTRA_CORS_ORIGINS \
-  ALERT_EMAILS DB_RUNTIME_ROLE \
+  ALERT_EMAILS DB_RUNTIME_ROLE RETENTION_DAYS \
   WEBHOOK_ALLOWED_HOSTS TI_PWNWATCH_ENABLED TI_KEV_ENABLED TI_EPSS_ENABLED TI_NVD_ENABLED TI_OSV_ENABLED \
   TI_SENTINEL_ENABLED TI_EXPOSURE_ENABLED TI_MSTI_ENABLED; do
   state_set "$v" "${!v:-}"

@@ -60,6 +60,7 @@ public sealed class Setup(Db db, Settings settings, Policy policy, MsClient ms, 
         checks.Add(await AgentsAsync(ct));
         checks.Add(await NotificationsAsync(ct));
         checks.Add(await AuditExportAsync(ct));
+        checks.Add(await RetentionAsync(ct));
         return new SetupReport(DateTimeOffset.UtcNow, checks.All(c => c.Status != CheckStatus.Failed), checks);
     }
 
@@ -419,6 +420,37 @@ public sealed class Setup(Db db, Settings settings, Policy policy, MsClient ms, 
         {
             return new("audit_export", name, CheckStatus.Failed, "Couldn't read the export state from the database.");
         }
+    }
+
+    // data retention ------------------------------------------------------------------------------
+    private async Task<Check> RetentionAsync(CancellationToken ct)
+    {
+        RetentionResult? last;
+        try { last = await new KvState(db).GetAsync<RetentionResult>(Retention.LastRunKey, ct); }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            return new("retention", RetentionName, CheckStatus.Failed, "Couldn't read the last retention run from the database.");
+        }
+        return RetentionCheck(settings.RetentionDays, last, DateTimeOffset.UtcNow);
+    }
+
+    internal const string RetentionName = "Data retention";
+
+    internal static Check RetentionCheck(int days, RetentionResult? last, DateTimeOffset now)
+    {
+        if (days <= 0)
+            return new("retention", RetentionName, CheckStatus.Warning, "Off: incidents, messages and actions are kept forever.",
+                "Set your retention period (for example RETENTION_DAYS=365 ./infra/deploy.sh) after checking your records obligations. Preview it first: blueboard retention --days 365.");
+        if (last is null)
+            return new("retention", RetentionName, CheckStatus.Ok, $"{days} days. The first run is tonight (daily at 02:00 Sydney standard time).");
+        if (last.Error is { } e)
+            return new("retention", RetentionName, CheckStatus.Failed, $"{days} days, but the last run failed {Ago(last.At)}: {e}",
+                "Check Application Insights for the retention function, then run blueboard retention --days " + days + " to preview.");
+        if (now - last.At > TimeSpan.FromHours(50))
+            return new("retention", RetentionName, CheckStatus.Warning, $"{days} days, but the last run was {Ago(last.At)}: it should run daily.",
+                "Check that the Function App is running and its timer triggers are enabled.");
+        return new("retention", RetentionName, CheckStatus.Ok,
+            $"{days} days. Last run {Ago(last.At)}: removed {last.Incidents} incident(s), {last.Messages} message(s), {last.Actions} action(s), {last.Deliveries} delivery record(s). audit_log is kept.");
     }
 
     // helpers --------------------------------------------------------------------------------------

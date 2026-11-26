@@ -247,4 +247,23 @@ public class OpsTests
         Assert.Equal(CheckStatus.Warning, Setup.Access([P("a", Roles.Approver), P("b", Roles.Approver, Roles.Admin)], true).Status);
         Assert.Equal(CheckStatus.Ok, Setup.Access([P("a", Roles.Approver), P("b", Roles.Approver, Roles.Admin), P("c", Roles.Approver)], true).Status);
     }
+
+    [Fact]
+    public void Retention_check_reports_off_pending_failed_stale_and_ok()
+    {
+        var now = DateTimeOffset.UtcNow;
+        Assert.Equal(CheckStatus.Warning, Setup.RetentionCheck(0, null, now).Status);
+        Assert.Equal(CheckStatus.Ok, Setup.RetentionCheck(365, null, now).Status);
+        Assert.Equal(CheckStatus.Failed, Setup.RetentionCheck(365, new RetentionResult(now, now, 365, false, 0, 0, 0, 0, "boom"), now).Status);
+        Assert.Equal(CheckStatus.Warning, Setup.RetentionCheck(365, new RetentionResult(now.AddDays(-3), now, 365, false, 0, 0, 0, 0), now).Status);
+        var ok = Setup.RetentionCheck(365, new RetentionResult(now.AddHours(-2), now, 365, false, 2, 10, 1, 4), now);
+        Assert.Equal(CheckStatus.Ok, ok.Status);
+        Assert.Contains("2 incident(s)", ok.Detail);
+    }
+
+    [Theory]
+    [InlineData("7")]
+    [InlineData("-1")]
+    public void Retention_days_below_thirty_are_refused(string v) =>
+        Assert.Throws<InvalidOperationException>(() => Settings.FromEnvironment(k => k == "RETENTION_DAYS" ? v : null));
 }

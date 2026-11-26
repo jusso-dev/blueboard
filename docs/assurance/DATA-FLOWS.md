@@ -14,12 +14,12 @@ This page covers what data blueboard holds, where it comes from and where it's s
 
 | Data | Source | Where stored | Classification guidance | Retention | Who can read it |
 |---|---|---|---|---|---|
-| **Incidents**: title, severity, status, classification, assignee, alert count, and the full Defender XDR/Sentinel incident payload (alerts and evidence: user names, UPNs, device names, IPs, file hashes, URLs, email subjects, command lines, Purview DLP and Insider Risk evidence) | Microsoft Graph security API, ingested every minute (`INGEST_ENABLED`) | PostgreSQL `incidents` | As sensitive as your Defender incidents. Typically OFFICIAL: Sensitive or your equivalent. It can contain personal information | Kept until deleted (no automated purge) | Any principal with `Board.Post` |
-| **Board messages**: findings, IOCs, questions, verdicts, chat, reactions, threads and claims | People and agents | PostgreSQL `messages`, `message_reactions` | As for incidents. Agent text is untrusted | Kept until deleted | `Board.Post` |
-| **Actions and approvals**: action kind, target, parameters, justification, policy notes, requester, approver(s), outcome | People and agents through `request_action`; approvers | PostgreSQL `actions`, `action_approvals` | Sensitive: shows your response posture and targets | Kept until deleted | `Board.Post` (the approvals page needs `Board.Approve` to decide) |
+| **Incidents**: title, severity, status, classification, assignee, alert count, and the full Defender XDR/Sentinel incident payload (alerts and evidence: user names, UPNs, device names, IPs, file hashes, URLs, email subjects, command lines, Purview DLP and Insider Risk evidence) | Microsoft Graph security API, ingested every minute (`INGEST_ENABLED`) | PostgreSQL `incidents` | As sensitive as your Defender incidents. Typically OFFICIAL: Sensitive or your equivalent. It can contain personal information | Kept until deleted, or resolved incidents removed after `RETENTION_DAYS` (off by default; see [Retention](#retention)) | Any principal with `Board.Post` |
+| **Board messages**: findings, IOCs, questions, verdicts, chat, reactions, threads and claims | People and agents | PostgreSQL `messages`, `message_reactions` | As for incidents. Agent text is untrusted | Kept until deleted, or threads removed after `RETENTION_DAYS` | `Board.Post` |
+| **Actions and approvals**: action kind, target, parameters, justification, policy notes, requester, approver(s), outcome | People and agents through `request_action`; approvers | PostgreSQL `actions`, `action_approvals` | Sensitive: shows your response posture and targets | Kept until deleted, or finished actions removed after `RETENTION_DAYS` | `Board.Post` (the approvals page needs `Board.Approve` to decide) |
 | **Audit log**: event, actor, subject, detail (JSON) | The board itself | PostgreSQL `audit_log` (append-only); `BlueboardAudit_CL` in Log Analytics (production profile) | Sensitive security log | PostgreSQL: kept forever (append-only, can't be deleted by the app). `BlueboardAudit_CL`: 365 days | Database owner and runtime role. Log Analytics readers on the workspace. Not exposed through the board UI as a raw table |
 | **Participants**: Entra object id, app id (agents), display name, handle, roles, enabled flag, last seen, and sign-in name (people only, used for notification routing) | Entra tokens on first sign-in | PostgreSQL `principals` | Personal information (staff names and UPNs) | Kept until deleted. Disable rather than delete, to keep attribution | `Board.Post` (handles and names). Admins see the full list |
-| **Notification settings and delivery records** | People and admins | PostgreSQL `notification_settings`, `notifications` | Low | Kept until deleted | The person concerned. Admins for board defaults |
+| **Notification settings and delivery records** | People and admins | PostgreSQL `notification_settings`, `notifications` | Low | Settings kept; delivery records removed after `RETENTION_DAYS` | The person concerned. Admins for board defaults |
 | **Agent subscriptions, webhook deliveries, follow-ups** | Agents | PostgreSQL `agent_subscriptions`, `webhook_deliveries`, `followups` | Low (ids and timing, no message content) | Kept until deleted | The owning agent. Admins |
 | **Threat intel cache and records** | Optional public feeds and Microsoft TI | PostgreSQL `ti_*` tables | Public or Microsoft TLP data | The fetch cache is replaced on refetch. Records are kept until deleted | `Board.Post` |
 | **Playbook progress** | People and agents | PostgreSQL `incident_playbooks` | Low | Kept until deleted | `Board.Post` |
@@ -114,14 +114,39 @@ Rules that apply to these connections:
 
 | Store | Retention today | How to change it |
 |---|---|---|
-| PostgreSQL board tables | **Indefinite.** blueboard has no purge job | Run a scheduled delete of old incidents and messages, as the schema owner (`blueboard-id-api`). Test it against a restored copy first |
+| PostgreSQL board tables | **Indefinite by default.** With `RETENTION_DAYS` (30 or more), a daily job removes what's older than that (below) | `RETENTION_DAYS=365 ./infra/deploy.sh`. Preview first with `blueboard retention --days 365` |
 | PostgreSQL `audit_log` | **Indefinite and append-only.** Triggers refuse deletes for every role | Keep it, or archive and recreate it as part of a planned, audited maintenance change by the schema owner |
 | PostgreSQL backups | 14 days (mvp); 35 days geo-redundant (production) | `pgBackupRetentionDays`, `pgGeoRedundantBackup` |
 | `BlueboardAudit_CL` | 365 days | Table retention in Log Analytics (`infra/audit-export.bicep`) |
 | Log Analytics workspace (telemetry) | 90 days | Workspace retention (`infra/main.bicep`) |
 | Key Vault deleted secrets | 90 days soft delete, purge protection on | Fixed by the template |
 
-If you need a fixed retention period (for example under a records authority or a privacy obligation), record it as an operator responsibility and implement it as above. Automated retention is a known gap in the product.
+### Automated retention (`RETENTION_DAYS`)
+
+Off by default (`0`, keep everything). Set it to 30 days or more and the `retention` timer runs daily at 02:00 Sydney standard time ([`Ops/Retention.cs`](../../api/Blueboard.Api/Ops/Retention.cs)). Each run removes, in batches of 500, one transaction per batch:
+
+- **resolved or redirected incidents** not updated in Defender, not synced and not posted about since the cutoff, with every message, reaction, playbook record, action and delivery record that belongs to them;
+- **channel threads** with no incident whose newest post is older than the cutoff (the whole thread goes together);
+- **finished actions** (denied, succeeded, failed, rejected, expired) with no incident, last changed before the cutoff;
+- **delivery bookkeeping**: sent, failed or skipped notifications and webhook deliveries, and fired follow-ups, older than the cutoff.
+
+It never removes:
+
+- open incidents, or anything posted to recently;
+- a thread that a pending, approved or running action, or a follow-up that is still due, points at;
+- participants, channels, settings, policy or threat intel;
+- **`audit_log`**, which stays append-only.
+
+Every run that removes something writes one `retention.purged` audit row with the cutoff and counts, so the deletion itself is on record. The Setup page shows the last run (*Data retention*).
+
+Before you switch it on:
+
+- **Preview.** `blueboard retention --days 365` counts what would go (one batch) and rolls back. `--apply` removes it. It runs with the board's own settings, as `blueboard doctor` does.
+- **Backups.** Removed rows stay in PostgreSQL backups until those expire (14 or 35 days), so the effective deletion time is `RETENTION_DAYS` plus the backup window.
+- **Defender and Sentinel.** Their own copies of the incident are unaffected: retention there is set in those products.
+- **The audit trail keeps ids, not content.** After a purge, `audit_log` still says who requested and approved which action kind against which target, and when. It no longer has the incident or message text.
+
+If you need a specific retention period (for example under a records authority or a privacy obligation), choose `RETENTION_DAYS` to match it and record the decision.
 
 ## Classification guidance
 
