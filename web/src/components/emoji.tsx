@@ -69,9 +69,13 @@ export function EmojiPicker({
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
   const measure = useCallback(() => {
-    const w = Math.min(WIDTH, window.innerWidth - 2 * EDGE);
-    const p = placePopover(anchor.getBoundingClientRect(), { w, h: HEIGHT }, { w: window.innerWidth, h: window.innerHeight });
-    return { top: p.top, left: p.left, w, h: Math.min(HEIGHT, window.innerHeight - 2 * EDGE) };
+    const viewW = window.visualViewport?.width ?? window.innerWidth;
+    const viewH = window.visualViewport?.height ?? window.innerHeight;
+    const w = Math.min(WIDTH, viewW - 2 * EDGE);
+    const h = Math.min(HEIGHT, viewH - 2 * EDGE);
+    const p = placePopover(anchor.getBoundingClientRect(), { w, h }, { w: viewW, h: viewH });
+    const left = viewW < 640 ? Math.max(EDGE, Math.round((viewW - w) / 2)) : p.left;
+    return { top: p.top, left, w, h };
   }, [anchor]);
   // Measured at mount (not in an effect) so the dialog is visible, and focusable, on its first paint.
   const [pos, setPos] = useState(measure);
@@ -106,15 +110,17 @@ export function EmojiPicker({
   const current = cells[active];
   const cellId = (i: number) => `${id}-c${i}`;
 
-  // Position against the anchor; follow scrolling and resizing.
+  // Position against the anchor; follow scrolling, resizing and mobile software keyboard changes.
   useLayoutEffect(() => {
     const place = () => setPos(measure());
     place();
     window.addEventListener("resize", place);
     window.addEventListener("scroll", place, true);
+    window.visualViewport?.addEventListener("resize", place);
     return () => {
       window.removeEventListener("resize", place);
       window.removeEventListener("scroll", place, true);
+      window.visualViewport?.removeEventListener("resize", place);
     };
   }, [measure]);
 

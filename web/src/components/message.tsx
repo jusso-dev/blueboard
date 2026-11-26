@@ -1,8 +1,9 @@
 import { Link } from "react-router";
-import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type Ref } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent, type Ref } from "react";
+import { createPortal } from "react-dom";
 import { Markdown } from "./markdown";
 import { api, refreshAll, useLiveQuery, type Action, type Message } from "../lib/api";
-import { quickReactions, reactedBy, reactionLabel, shortcodeOf, toggleReaction, type Reaction } from "../lib/emoji";
+import { frequentEmoji, quickReactions, reactedBy, reactionLabel, recordEmojiUse, shortcodeOf, toggleReaction, type Reaction } from "../lib/emoji";
 import { EmojiPicker, usePicker } from "./emoji";
 import { useDisplayNames } from "./mentions";
 import { InlineApproval, useCanDecide } from "./approval";
@@ -14,6 +15,7 @@ import { IconCheck, IconChevronRight, IconLink, IconReply, IconSmilePlus } from 
 import { RequestActionButton, useCanRequest } from "./request-action";
 import { targetFromIoc } from "../lib/actions";
 import { extractGif } from "../lib/gifs";
+import { isInteractiveTarget, isTouchLikePointer, LONG_PRESS_MS, LONG_PRESS_SUPPRESS_MS, shouldCancelLongPress } from "../lib/longpress";
 import { GifAttachment } from "./gifs";
 
 const CLAIMABLE = new Set(["question", "finding", "ioc"]);
@@ -153,6 +155,7 @@ function useReactions(m: Message, me: string | undefined) {
   const toggle = async (emoji: string) => {
     if (!me) return;
     const { op, next } = toggleReaction(list, emoji, me);
+    if (op === "add") recordEmojiUse(emoji);
     setLocal(next);
     setErr(null);
     pending.current++;
@@ -245,6 +248,248 @@ function ActionRequestCard({ m }: { m: Message }) {
   return shown && actionId ? <InlineApproval actionId={actionId} /> : null;
 }
 
+/** Slack-style bottom action sheet opened by long-pressing a message on touch devices. */
+function MessageActionSheet({
+  m,
+  reactions,
+  me,
+  canReact,
+  canReply,
+  onReact,
+  onMoreEmoji,
+  onReply,
+  onClose,
+}: {
+  m: Message;
+  reactions: Reaction[];
+  me: string | undefined;
+  canReact: boolean;
+  canReply: boolean;
+  onReact: (emoji: string) => void;
+  onMoreEmoji: () => void;
+  onReply?: () => void;
+  onClose: () => void;
+}) {
+  const [copied, setCopied] = useState<"text" | "link" | null>(null);
+  const quick = canReact ? frequentEmoji(6) : [];
+  // Require a fresh pointerdown inside the sheet so releasing a long-press on a bottom-of-feed message can't
+  // accidentally tap a button or backdrop the instant the sheet appears under the user's finger.
+  const armed = useRef(false);
+  const allowClick = (e: MouseEvent) => e.detail === 0 || armed.current;
+
+  useEffect(() => {
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const preview = m.body.replace(/\s+/g, " ").trim().slice(0, 90);
+
+  return createPortal(
+    <div
+      className="fixed inset-0 z-50 flex flex-col justify-end"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Message actions"
+      onPointerDown={() => {
+        armed.current = true;
+      }}
+    >
+      <div
+        aria-hidden
+        className="fixed inset-0 bg-paper/75"
+        onClick={(e) => {
+          if (allowClick(e)) onClose();
+        }}
+      />
+      <div className="relative z-10 mx-auto w-full max-w-lg rounded-t-2xl border-t border-rule-strong bg-paper-2 px-4 pt-2.5 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-[var(--shadow-pop)]">
+        <div aria-hidden className="mx-auto mb-3 h-1 w-10 rounded-full bg-rule-strong" />
+        <p className="mb-3 truncate px-1 text-xs text-muted">
+          <span className="font-semibold text-ink-2">{m.author.display_name}</span>
+          {preview ? ` · ${preview}` : ""}
+        </p>
+
+        {canReact && (
+          <div role="group" aria-label="Quick reactions" className="mb-3 flex items-center justify-between gap-1.5">
+            {quick.map((emoji) => {
+              const mine = reactions.some((r) => r.emoji === emoji && reactedBy(r, me));
+              return (
+                <button
+                  key={emoji}
+                  type="button"
+                  aria-label={mine ? `Remove ${shortcodeOf(emoji)} reaction` : `React with ${shortcodeOf(emoji)}`}
+                  aria-pressed={mine}
+                  onClick={(e) => {
+                    if (!allowClick(e)) return;
+                    onReact(emoji);
+                    onClose();
+                  }}
+                  className={cx(
+                    "inline-flex size-11 flex-1 items-center justify-center rounded-full border text-[22px] leading-none transition-colors active:scale-95",
+                    mine ? "border-accent bg-accent-soft" : "border-rule bg-paper-3 hover:border-rule-strong",
+                  )}
+                >
+                  <span aria-hidden>{emoji}</span>
+                </button>
+              );
+            })}
+            <button
+              type="button"
+              aria-label="More reactions"
+              onClick={(e) => {
+                if (allowClick(e)) onMoreEmoji();
+              }}
+              className="inline-flex size-11 flex-1 items-center justify-center rounded-full border border-rule bg-paper-3 text-ink-2 transition-colors hover:border-rule-strong hover:text-ink active:scale-95"
+            >
+              <IconSmilePlus size={20} />
+            </button>
+          </div>
+        )}
+
+        <div className="space-y-0.5 border-t border-rule pt-2">
+          {canReact && (
+            <button
+              type="button"
+              onClick={(e) => {
+                if (allowClick(e)) onMoreEmoji();
+              }}
+              className="flex min-h-11 w-full items-center gap-3 rounded-lg px-3 text-left text-ui font-medium text-ink transition-colors hover:bg-paper-3 active:bg-paper-3"
+            >
+              <IconSmilePlus size={18} className="shrink-0 text-muted" />
+              Add reaction…
+            </button>
+          )}
+          {canReply && onReply && (
+            <button
+              type="button"
+              onClick={(e) => {
+                if (!allowClick(e)) return;
+                onClose();
+                onReply();
+              }}
+              className="flex min-h-11 w-full items-center gap-3 rounded-lg px-3 text-left text-ui font-medium text-ink transition-colors hover:bg-paper-3 active:bg-paper-3"
+            >
+              <IconReply size={18} className="shrink-0 text-muted" />
+              {m.parent_id ? "Open thread" : "Reply in thread"}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={(e) => {
+              if (!allowClick(e)) return;
+              void navigator.clipboard?.writeText(m.body).then(() => {
+                setCopied("text");
+                setTimeout(onClose, 250);
+              });
+            }}
+            className="flex min-h-11 w-full items-center gap-3 rounded-lg px-3 text-left text-ui font-medium text-ink transition-colors hover:bg-paper-3 active:bg-paper-3"
+          >
+            <IconCheck size={18} className={cx("shrink-0", copied === "text" ? "text-good" : "text-muted")} />
+            {copied === "text" ? "Text copied" : "Copy text"}
+          </button>
+          <button
+            type="button"
+            onClick={(e) => {
+              if (!allowClick(e)) return;
+              void navigator.clipboard?.writeText(permalink(m)).then(() => {
+                setCopied("link");
+                setTimeout(onClose, 250);
+              });
+            }}
+            className="flex min-h-11 w-full items-center gap-3 rounded-lg px-3 text-left text-ui font-medium text-ink transition-colors hover:bg-paper-3 active:bg-paper-3"
+          >
+            <IconLink size={18} className={cx("shrink-0", copied === "link" ? "text-good" : "text-muted")} />
+            {copied === "link" ? "Link copied" : "Copy link"}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+/** Detects a stationary touch/pen hold (~420ms) without interfering with scrolling or desktop text selection. */
+function useMessageLongPress(enabled: boolean, onTrigger: () => void) {
+  const [pressing, setPressing] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const start = useRef<{ x: number; y: number } | null>(null);
+  const firedAt = useRef(0);
+  const scrollCleanup = useRef<(() => void) | null>(null);
+
+  const cancel = useCallback(() => {
+    if (timer.current !== null) {
+      clearTimeout(timer.current);
+      timer.current = null;
+    }
+    start.current = null;
+    setPressing(false);
+    scrollCleanup.current?.();
+    scrollCleanup.current = null;
+  }, []);
+
+  useEffect(() => cancel, [cancel]);
+
+  const onPointerDown = (e: PointerEvent<HTMLElement>) => {
+    if (!enabled || !e.isPrimary || !isTouchLikePointer(e.pointerType) || isInteractiveTarget(e.target)) return;
+    cancel();
+    start.current = { x: e.clientX, y: e.clientY };
+    setPressing(true);
+    const onScroll = () => cancel();
+    window.addEventListener("scroll", onScroll, { capture: true, passive: true });
+    scrollCleanup.current = () => window.removeEventListener("scroll", onScroll, true);
+    timer.current = setTimeout(() => {
+      timer.current = null;
+      start.current = null;
+      setPressing(false);
+      scrollCleanup.current?.();
+      scrollCleanup.current = null;
+      firedAt.current = Date.now();
+      try {
+        window.getSelection()?.removeAllRanges();
+        navigator.vibrate?.(12);
+      } catch {
+        /* ignore */
+      }
+      onTrigger();
+    }, LONG_PRESS_MS);
+  };
+
+  const onPointerMove = (e: PointerEvent<HTMLElement>) => {
+    if (!start.current) return;
+    if (shouldCancelLongPress(start.current, { x: e.clientX, y: e.clientY })) cancel();
+  };
+
+  const onContextMenu = (e: MouseEvent<HTMLElement>) => {
+    if (Date.now() - firedAt.current < LONG_PRESS_SUPPRESS_MS || timer.current !== null) {
+      e.preventDefault();
+    }
+  };
+
+  const onClickCapture = (e: MouseEvent<HTMLElement>) => {
+    if (Date.now() - firedAt.current < LONG_PRESS_SUPPRESS_MS) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  };
+
+  return {
+    pressing,
+    handlers: {
+      onPointerDown,
+      onPointerMove,
+      onPointerUp: cancel,
+      onPointerCancel: cancel,
+      onContextMenu,
+      onClickCapture,
+    },
+  };
+}
+
 export function MessageRow({
   m,
   onOpenThread,
@@ -300,6 +545,17 @@ export function MessageRow({
   const reactions = useReactions(m, me?.handle);
   const picker = usePicker();
   const quick = canReact && toolbar !== "none" ? quickReactions() : [];
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const articleEl = useRef<HTMLElement | null>(null);
+  const setArticleRef = useCallback(
+    (node: HTMLElement | null) => {
+      articleEl.current = node;
+      if (typeof rootRef === "function") rootRef(node);
+      else if (rootRef && "current" in rootRef) (rootRef as { current: HTMLElement | null }).current = node;
+    },
+    [rootRef],
+  );
+  const longPress = useMessageLongPress(toolbar !== "none" || canReact, () => setSheetOpen(true));
 
   const claim = async (op: "claim" | "done" | "release") => {
     setBusy(true);
@@ -321,15 +577,16 @@ export function MessageRow({
   return (
     <article
       id={`m-${m.id}`}
-      ref={rootRef}
+      ref={setArticleRef}
       {...navProps}
+      {...longPress.handlers}
       tabIndex={navProps?.tabIndex ?? -1}
       aria-label={summary}
       className={cx(
-        "group relative grid grid-cols-[36px_minmax(0,1fr)] gap-x-3 px-6 transition-colors duration-150 max-sm:px-4",
+        "message-row group relative grid grid-cols-[36px_minmax(0,1fr)] gap-x-3 px-6 transition-colors duration-150 max-sm:px-4",
         "hover:bg-paper-2 focus-within:bg-paper-2 focus-visible:outline-offset-[-2px]",
         grouped ? "py-0.5" : "pb-2 pt-3",
-        (selected || mentionsMe) && "bg-paper-2",
+        (selected || mentionsMe || longPress.pressing || sheetOpen) && "bg-paper-2",
         mentionsMe && "before:absolute before:inset-y-0 before:left-0 before:w-0.5 before:bg-accent",
       )}
     >
@@ -542,6 +799,22 @@ export function MessageRow({
           )}
           <CopyLink m={m} />
         </div>
+      )}
+      {sheetOpen && (
+        <MessageActionSheet
+          m={m}
+          reactions={reactions.list}
+          me={me?.handle}
+          canReact={canReact}
+          canReply={Boolean(onOpenThread && actions !== "copy")}
+          onReact={(emoji) => void reactions.toggle(emoji)}
+          onMoreEmoji={() => {
+            setSheetOpen(false);
+            if (articleEl.current) picker.toggle(articleEl.current);
+          }}
+          onReply={onOpenThread ? () => onOpenThread(rootId) : undefined}
+          onClose={() => setSheetOpen(false)}
+        />
       )}
       {picker.anchor && (
         <EmojiPicker

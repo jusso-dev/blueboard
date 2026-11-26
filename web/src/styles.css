@@ -92,6 +92,16 @@ body {
   color: var(--color-ink);
 }
 
+/* On touch devices, prevent iOS/Android native text-selection callout from fighting Slack-style message long-press.
+ * Message text remains copyable via the long-press action sheet ("Copy text"); desktop selection is unaffected. */
+@media (pointer: coarse) {
+  .message-row {
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+}
+
 /* Component classes live in a layer so Tailwind utilities (text-*, etc.) can override them. */
 @layer components {
 /* Human-readable metadata. Identifiers opt into font-mono explicitly. */
