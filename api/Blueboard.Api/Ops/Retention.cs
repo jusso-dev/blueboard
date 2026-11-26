@@ -133,6 +133,9 @@ public sealed class Retention(Db db, Audit audit, SystemPrincipal system, Settin
         await Exec("delete from followups where message_id in (select id from rt_messages)");
         await Exec("update followups set posted_message_id = null where posted_message_id in (select id from rt_messages)");
         await Exec("update ti_posts set message_id = null where message_id in (select id from rt_messages)");
+        // Sentinel auto-enrichment markers name a board incident (sentinel-auto:<id>, thread incident:<id>): they go
+        // with the incident, so no incident-linked row outlives it.
+        await Exec("delete from ti_posts where thread_key in (select 'incident:' || id::text from rt_incidents)");
         await Exec("delete from typing where root_id in (select id from rt_messages) or incident_id in (select id from rt_incidents)");
         await Exec("delete from incident_playbooks where incident_id in (select id from rt_incidents)");
         await Exec("update incident_playbooks set root_message_id = null where root_message_id in (select id from rt_messages)");

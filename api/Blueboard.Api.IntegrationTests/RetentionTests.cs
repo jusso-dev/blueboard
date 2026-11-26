@@ -69,6 +69,7 @@ public sealed class RetentionTests(TestBoard t) : IClassFixture<TestBoard>
         var pinned = await PostAsync("containment", "please isolate", 200);
         var pending = await ActionAsync("pending_approval", 200, null, pinned);
 
+        await t.OwnerExecAsync($"insert into ti_posts (hash, thread_key) values ('sentinel-auto:{oldResolved}', 'incident:{oldResolved}'), ('sentinel-auto:{oldActive}', 'incident:{oldActive}'), ('kev:CVE-2026-0001', 'cve:CVE-2026-0001')");
         await t.Audit.WriteAsync(null, "test.before-retention", "x", null, Ct);
         var auditBefore = await t.ScalarAsync("select count(*) from audit_log");
 
@@ -85,6 +86,11 @@ public sealed class RetentionTests(TestBoard t) : IClassFixture<TestBoard>
             Assert.Equal(0, await Exists(table, id));
         foreach (var (table, id) in new[] { ("incidents", oldActive), ("incidents", resolvedButBusy), ("messages", recent), ("messages", revived), ("messages", pinned), ("actions", pending) })
             Assert.Equal(1, await Exists(table, id));
+
+        // Incident-linked threat intel markers go with their incident; feed markers and live incidents' stay.
+        Assert.Equal(0, await t.ScalarAsync("select count(*) from ti_posts where thread_key = @k", ("k", $"incident:{oldResolved}")));
+        Assert.Equal(1, await t.ScalarAsync("select count(*) from ti_posts where thread_key = @k", ("k", $"incident:{oldActive}")));
+        Assert.Equal(1, await t.ScalarAsync("select count(*) from ti_posts where hash = 'kev:CVE-2026-0001'"));
 
         // audit_log is only ever appended to: everything before is still there, plus one retention.purged row.
         Assert.Equal(auditBefore + 1, await t.ScalarAsync("select count(*) from audit_log"));
