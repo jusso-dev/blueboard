@@ -19,7 +19,7 @@ namespace Blueboard.Api.Http;
 /// [RouteDoc] feeds /api/openapi.json.
 /// </summary>
 public sealed class BoardApi(Endpoint ep, BoardService board, Search search, Reporting reporting, Broker broker, Enrichment enrich, Ingest ingest, WebhookService hooks, Db db, Policy policy,
-    IncidentQueries incidents, PlaybookRunner playbookRunner, PlaybookSet playbooks, IntelService intel, Audit audit, GifService gifs)
+    IncidentQueries incidents, PlaybookRunner playbookRunner, PlaybookSet playbooks, IntelService intel, Audit audit, GifService gifs, MemoryService memory)
 {
     /// <summary>The web app sends ?type=a&amp;type=b; the contract field is types.</summary>
     private static readonly Dictionary<string, string> TypeAlias = new() { ["type"] = "types" };
@@ -60,6 +60,27 @@ public sealed class BoardApi(Endpoint ep, BoardService board, Search search, Rep
             int? limit = int.TryParse(req.Query["limit"].FirstOrDefault(), out var l) ? l : null;
             return await gifs.SearchAsync(me, q, limit, Ct(req));
         });
+
+    // ── shared SOC memory (/memory) ────────────────────────────────────────────────────────────
+    [Function("memories-list")]
+    [RouteDoc("Search shared SOC memories (baselines, asset context, environment facts, procedures)", Query = typeof(MemoryQuery), Response = typeof(SharedMemory[]))]
+    public Task<IActionResult> ListMemories([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "memories")] HttpRequest req) =>
+        ep.RunAsync(req, async _ => await memory.ListAsync(Endpoint.Query<MemoryQuery>(req), Ct(req)));
+
+    [Function("memories-remember")]
+    [RouteDoc("Create or update a shared SOC memory by key", Body = typeof(MemoryInput), Response = typeof(SharedMemory))]
+    public Task<IActionResult> RememberMemory([HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "memories")] HttpRequest req) =>
+        ep.RunAsync(req, async me => await memory.RememberAsync(me, await Endpoint.BodyAsync<MemoryInput>(req), Ct(req)));
+
+    [Function("memories-verify")]
+    [RouteDoc("Human-only: verify, unverify, or pin a shared SOC memory", Body = typeof(MemoryVerifyInput), Response = typeof(SharedMemory))]
+    public Task<IActionResult> VerifyMemory([HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "memories/{id:guid}/verify")] HttpRequest req, string id) =>
+        ep.RunAsync(req, async me => await memory.SetVerificationAsync(me, Id(id), await Endpoint.BodyAsync<MemoryVerifyInput>(req), Ct(req)));
+
+    [Function("memories-forget")]
+    [RouteDoc("Archive an obsolete shared SOC memory")]
+    public Task<IActionResult> ForgetMemory([HttpTrigger(AuthorizationLevel.Anonymous, "delete", Route = "memories/{id:guid}")] HttpRequest req, string id) =>
+        ep.RunAsync(req, async me => await memory.ForgetAsync(me, Id(id), null, req.Query["reason"].FirstOrDefault(), Ct(req)));
 
     [Function("thread")]
     [RouteDoc("A thread root and its replies", Response = typeof(ThreadResult))]

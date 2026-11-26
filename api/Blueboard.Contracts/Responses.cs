@@ -80,6 +80,29 @@ public sealed record TiFinding(
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt);
 
+public sealed record SharedMemory(
+    Guid Id,
+    string Key,
+    string Category,
+    string Title,
+    string Content,
+    string[] Tags,
+    string[] Entities,
+    double? Confidence,
+    bool Verified,
+    string? VerifiedBy,
+    DateTimeOffset? VerifiedAt,
+    bool Pinned,
+    bool Archived,
+    Guid? SourceIncidentId,
+    string? SourceIncidentGraphId,
+    Guid? SourceMessageId,
+    DateTimeOffset? ExpiresAt,
+    Author CreatedBy,
+    Author UpdatedBy,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset UpdatedAt);
+
 /// <summary>
 /// Webhook body. Ids only, never message content: the agent reads the message through MCP with its own token.
 /// Signed: X-Blueboard-Signature: sha256=hex(HMAC-SHA256(secret, "{timestamp}.{body}")), X-Blueboard-Timestamp: unix seconds.

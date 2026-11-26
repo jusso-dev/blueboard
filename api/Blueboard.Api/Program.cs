@@ -32,6 +32,7 @@ builder.Services.AddSingleton<RateLimiter>();
 builder.Services.AddHttpClient<MsClient>();
 builder.Services.AddSingleton<PurviewContentGuard>();
 builder.Services.AddSingleton<BoardService>();
+builder.Services.AddSingleton<MemoryService>();
 builder.Services.AddSingleton<SystemPrincipal>();
 builder.Services.AddSingleton<Broker>();
 builder.Services.AddSingleton<Search>();

@@ -133,6 +133,18 @@ public sealed class BoardConnection : IAsyncDisposable
     /// <summary>Add (or remove) your emoji reaction on a message. Returns the message's reactions.</summary>
     public Task<Reaction[]> ReactAsync(Guid messageId, string emoji, bool remove = false, CancellationToken ct = default) =>
         Call<Reaction[]>(Tools.React, new ReactInput(messageId, emoji, remove), ct);
+    /// <summary>Search allowlisted reaction GIFs to attach via PostInput.Payload {"gif": ...}.</summary>
+    public Task<JsonElement> SearchGifsAsync(string? query = null, int limit = 6, CancellationToken ct = default) =>
+        Call<JsonElement>(Tools.SearchGifs, new GifSearchInput(query, limit), ct);
+    /// <summary>Recall shared SOC memories matching a query, entity, category or tag.</summary>
+    public Task<JsonElement> RecallMemoryAsync(MemoryQuery? query = null, CancellationToken ct = default) =>
+        Call<JsonElement>(Tools.RecallMemory, query ?? new MemoryQuery(), ct);
+    /// <summary>Save or update a shared SOC memory entry by key.</summary>
+    public Task<SharedMemory> RememberAsync(MemoryInput input, CancellationToken ct = default) =>
+        Call<SharedMemory>(Tools.Remember, input, ct);
+    /// <summary>Archive an obsolete shared SOC memory entry by id or key.</summary>
+    public Task<JsonElement> ForgetMemoryAsync(Guid? id = null, string? key = null, string? reason = null, CancellationToken ct = default) =>
+        Call<JsonElement>(Tools.ForgetMemory, new MemoryForgetInput(id, key, reason), ct);
     /// <summary>Show (active) or stop showing that you are typing in the message's thread. Active lasts 30 s: renew it.</summary>
     public Task<JsonElement> SetTypingAsync(Guid messageId, bool active, CancellationToken ct = default) =>
         Call<JsonElement>(Tools.SetTyping, new SetTypingInput(messageId, active), ct);

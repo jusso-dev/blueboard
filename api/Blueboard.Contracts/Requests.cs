@@ -14,7 +14,7 @@ public sealed record PostInput(
     [StringLength(20000, MinimumLength = 1)] string Body,
     [Description("chat | finding | question | ioc | verdict | status (default chat)")]
     [AllowedValues("chat", "finding", "question", "ioc", "verdict", "status")] string? Type = null,
-    [Description("Typed payload. ioc {\"indicators\":[{\"kind\",\"value\",\"verdict\",\"source\"}]}, verdict {\"classification\",\"confidence\",\"determination\"}, finding {\"confidence\",\"entities\",\"evidence\"}, status {\"state\"}")]
+    [Description("Typed payload. ioc {\"indicators\":[{\"kind\",\"value\",\"verdict\",\"source\"}]}, verdict {\"classification\",\"confidence\",\"determination\"}, finding {\"confidence\",\"entities\",\"evidence\"}, status {\"state\"}. Any message may also include gif: {\"url\",\"preview_url\",\"title\",\"provider\"} using an allowlisted URL from search_gifs.")]
     JsonElement? Payload = null,
     [Description("Thread root message id, to reply in a thread")] Guid? ParentId = null,
     [Description("Board incident id or Defender incident id, to link the message")]
@@ -170,6 +170,42 @@ public sealed record ReactInput(
 public sealed record SetTypingInput(
     [Description("The message you are working on; you show as typing in its thread")] Guid MessageId,
     [Description("true while you work (lasts 30 seconds, call again to renew); false when you are done")] bool Active);
+
+public sealed record GifSearchInput(
+    [Description("Search phrase for a reaction GIF (e.g. 'this is fine', 'party', 'lgtm', 'ship it', 'coffee'). Empty returns curated/trending GIFs.")][StringLength(100)] string? Query = null,
+    [Description("1-16, default 6")][Range(1, 16)] int Limit = 6);
+
+public sealed record MemoryQuery(
+    [Description("Search words, key, entity or topic across shared SOC memory")][StringLength(200)] string? Q = null,
+    [Description("Filter by an exact entity (IP, hostname, UPN, domain, CVE, app name)")][StringLength(200)] string? Entity = null,
+    [Description("Filter by category: environment | baseline | asset | threat | procedure | preference | general")][AllowedValues("environment", "baseline", "asset", "threat", "procedure", "preference", "general")] string? Category = null,
+    [Description("Filter by tag")][StringLength(60)] string? Tag = null,
+    [Description("Only return human-verified memories")] bool VerifiedOnly = false,
+    [Description("Include archived memories (default false)")] bool IncludeArchived = false,
+    [Description("1-200, default 30")][Range(1, 200)] int Limit = 30);
+
+public sealed record MemoryInput(
+    [Description("Stable lowercase slug key, e.g. 'network/sydney-egress-proxy' or 'baseline/finance-sharepoint-job' (updating an existing key overwrites it cleanly)")][StringLength(120, MinimumLength = 2)] string Key,
+    [Description("Short descriptive title (3-200 characters)")][StringLength(200, MinimumLength = 3)] string Title,
+    [Description("Durable SOC knowledge to share with all agents and analysts (5-4000 characters; never store secrets)")][StringLength(4000, MinimumLength = 5)] string Content,
+    [Description("environment | baseline | asset | threat | procedure | preference | general (default general)")][AllowedValues("environment", "baseline", "asset", "threat", "procedure", "preference", "general")] string? Category = null,
+    [Description("Short topic tags, e.g. ['egress', 'false-positive', 'finance']")] string[]? Tags = null,
+    [Description("Related entities (IPs, hostnames, UPNs, domains, CVEs, apps) for automatic recall")] string[]? Entities = null,
+    [Description("Confidence 0-1 (optional)")][Range(0, 1)] double? Confidence = null,
+    [Description("Optional board or Defender incident id where this fact was learned")][StringLength(100)] string? Incident = null,
+    [Description("Optional source message id")] Guid? SourceMessageId = null,
+    [Description("Optional expiry in hours (1-8760) for temporary context like change freezes or maintenance windows")][Range(1, 8760)] int? ExpiresInHours = null,
+    [Description("Human analysts only: mark verified (default true for humans, always false for agents)")] bool? Verified = null,
+    [Description("Human analysts only: pin this memory to the top for all agents")] bool? Pinned = null);
+
+public sealed record MemoryVerifyInput(
+    [Description("true to mark human-verified, false to unverify")] bool? Verified = null,
+    [Description("true to pin at the top of shared memory")] bool? Pinned = null);
+
+public sealed record MemoryForgetInput(
+    [Description("Memory id to archive (provide id or key)")] Guid? Id = null,
+    [Description("Memory key to archive (provide id or key)")][StringLength(120)] string? Key = null,
+    [Description("Short reason why this memory is obsolete (optional)")][StringLength(300)] string? Reason = null);
 
 // REST-only bodies (the web app).
 

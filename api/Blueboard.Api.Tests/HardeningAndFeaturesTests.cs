@@ -188,5 +188,29 @@ public class HardeningAndFeaturesTests
         Assert.Equal("This is fine", fine[0].Title);
     }
 
+    // ── Shared SOC memory validation & MCP tool exposure ───────────────────────────────────────
+
+    [Theory]
+    [InlineData("baseline/sydney-egress-proxy", "baseline/sydney-egress-proxy")]
+    [InlineData("  Asset/FIN-LT-0423  ", "asset/fin-lt-0423")]
+    [InlineData("network/sydney proxy", "network/sydney-proxy")]
+    public void Memory_key_normalisation_accepts_valid_slugs(string raw, string expected) =>
+        Assert.Equal(expected, MemoryService.NormaliseKey(raw));
+
+    [Theory]
+    [InlineData("x")]
+    [InlineData("../escape")]
+    [InlineData("a//b")]
+    [InlineData("bad key!@#")]
+    public void Memory_key_normalisation_rejects_invalid_or_traversal_keys(string raw) =>
+        Assert.Throws<BoardException>(() => MemoryService.NormaliseKey(raw));
+
+    [Fact]
+    public void Memory_token_normalisation_dedupes_lowercases_and_strips_controls()
+    {
+        var tokens = MemoryService.NormaliseTokens(["  FIN-LT-0423 ", "fin-lt-0423", "bad\ntoken", "198.51.100.23"], 10);
+        Assert.Equal(["fin-lt-0423", "198.51.100.23"], tokens);
+    }
+
     private static DateTimeOffset Now() => new(2026, 11, 26, 12, 0, 0, TimeSpan.Zero);
 }
