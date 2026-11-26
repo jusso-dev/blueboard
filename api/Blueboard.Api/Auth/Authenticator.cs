@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using Blueboard.Api.Core;
 using Blueboard.Api.Data;
+using Npgsql;
 
 namespace Blueboard.Api.Auth;
 
@@ -52,27 +53,58 @@ public sealed class Authenticator(Settings settings, TokenValidator tokens, Db d
     /// when roles changed or the last write is older than a minute, so steady polling doesn't write on every request.
     /// </summary>
     internal const string TouchSql = """
-        with p as (select id, handle, display_name, kind, roles, enabled, last_seen_at from principals where {0})
+        with p as (select id, handle, display_name, kind, roles, enabled, last_seen_at from principals where {0} for update)
         update principals t set roles = @r, last_seen_at = now(), username = coalesce(@u, t.username)
-        from p where t.id = p.id and (p.roles is distinct from @r::text[] or p.last_seen_at is null or p.last_seen_at < now() - interval '1 minute')
-        returning t.id
+        from p where t.id = p.id and p.enabled and (p.roles is distinct from @r::text[] or p.last_seen_at is null or p.last_seen_at < now() - interval '1 minute')
+        returning t.id, t.handle, p.roles as old_roles
         """;
+
+    /// <summary>
+    /// Board roles come from Entra on every token; the board can't grant them. When a principal's roles differ from what
+    /// the board last saw, that is recorded once (principal.roles_changed, old and new), so a grant or removal made in
+    /// Entra (group membership, PIM activation, app role assignment) shows in the audit trail at its first use.
+    /// </summary>
+    internal static (string[] Added, string[] Removed) RoleDelta(string[] before, string[] after) =>
+        (after.Except(before, StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray(),
+         before.Except(after, StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray());
 
     /// <summary>A person's sign-in name (preferred_username, usually the UPN) for notification routing. Never stored for agents.</summary>
     internal static string? HumanUsername(CallerIdentity id) =>
         id.Kind == "human" && id.Username is { Length: > 0 and <= 254 } u && !u.Any(char.IsControl) ? u : null;
 
-    private async Task<Principal> UpsertAsync(CallerIdentity id, CancellationToken ct)
+    internal async Task<Principal> UpsertAsync(CallerIdentity id, CancellationToken ct)
     {
-        await using (var touch = db.Command(string.Format(TouchSql, "entra_oid = @o")).With("r", id.Roles).With("o", id.Oid).With("u", HumanUsername(id)))
-            await touch.ExecuteNonQueryAsync(ct);
+        {
+            // Updating the cached roles and recording the change must commit together. Lock the old row so concurrent
+            // requests cannot both report the same change, or lose the old roles while waiting for another update.
+            await using var conn = await db.OpenAsync(ct);
+            await using var tx = await conn.BeginTransactionAsync(ct);
+            (Guid Id, string Handle, string[] Before)? changed = null;
+            await using (var touch = new NpgsqlCommand(string.Format(TouchSql, "entra_oid = @o"), conn, tx).With("r", id.Roles).With("o", id.Oid).With("u", HumanUsername(id)))
+            await using (var tr = await touch.ExecuteReaderAsync(ct))
+            {
+                if (await tr.ReadAsync(ct))
+                {
+                    var before = tr.GetFieldValue<string[]>(2);
+                    if (!before.ToHashSet(StringComparer.Ordinal).SetEquals(id.Roles)) changed = (tr.GetGuid(0), tr.GetString(1), before);
+                }
+            }
+            if (changed is { } c)
+            {
+                var (added, removed) = RoleDelta(c.Before, id.Roles);
+                await using var log = new NpgsqlCommand("insert into audit_log (actor_id, event, subject, detail) values (@a, 'principal.roles_changed', @s, @d)", conn, tx)
+                    .With("a", c.Id).With("s", c.Handle).WithJson("d", new { added, removed, roles = id.Roles, source = "entra_token" });
+                await log.ExecuteNonQueryAsync(ct);
+            }
+            await tx.CommitAsync(ct);
+        }
         await using (var cmd = db.Command("select id, handle, display_name, kind, roles, enabled from principals where entra_oid = @o").With("o", id.Oid))
         await using (var r = await cmd.ExecuteReaderAsync(ct))
         {
             if (await r.ReadAsync(ct))
             {
                 if (!r.GetBoolean(5)) throw BoardException.Forbidden("principal disabled");
-                return new Principal(r.GetGuid(0), r.GetString(1), r.GetString(2), r.GetString(3), r.GetFieldValue<string[]>(4));
+                return new Principal(r.GetGuid(0), r.GetString(1), r.GetString(2), r.GetString(3), id.Roles);
             }
         }
         var (handle, name) = Handles.Default(id);

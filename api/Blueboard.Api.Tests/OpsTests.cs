@@ -230,4 +230,83 @@ public class OpsTests
         Assert.Contains("How to fix: Run ./infra/grant-permissions.sh", text);
         Assert.EndsWith("at least one check failed" + Environment.NewLine, text);
     }
+
+    [Fact]
+    public void Access_warns_until_two_approvers_and_an_admin_have_signed_in()
+    {
+        static (string, string[]) P(string h, params string[] r) => (h, r);
+        Assert.Equal(CheckStatus.Warning, Setup.Access([P("ana", Roles.Poster)], false).Status);
+        var one = Setup.Access([P("lead", Roles.Approver, Roles.Admin)], false);
+        Assert.Equal(CheckStatus.Warning, one.Status);
+        Assert.Contains("own request", one.Detail);
+        Assert.Equal(CheckStatus.Warning, Setup.Access([P("a", Roles.Approver), P("b", Roles.Approver)], false).Status); // no admin
+        var ok = Setup.Access([P("a", Roles.Approver), P("b", Roles.Approver, Roles.Admin)], false);
+        Assert.Equal(CheckStatus.Ok, ok.Status);
+        Assert.Contains(ok.Lines!, l => l.Contains("@a") && l.Contains("@b"));
+        // require_two_approvers kinds need a third person, so the requester's own approval is never needed.
+        Assert.Equal(CheckStatus.Warning, Setup.Access([P("a", Roles.Approver), P("b", Roles.Approver, Roles.Admin)], true).Status);
+        Assert.Equal(CheckStatus.Ok, Setup.Access([P("a", Roles.Approver), P("b", Roles.Approver, Roles.Admin), P("c", Roles.Approver)], true).Status);
+    }
+
+    [Fact]
+    public void Retention_check_reports_off_pending_failed_stale_and_ok()
+    {
+        var now = DateTimeOffset.UtcNow;
+        Assert.Equal(CheckStatus.Warning, Setup.RetentionCheck(0, null, now).Status);
+        Assert.Equal(CheckStatus.Ok, Setup.RetentionCheck(365, null, now).Status);
+        Assert.Equal(CheckStatus.Failed, Setup.RetentionCheck(365, new RetentionResult(now, now, 365, false, 0, 0, 0, 0, "boom"), now).Status);
+        Assert.Equal(CheckStatus.Warning, Setup.RetentionCheck(365, new RetentionResult(now.AddDays(-3), now, 365, false, 0, 0, 0, 0), now).Status);
+        var ok = Setup.RetentionCheck(365, new RetentionResult(now.AddHours(-2), now, 365, false, 2, 10, 1, 4), now);
+        Assert.Equal(CheckStatus.Ok, ok.Status);
+        Assert.Contains("2 incident(s)", ok.Detail);
+    }
+
+    [Theory]
+    [InlineData("7")]
+    [InlineData("-1")]
+    public void Retention_days_below_thirty_are_refused(string v) =>
+        Assert.Throws<InvalidOperationException>(() => Settings.FromEnvironment(k => k == "RETENTION_DAYS" ? v : null));
+
+    [Fact]
+    public void Posture_scores_weights_and_skips_external_controls()
+    {
+        static string? Env(string k) => k switch { "BOARD_PROFILE" => "mvp", "BOARD_EDGE" => "none", _ => null };
+        var weak = Posture.Controls(new Settings { TenantId = "t", SessionIdleMinutes = 0 }, new Policy(), 1, 1, 3, Env);
+        Assert.Equal(Posture.NotMet, weak.Single(c => c.Id == "network").State);
+        Assert.Equal(Posture.Partial, weak.Single(c => c.Id == "sod").State);
+        Assert.Equal(Posture.NotMet, weak.Single(c => c.Id == "idle").State);
+        Assert.Equal(Posture.External, weak.Single(c => c.Id == "mfa").State);
+        Assert.All(weak.Where(c => c.State != Posture.Met && c.State != Posture.External), c => Assert.False(string.IsNullOrEmpty(c.Fix)));
+
+        static string? Prod(string k) => k switch { "BOARD_PROFILE" => "production", "BOARD_EDGE" => "front_door_waf", "BOARD_WAF_MODE" => "Prevention", _ => null };
+        var strong = Posture.Controls(new Settings { TenantId = "t", SessionIdleMinutes = 15, InactiveDisableDays = 45, RetentionDays = 365,
+            AuditDceEndpoint = "https://x", AuditDcrId = "rule", NotifyMailFrom = "soc@contoso.com", BrokerExecute = true },
+            new Policy { ProtectedUsers = ["breakglass@contoso.com"], RequireTwoApprovers = ["disable_user"] }, 3, 1, 0, Prod);
+        var r = Posture.Score(strong);
+        Assert.Equal(r.MaxScore, r.Score);
+        Assert.True(Posture.Score(weak).Score < r.Score);
+        Assert.DoesNotContain(r.Controls, c => c.State == Posture.External && c.Weight > 0 && r.MaxScore == 0);
+    }
+
+    [Fact]
+    public void Posture_does_not_overstate_unverified_controls_or_reward_live_writes()
+    {
+        static string? Env(string k) => k switch { "BOARD_EDGE" => "front_door_waf", "BOARD_WAF_MODE" => "Detection", _ => null };
+        var settings = new Settings { DatabaseUrl = "postgres://u@localhost/board", AuditDceEndpoint = "https://example.test" };
+        var controls = Posture.Controls(settings, new Policy(), 2, 1, 0, Env);
+        Assert.Equal(Posture.NotMet, controls.Single(c => c.Id == "pg_tls").State);
+        Assert.Equal(Posture.NotMet, controls.Single(c => c.Id == "audit_export").State);
+        Assert.Equal(Posture.Partial, controls.Single(c => c.Id == "edge").State);
+        Assert.Equal(Posture.NotMet, controls.Single(c => c.Id == "sso").State);
+        Assert.Equal(Posture.Score(controls).Score,
+            Posture.Score(Posture.Controls(settings with { BrokerExecute = true }, new Policy(), 2, 1, 0, Env)).Score);
+    }
+
+    [Theory]
+    [InlineData("SESSION_IDLE_MINUTES", "-1")]
+    [InlineData("SESSION_IDLE_MINUTES", "481")]
+    [InlineData("INACTIVE_DISABLE_DAYS", "-1")]
+    [InlineData("INACTIVE_DISABLE_DAYS", "29")]
+    public void Invalid_session_and_lifecycle_limits_are_refused(string name, string value) =>
+        Assert.Throws<InvalidOperationException>(() => Settings.FromEnvironment(k => k == name ? value : null));
 }

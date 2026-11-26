@@ -19,7 +19,7 @@ namespace Blueboard.Api.Http;
 /// [RouteDoc] feeds /api/openapi.json.
 /// </summary>
 public sealed class BoardApi(Endpoint ep, BoardService board, Search search, Reporting reporting, Broker broker, Enrichment enrich, Ingest ingest, WebhookService hooks, Db db, Policy policy,
-    IncidentQueries incidents, PlaybookRunner playbookRunner, PlaybookSet playbooks, IntelService intel)
+    IncidentQueries incidents, PlaybookRunner playbookRunner, PlaybookSet playbooks, IntelService intel, Audit audit)
 {
     /// <summary>The web app sends ?type=a&amp;type=b; the contract field is types.</summary>
     private static readonly Dictionary<string, string> TypeAlias = new() { ["type"] = "types" };
@@ -268,6 +268,7 @@ public sealed class BoardApi(Endpoint ep, BoardService board, Search search, Rep
             var q = Endpoint.Query<ReportQuery>(req);
             var report = await reporting.BuildAsync(q.From, q.To, q.Severity, Ct(req));
             if (q.Format != "csv") return report;
+            await audit.WriteAsync(me.Id, "report.exported", me.Handle, new { rows = report.Rows.Count, from = q.From, to = q.To, severity = q.Severity }, Ct(req));
             req.HttpContext.Response.Headers.ContentDisposition = $"attachment; filename=\"blueboard-response-{DateTime.UtcNow:yyyy-MM-dd}.csv\"";
             return new ContentResult { Content = Reporting.Csv(report), ContentType = "text/csv; charset=utf-8", StatusCode = 200 };
         });

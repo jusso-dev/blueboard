@@ -186,5 +186,16 @@ public sealed record ReportQuery(
     [Description("Only this severity")] string? Severity = null,
     [Description("csv for a CSV download")][AllowedValues("json", "csv")] string? Format = null);
 
+/// <summary>Audit log query (admin). Newest first; before = the id to page back from.</summary>
+public sealed record AuditQuery(
+    [Description("From (ISO-8601)")] DateTimeOffset? From = null,
+    [Description("To (ISO-8601)")] DateTimeOffset? To = null,
+    [Description("Event name or prefix, e.g. action. or principal.roles_changed")][StringLength(64), RegularExpression("^[a-z_]+(\\.[a-z_]*)*$")] string? Event = null,
+    [Description("Actor handle")][StringLength(64)] string? Actor = null,
+    [Description("Text in the subject")][StringLength(200)] string? Subject = null,
+    [Description("Return rows with id below this (paging)")] long? Before = null,
+    [Description("Rows (default 100, max 500)")][Range(1, 500)] int? Limit = null,
+    [Description("csv for a CSV download (max 50,000 rows, audited)")][AllowedValues("json", "csv")] string? Format = null);
+
 /// <summary>For tools and routes with no arguments.</summary>
 public sealed record NoInput;

@@ -150,3 +150,62 @@ run_setup_checks() { # <api-host> <audience>
   esac
   rm -f "$body"
 }
+
+# ── Release packages (BB_RELEASE=vX.Y.Z) ──────────────────────────────────────────────────────────
+# Deploying a published release instead of building from source: no .NET SDK, Node or pnpm, so it runs in Azure
+# Cloud Shell. Every file is checked against the release's SHA-256 list; with the GitHub CLI signed in, the build
+# provenance attestation is verified too.
+release_rid() {
+  case "$(uname -s)-$(uname -m)" in
+    Linux-x86_64) echo linux-x64 ;;
+    Linux-aarch64) echo linux-arm64 ;;
+    Darwin-arm64) echo osx-arm64 ;;
+    Darwin-x86_64) echo osx-x64 ;;
+    *) echo unknown ;;
+  esac
+}
+
+# Downloads (once) and verifies the release's packages into infra/out/releases/<source>/<tag>; prints that folder.
+# <source> is a hash of where the packages come from (repository or mirror URL), so the same tag from a fork or a
+# mirror never reuses another source's cached files.
+release_fetch() { # <tag>
+  local tag="$1" repo="${BB_RELEASE_REPO:-jusso-dev/blueboard}" dir base f want have tools source
+  [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || die "BB_RELEASE must be a release tag like v1.2.0"
+  # BB_RELEASE_URL: a mirror of the release assets (an internal artefact store), <url>/<tag>/<file>.
+  base="${BB_RELEASE_URL:+${BB_RELEASE_URL%/}/$tag}"
+  base="${base:-https://github.com/$repo/releases/download/$tag}"
+  source="$( (printf '%s' "$base" | sha256sum 2>/dev/null || printf '%s' "$base" | shasum -a 256) | cut -c1-12)"
+  dir="$BB_STATE_DIR/releases/$source/$tag"
+  mkdir -p "$dir"
+  tools="blueboard-tools-$tag-$(release_rid).tar.gz"
+  for f in "blueboard-$tag.sha256" "blueboard-api-$tag.zip" "blueboard-web-$tag.zip"; do
+    [[ -s "$dir/$f" ]] || curl -fsSL --retry 3 -o "$dir/$f" "$base/$f" || die "couldn't download $base/$f (is $tag published?)"
+  done
+  # The policy-check tool ships from releases after v1.0.0. Optional: without it, deploy.sh uses dotnet if present.
+  [[ -s "$dir/$tools" ]] || curl -fsSL --retry 3 -o "$dir/$tools" "$base/$tools" 2>/dev/null || rm -f "$dir/$tools"
+  for f in "$dir"/blueboard-*.zip "$dir"/blueboard-tools-*.tar.gz; do
+    [[ -f "$f" ]] || continue
+    want="$(awk -v n="$(basename "$f")" '$2 == n || $2 == "*"n {print $1}' "$dir/blueboard-$tag.sha256")"
+    [[ -n "$want" ]] || die "$(basename "$f") is not listed in blueboard-$tag.sha256"
+    have="$( (sha256sum "$f" 2>/dev/null || shasum -a 256 "$f") | awk '{print $1}')"
+    [[ "$want" == "$have" ]] || { rm -f "$f"; die "checksum mismatch for $(basename "$f"): deleted, re-run to download again"; }
+  done
+  if [[ "${BB_RELEASE_SKIP_ATTESTATION:-}" != "1" ]] && command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+    # Every file that will be deployed or run, the operator CLI included, before anything is extracted.
+    for f in "$dir"/blueboard-api-*.zip "$dir"/blueboard-web-*.zip "$dir"/blueboard-tools-*.tar.gz; do
+      [[ -f "$f" ]] || continue
+      gh attestation verify "$f" --repo "$repo" >/dev/null 2>&1 ||
+        die "build provenance for $(basename "$f") did not verify (gh attestation verify $f --repo $repo)"
+    done
+    log "release $tag: checksums and build provenance verified" >&2
+  else
+    log "release $tag: checksums verified (sign in to the GitHub CLI to verify build provenance too)" >&2
+  fi
+  # Unpacked fresh from the archive verified above on every run, never reused: a binary left by an earlier run is
+  # removed, and without a verified archive there is no tool (deploy.sh then falls back to the .NET SDK).
+  rm -rf "$dir/tools"
+  if [[ -f "$dir/$tools" ]]; then
+    mkdir -p "$dir/tools" && tar -xzf "$dir/$tools" -C "$dir/tools"
+  fi
+  echo "$dir"
+}

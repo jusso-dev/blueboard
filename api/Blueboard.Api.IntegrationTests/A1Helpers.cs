@@ -65,7 +65,7 @@ internal static class A1
         var search = new Search(db, board);
         var queries = new IncidentQueries(db, board, books);
         var intel = Intel(db, board, ms, enrich, sys, t.Settings);
-        var api = new BoardApi(ep, board, search, new Reporting(db), broker, enrich, ingest, hooks, db, policy, queries, runner, books, intel);
+        var api = new BoardApi(ep, board, search, new Reporting(db), broker, enrich, ingest, hooks, db, policy, queries, runner, books, intel, audit);
         return new App { Db = db, Policy = policy, Limiter = limiter, Board = board, Broker = broker, Enrich = enrich, Auth = auth, Api = api, Hooks = hooks, Intel = intel, Playbooks = runner, Microsoft = fake };
     }
 

@@ -20,7 +20,7 @@ public sealed record Check(string Id, string Name, string Status, string Detail,
 public sealed record SetupReport(DateTimeOffset CheckedAt, bool Ok, IReadOnlyList<Check> Checks);
 
 /// <summary>What the shell banner needs on every page: cheap, no Microsoft calls.</summary>
-public sealed record BoardStatus(string Broker, string? PausedBy, DateTimeOffset? PausedAt, string Policy, int Held);
+public sealed record BoardStatus(string Broker, string? PausedBy, DateTimeOffset? PausedAt, string Policy, int Held, int SessionIdleMinutes = 0);
 
 /// <summary>
 /// The setup checklist (issue #2): is the board ready, in plain words, with what to do next for each failing line.
@@ -56,9 +56,11 @@ public sealed class Setup(Db db, Settings settings, Policy policy, MsClient ms, 
         checks.AddRange(await MicrosoftAsync(ct));
         checks.Add(await BrokerAsync(ct));
         checks.Add(PolicyCheck());
+        checks.Add(await AccessAsync(ct));
         checks.Add(await AgentsAsync(ct));
         checks.Add(await NotificationsAsync(ct));
         checks.Add(await AuditExportAsync(ct));
+        checks.Add(await RetentionAsync(ct));
         return new SetupReport(DateTimeOffset.UtcNow, checks.All(c => c.Status != CheckStatus.Failed), checks);
     }
 
@@ -246,7 +248,7 @@ public sealed class Setup(Db db, Settings settings, Policy policy, MsClient ms, 
         await using var cmd = db.Command("select count(*)::int from actions where status = 'approved' and held_at is not null");
         var held = (int)(await cmd.ExecuteScalarAsync(ct))!;
         var broker = pause?.Paused == true ? "paused" : settings.BrokerExecute ? "live" : "dry_run";
-        return new BoardStatus(broker, pause?.Paused == true ? pause.By : null, pause?.Paused == true ? pause.At : null, PolicyState, held);
+        return new BoardStatus(broker, pause?.Paused == true ? pause.By : null, pause?.Paused == true ? pause.At : null, PolicyState, held, settings.SessionIdleMinutes);
     }
 
     private string PolicyState => policy.Missing ? "missing" : policy.Source is null ? "default" : "loaded";
@@ -320,6 +322,54 @@ public sealed class Setup(Db db, Settings settings, Policy policy, MsClient ms, 
         return new("agents", name, CheckStatus.Ok, $"Last agent check-in {Ago(latest.Value)} ({lines.Count} known).", null, lines);
     }
 
+    // access: separation of duties --------------------------------------------------------------
+    private async Task<Check> AccessAsync(CancellationToken ct)
+    {
+        var people = new List<(string Handle, string[] Roles)>();
+        try
+        {
+            await using var cmd = db.Command("select handle, roles from principals where kind = 'human' and enabled order by handle limit 500");
+            await using var r = await cmd.ExecuteReaderAsync(ct);
+            while (await r.ReadAsync(ct)) people.Add((r.GetString(0), r.GetFieldValue<string[]>(1)));
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            return new("access", AccessName, CheckStatus.Failed, "Couldn't read principals from the database.");
+        }
+        return Access(people, policy.RequireTwoApprovers.Length > 0);
+    }
+
+    internal const string AccessName = "Access (separation of duties)";
+
+    /// <summary>
+    /// Nobody approves their own request, and two-approver kinds need two people besides the requester. Counts the
+    /// enabled people whose last token carried Board.Approve / Board.Admin. Roles are refreshed at each sign-in, so a
+    /// person added to the approvers group appears here after their first visit.
+    /// </summary>
+    internal static Check Access(IReadOnlyList<(string Handle, string[] Roles)> people, bool twoApproverKinds)
+    {
+        var approvers = people.Where(p => p.Roles.Contains(Roles.Approver)).Select(p => "@" + p.Handle).ToList();
+        var admins = people.Where(p => p.Roles.Contains(Roles.Admin)).Select(p => "@" + p.Handle).ToList();
+        var needed = twoApproverKinds ? 3 : 2;
+        var lines = new List<string>
+        {
+            $"Approvers ({approvers.Count}): {(approvers.Count == 0 ? "none signed in yet" : string.Join(", ", approvers.Take(20)))}",
+            $"Admins ({admins.Count}): {(admins.Count == 0 ? "none signed in yet" : string.Join(", ", admins.Take(20)))}",
+        };
+        const string groups = "Add people to the approvers group (infra/entra-groups.sh, docs/ENTERPRISE-ACCESS.md); they appear here after they first sign in.";
+        if (approvers.Count == 0)
+            return new("access", AccessName, CheckStatus.Warning, "No approver has signed in: approval requests will wait with nobody to decide them.", groups, lines);
+        if (approvers.Count < needed)
+            return new("access", AccessName, CheckStatus.Warning,
+                twoApproverKinds
+                    ? $"{approvers.Count} approver(s): actions that need two approvers can stall when one of them requested it or is away. Have at least {needed}."
+                    : $"Only {approvers.Count} approver: nobody can approve their own request, so their requests (and anything while they're away) wait. Have at least {needed}.",
+                groups, lines);
+        if (admins.Count == 0)
+            return new("access", AccessName, CheckStatus.Warning, $"{approvers.Count} approvers, but no admin has signed in.", "Add at least one person to the admins group.", lines);
+        return new("access", AccessName, CheckStatus.Ok, $"{approvers.Count} approvers and {admins.Count} admin(s); requesters never approve their own actions.", null, lines);
+    }
+
     // notifications (#3) -----------------------------------------------------------------------------
     private async Task<Check> NotificationsAsync(CancellationToken ct)
     {
@@ -370,6 +420,37 @@ public sealed class Setup(Db db, Settings settings, Policy policy, MsClient ms, 
         {
             return new("audit_export", name, CheckStatus.Failed, "Couldn't read the export state from the database.");
         }
+    }
+
+    // data retention ------------------------------------------------------------------------------
+    private async Task<Check> RetentionAsync(CancellationToken ct)
+    {
+        RetentionResult? last;
+        try { last = await new KvState(db).GetAsync<RetentionResult>(Retention.LastRunKey, ct); }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            return new("retention", RetentionName, CheckStatus.Failed, "Couldn't read the last retention run from the database.");
+        }
+        return RetentionCheck(settings.RetentionDays, last, DateTimeOffset.UtcNow);
+    }
+
+    internal const string RetentionName = "Data retention";
+
+    internal static Check RetentionCheck(int days, RetentionResult? last, DateTimeOffset now)
+    {
+        if (days <= 0)
+            return new("retention", RetentionName, CheckStatus.Warning, "Off: incidents, messages and actions are kept forever.",
+                "Set your retention period (for example RETENTION_DAYS=365 ./infra/deploy.sh) after checking your records obligations. Preview it first: blueboard retention --days 365.");
+        if (last is null)
+            return new("retention", RetentionName, CheckStatus.Ok, $"{days} days. The first run is tonight (daily at 02:00 Sydney standard time).");
+        if (last.Error is { } e)
+            return new("retention", RetentionName, CheckStatus.Failed, $"{days} days, but the last run failed {Ago(last.At)}: {e}",
+                "Check Application Insights for the retention function, then run blueboard retention --days " + days + " to preview.");
+        if (now - last.At > TimeSpan.FromHours(50))
+            return new("retention", RetentionName, CheckStatus.Warning, $"{days} days, but the last run was {Ago(last.At)}: it should run daily.",
+                "Check that the Function App is running and its timer triggers are enabled.");
+        return new("retention", RetentionName, CheckStatus.Ok,
+            $"{days} days. Last run {Ago(last.At)}: removed {last.Incidents} incident(s), {last.Messages} message(s), {last.Actions} action(s), {last.Deliveries} delivery record(s). audit_log is kept.");
     }
 
     // helpers --------------------------------------------------------------------------------------

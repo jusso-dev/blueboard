@@ -3,6 +3,7 @@ import { Link } from "react-router";
 import { PageHeader, useMe } from "../components/shell";
 import { api, ApiError, useLiveQuery } from "../lib/api";
 import { Button, cx, Empty, ErrorLine, Tag, Time } from "../components/ui";
+import { stageStates, type StageState } from "../lib/readiness";
 
 type Check = { id: string; name: string; status: "ok" | "warning" | "failed"; detail: string; fix: string | null; lines: string[] | null };
 type Report = { checked_at: string; ok: boolean; checks: Check[] };
@@ -35,6 +36,59 @@ function Row({ c }: { c: Check }) {
           </p>
         )}
       </div>
+    </li>
+  );
+}
+
+/** Go-live stages (docs/QUICKSTART-AZURE.md): where the board is, and which checks stand in the way of the next stage. */
+function Stages({ checks }: { checks: Check[] }) {
+  const stages = stageStates(checks);
+  const current = stages.find((s) => s.state === "current");
+  return (
+    <section aria-labelledby="go-live" className="border-b border-rule px-5 py-4">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h2 id="go-live" className="text-sm font-semibold">
+          Go-live
+        </h2>
+        <a
+          href="https://jusso-dev.github.io/blueboard/QUICKSTART-AZURE/#staged-go-live"
+          target="_blank"
+          rel="noreferrer"
+          className="text-xs text-accent underline-offset-4 hover:underline"
+        >
+          Staged go-live guide
+        </a>
+      </div>
+      <ol className="mt-2 grid grid-cols-4 gap-2 max-md:grid-cols-2 max-sm:grid-cols-1">
+        {stages.map((s, i) => (
+          <StageCard key={s.stage.key} n={i} s={s} />
+        ))}
+      </ol>
+      {current && current.blocking.length > 0 && (
+        <p className="mt-2 text-xs text-ink-2">
+          <span className="font-medium text-ink">Next:</span> {current.blocking.map((c) => c.name).join(", ")}. Each one's fix is below.
+        </p>
+      )}
+      {!current && <p className="mt-2 text-xs text-ink-2">Every stage is complete. Keep this page green: it is rechecked each time you open it.</p>}
+    </section>
+  );
+}
+
+function StageCard({ n, s }: { n: number; s: StageState }) {
+  const word = { done: "Done", current: "In progress", todo: "To do" }[s.state];
+  const tone = ({ done: "good", current: "accent", todo: "neutral" } as const)[s.state];
+  return (
+    <li
+      aria-current={s.state === "current" ? "step" : undefined}
+      className={cx("rounded-[var(--radius-control)] border px-3 py-2", s.state === "current" ? "border-accent-soft bg-accent-soft/20" : "border-rule")}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-[13px] font-semibold">
+          <span className="font-mono text-muted">{n}</span> {s.stage.title}
+        </span>
+        <Tag tone={tone}>{word}</Tag>
+      </div>
+      <p className="mt-1 text-xs text-muted">{s.stage.summary}</p>
     </li>
   );
 }
@@ -93,6 +147,7 @@ export default function SetupPage() {
       <div className="min-h-0 flex-1 overflow-y-auto">
         {error && <Empty title="Couldn't run the checks">{error.message}</Empty>}
         {!r && !error && <Empty title="Running checks…" />}
+        {r && <Stages checks={r.checks} />}
         {r && (
           <ul aria-label="Setup checks">
             {r.checks.map((c) => (

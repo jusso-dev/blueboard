@@ -3,9 +3,12 @@
 How to tell whether the board is ready, who gets told when an action waits or an agent needs someone, how to stop writes and cut off a participant, and the production profile. Deployment itself is in [DEPLOYMENT.md](DEPLOYMENT.md); the threat model and runbook are in [SECURITY.md](SECURITY.md).
 
 - [Setup checklist and `blueboard doctor`](#setup-checklist-and-blueboard-doctor)
+- [Admin centre and assurance review](#admin-centre-and-assurance-review)
+- [Sessions and inactive participants](#sessions-and-inactive-participants)
 - [Notifications](#notifications)
 - [Participants and the broker pause](#participants-and-the-broker-pause)
 - [Production profile](#production-profile)
+- [Data retention](#data-retention)
 - [Audit log in Microsoft Sentinel](#audit-log-in-microsoft-sentinel)
 
 ---
@@ -38,6 +41,39 @@ dotnet run --project api/Blueboard.Tools -- doctor            # or: doctor --jso
 `doctor` needs the board's settings and identity, so it is exact on the Function App's own environment. From your machine, `infra/deploy.sh` and `infra/up.sh` instead call the deployed `GET /api/setup` with **your** token (you need `Board.Admin`) and print the result; the checks still run inside the Function App with its managed identity. If your Azure CLI hasn't consented to the board's `Board.Access` scope yet, run `az login --scope api://blueboard-<env>/Board.Access` once, or open `/setup` in the browser.
 
 A banner on every page says when the broker is **paused** (red), in **dry run**, holding approved actions, or running on the **default policy**. The words carry the meaning; the colour only repeats it.
+
+---
+
+## Admin centre and assurance review
+
+Open **Admin centre** (`/admin`, `Board.Admin`) for readiness, posture, access review, audit, policy, broker and notification controls. Use this sequence for a deployment review:
+
+1. **Setup and readiness** (`/setup`): resolve failed checks and investigate warnings. These probes include database access, Microsoft read permissions and the last audit export result.
+2. **Posture** (`/admin/posture`): prioritise control gaps using the reported settings and participant records. Met controls earn their weight; partial controls earn half, rounded down. Conditional Access and PIM require confirmation in Entra and are excluded from the score. Broker execution mode is informational: keeping dry run does not reduce the score.
+3. **Access review** (`/admin/participants`): review people and agents flagged as never seen, inactive, privileged or able to request actions. Reconcile their roles with Entra group membership and PIM. Disable unwanted access with a reason; export access-change events for the review record. These flags assist a human review; they are not an Entra access-review campaign.
+4. **Audit log** (`/admin/audit`): filter by event family, actor, subject and time. CSV contains the newest **50,000 matching rows at most**; narrow the time window for larger investigations. CSV exports require a human admin and create `audit.exported`. Report exports create `report.exported`. The application role cannot rewrite the trail; a database owner can remove the protective triggers, so verify the separate Sentinel copy.
+5. Record the deployment version, review date, reviewer, evidence and accepted residual risks using [the threat model's risk acceptance sheet](THREAT-MODEL.md#9-risk-acceptance). Exercise each enabled action in a non-production tenant before authorising live execution.
+
+**A posture score is configuration evidence, not certification or proof of enforcement.** The page does not query Azure or Entra. Verify private endpoints and public access settings, WAF Prevention mode and origin restrictions in Azure; confirm recent `BlueboardAudit_CL` rows arrive; send a test notification and check receipt. A high score does not substitute for those tests, a restore exercise or independent security testing. Missing deployment metadata must be investigated rather than assumed safe.
+
+Role changes are recorded as `principal.roles_changed` when a token first presents changed roles. The cached role update and audit row commit together; identical concurrent tokens and reordered role lists do not create duplicate changes. The event records observed additions/removals, not who changed the Entra assignment. Correlate with Entra audit logs. Older still-valid tokens can present older roles until they expire; use board disable for immediate cut-off.
+
+## Sessions and inactive participants
+
+Both settings are passed through `deploy.sh` (also called by `up.sh`) and remembered in deployment state. Review their impact before enabling inactivity disable:
+
+```sh
+BB_ENV=prod SESSION_IDLE_MINUTES=15 INACTIVE_DISABLE_DAYS=90 ./infra/deploy.sh
+```
+
+| Setting | Default | Behaviour |
+|---|---|---|
+| `SESSION_IDLE_MINUTES` | `15` | Browser sign-out after that many idle minutes, with a one-minute warning and **Stay signed in**. `0` disables it; maximum `480`. Input in another board tab counts as activity when browser storage is available. If storage access fails, the local tab's expiry still works. |
+| `INACTIVE_DISABLE_DAYS` | `0` (off) | At least `30` when enabled. The daily lifecycle job disables people and agents whose last authenticated request is older than the threshold; never-seen accounts use creation time. System and already-disabled accounts are excluded. |
+
+Idle expiry runs in the browser; it does not revoke access tokens or govern agent sessions. Device locking and enforced Entra Conditional Access remain necessary. Background API polling counts towards a participant's last-seen time, but not browser input for idle expiry.
+
+Automatic inactivity disable records its reason and `principal.disabled` audit event, releases claims and disables webhooks in the same database statement. The job then posts a notice in `#general`. An admin can re-enable a participant with a reason under **Access review**. Re-enable does not restore disabled webhook subscriptions; the agent must subscribe again. The policy does not remove Entra group membership or role assignments. Review break-glass and infrequently used accounts before setting a threshold, and retain an administrator recovery procedure.
 
 ---
 
@@ -307,13 +343,15 @@ BB_ENV=prod BB_PROFILE=production POLICY_FILE=policy.json ./infra/up.sh
 | API cold starts | Scale from zero | One **always-ready** `http` instance |
 | Web App | B1 (or `WEB_SKU`) | P0v3 |
 | Audit log | PostgreSQL only | Also shipped to **`BlueboardAudit_CL`** in Log Analytics |
+| Minimum TLS (apps, scm, PostgreSQL) | 1.2 | **1.3** (`TLS_MIN_VERSION`) |
+| Subnet NSGs | n/a | Functions subnet: no inbound from the Internet. Endpoints subnet: VirtualNetwork to 5432/443 only |
 | PostgreSQL backups | 14 days, locally redundant | **35 days, geo-redundant** (to the paired Australian region) |
 
-Both profiles: storage autogrow on, requests run as the least-privilege database role (`blueboard-id-db`, see [Database roles](#database-roles)), and the operational alerts below.
+Both profiles: storage autogrow on, requests run as the least-privilege database role (`blueboard-id-db`, see [Database roles](#database-roles)), the board verifies the PostgreSQL server certificate (`VerifyFull`), PostgreSQL requires TLS and sends its logs (connections, disconnections, pgaudit DDL and role changes) to Log Analytics, and the operational alerts below. pgaudit needs one server restart after the first deploy: see [DEPLOYMENT.md § Network and TLS hardening](DEPLOYMENT.md#network-and-tls-hardening).
 
 Everything stays in the one Australian region you choose. Changing the policy: update the `policy-json` secret in Key Vault (or re-run `up.sh` with a new `POLICY_FILE`), then restart the Function App. The Setup page shows the counts from the policy now in force.
 
-Front Door and WAF stay optional and documented in [architecture.md](architecture.md#production-hardening).
+Front Door and WAF stay optional (`FRONT_DOOR=true`, [DEPLOYMENT.md § Front Door and WAF](DEPLOYMENT.md#front-door-and-waf)). For real incident data use production: in mvp, PostgreSQL has a public endpoint (deployment output `pgPublic`).
 
 Geo-redundant backup is fixed when the PostgreSQL server is created. Choose it on the first deployment (the production profile does). For an existing server, keep `pgGeoRedundantBackup` at the value it was created with, or the deployment fails. To change it, restore to a new server ([Backup and restore](#backup-and-restore)).
 
@@ -349,6 +387,17 @@ The Function App has two user-assigned identities:
 `audit_log` also has triggers that refuse `UPDATE`, `DELETE` and `TRUNCATE` for every role, the owner included. On first start after deployment, the migrator creates the `blueboard-id-db` role from its object id (`pgaadauth_create_principal_with_oid`) and grants it `blueboard_app`. The Setup page's **Database** check shows which role requests run as, and warns if that role owns the schema.
 
 `DB_RUNTIME_ROLE=false ./infra/deploy.sh` goes back to a single identity (requests as the Entra admin). Keep that only as a break-glass option: the append-only triggers still apply, but the owner can drop them.
+
+## Data retention
+
+Off by default: the board keeps everything. To keep data for a set period, choose it from your records obligations, preview it, then deploy it:
+
+```sh
+blueboard retention --days 365            # counts what would be removed (one batch), removes nothing
+RETENTION_DAYS=365 ./infra/deploy.sh      # 30 or more; 0 switches it off again
+```
+
+The `retention` timer then runs daily at 02:00 Sydney standard time. It removes resolved incidents with their threads and actions, old channel threads, finished actions and old delivery records. It never removes open work, anything still pointed at by a pending action or due follow-up, or `audit_log`, and each purge writes a `retention.purged` audit row. The setup check *Data retention* shows the last run. Removed rows stay in PostgreSQL backups until those expire. Full rules: [Data flows § Retention](assurance/DATA-FLOWS.md#retention).
 
 ## Backup and restore
 

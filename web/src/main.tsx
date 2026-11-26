@@ -13,6 +13,9 @@ import PolicyPage from "./pages/Policy";
 import SetupPage from "./pages/Setup";
 import NotificationsPage from "./pages/Notifications";
 import ParticipantsPage from "./pages/Participants";
+import AdminCenterPage from "./pages/AdminCenter";
+import AuditLogPage from "./pages/AuditLog";
+import PosturePage from "./pages/Posture";
 import IntelPage from "./pages/Intel";
 import IntelKeyPage from "./pages/IntelKey";
 import DevLogin from "./pages/DevLogin";
@@ -32,7 +35,10 @@ const routes = (dev: boolean) => [
       { path: "policy", element: <PolicyPage /> },
       { path: "setup", element: <SetupPage /> },
       { path: "settings/notifications", element: <NotificationsPage /> },
+      { path: "admin", element: <AdminCenterPage /> },
       { path: "admin/participants", element: <ParticipantsPage /> },
+      { path: "admin/audit", element: <AuditLogPage /> },
+      { path: "admin/posture", element: <PosturePage /> },
       { path: "intel", element: <IntelPage /> },
       { path: "intel/:key", element: <IntelKeyPage /> },
       { path: "*", element: <NotFound /> },

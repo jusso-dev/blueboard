@@ -86,7 +86,7 @@ const config: Config = {
         { type: "docSidebar", sidebarId: "startHere", position: "left", label: "Start Here" },
         { type: "docSidebar", sidebarId: "guides", position: "left", label: "Walkthroughs" },
         { type: "docSidebar", sidebarId: "agentsAndPolicy", position: "left", label: "Agents & Policy" },
-        { type: "docSidebar", sidebarId: "security", position: "left", label: "Security & Threat Model" },
+        { type: "docSidebar", sidebarId: "security", position: "left", label: "Trust & Security" },
         { type: "docSidebar", sidebarId: "operations", position: "left", label: "Deploy & Ops" },
         { href: "https://github.com/jusso-dev/blueboard", position: "right", className: "header-github-link", "aria-label": "blueboard on GitHub" }
       ]
@@ -98,6 +98,7 @@ const config: Config = {
           title: "Start",
           items: [
             { label: "What is blueboard?", to: "/WHAT-IS-BLUEBOARD/" },
+            { label: "Azure Quickstart", to: "/QUICKSTART-AZURE/" },
             { label: "2-Minute Local Demo", to: "/DEMO/" },
             { label: "Sentinel MCP & Purview", to: "/INTEGRATIONS/" },
             { label: "Walkthroughs 00–12", to: "/guides/00-overview/" }
@@ -115,6 +116,7 @@ const config: Config = {
         {
           title: "Security & Architecture",
           items: [
+            { label: "Trust Center", to: "/assurance/TRUST-CENTER/" },
             { label: "Security Architecture", to: "/SECURITY/" },
             { label: "Threat Model (TM-01–TM-26)", to: "/THREAT-MODEL/" },
             { label: "Azure Architecture", to: "/architecture/" },

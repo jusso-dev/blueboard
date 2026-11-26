@@ -16,7 +16,7 @@ namespace Blueboard.Api.Jobs;
 /// Background work. Timer triggers run on one instance at a time (singleton lock in host storage);
 /// a Postgres advisory lock makes that hold even across deployment slots.
 /// </summary>
-public sealed class Timers(Db db, Ingest ingest, Broker broker, WebhookService hooks, Notifier notifier, AuditExporter auditExport, PlaybookRunner playbooks, IntelService intel, Settings settings, ILogger<Timers> log)
+public sealed class Timers(Db db, Ingest ingest, Broker broker, WebhookService hooks, Notifier notifier, AuditExporter auditExport, PlaybookRunner playbooks, IntelService intel, Retention retention, Participants participants, Settings settings, ILogger<Timers> log)
 {
     private const long LockKey = 7_340_001;
     /// <summary>The webhook loop has its own lock so a slow ingest never delays an agent's wake-up.</summary>
@@ -25,6 +25,7 @@ public sealed class Timers(Db db, Ingest ingest, Broker broker, WebhookService h
     private const long AuditLockKey = 7_340_006;
     /// <summary>Threat intel runs take their own lock, so a slow feed never holds up incident ingest.</summary>
     private const long IntelLockKey = 7_340_010;
+    private const long RetentionLockKey = 7_340_011;
 
     [Function("ingest-incidents")]
     public async Task IngestIncidents([TimerTrigger("0 */1 * * * *")] TimerInfo timer, CancellationToken ct)
@@ -110,6 +111,35 @@ public sealed class Timers(Db db, Ingest ingest, Broker broker, WebhookService h
         }, ct);
     }
 
+
+    /// <summary>Daily lifecycle, outside Australian business hours: inactive principals (INACTIVE_DISABLE_DAYS), then data retention (RETENTION_DAYS).</summary>
+    [Function("retention")]
+    public async Task RetentionSweep([TimerTrigger("0 0 16 * * *")] TimerInfo timer, CancellationToken ct) // 02:00 or 03:00 in Sydney
+    {
+        if (settings.InactiveDisableDays > 0)
+            await WithLock(RetentionLockKey, async () =>
+            {
+                var off = await participants.DisableInactiveAsync(settings.InactiveDisableDays, ct);
+                if (off.Count > 0) log.LogWarning("disabled {Count} inactive principal(s): {Handles}", off.Count, string.Join(", ", off));
+            }, ct);
+        if (!retention.Enabled) return;
+        await WithLock(RetentionLockKey, async () =>
+        {
+            var kv = new KvState(db);
+            try
+            {
+                var r = await retention.RunAsync(dryRun: false, ct: ct);
+                await kv.SetAsync(Retention.LastRunKey, r, ct);
+                log.LogInformation("retention {@Result}", r);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                var msg = ex is BoardException ? ex.Message : ex.GetType().Name;
+                await kv.SetAsync(Retention.LastRunKey, new RetentionResult(DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, settings.RetentionDays, false, 0, 0, 0, 0, msg), CancellationToken.None);
+                throw;
+            }
+        }, ct);
+    }
 
     [Function("ti-feeds")]
     public async Task IntelFeeds([TimerTrigger("0 */15 * * * *")] TimerInfo timer, CancellationToken ct)

@@ -12,7 +12,9 @@ This guide takes an Australian Azure subscription (`australiaeast` or `australia
 | Status | Published |
 | Owner | blueboard SOC platform team |
 | Audience | Azure platform engineers, Entra ID administrators, SOC leads |
-| Related | Administrator SOPs; Developer Guide; Security Controls; Solution Design Document; Walkthrough Guides |
+| Related | Quickstart (QUICKSTART-AZURE.md); Enterprise Access (ENTERPRISE-ACCESS.md); Administrator SOPs; Developer Guide; Security Controls; Solution Design Document; Walkthrough Guides |
+
+> **Short path:** [Quickstart: stand up blueboard for your organisation](../QUICKSTART-AZURE.md) covers who does what, the Azure Cloud Shell release path (`BB_RELEASE`) and the staged go-live. [Single sign-on and role-based access with Microsoft Entra](../ENTERPRISE-ACCESS.md) covers the security groups, Conditional Access baseline, PIM for Groups and offboarding. This guide is the full reference.
 
 ## Contents
 
@@ -62,6 +64,8 @@ Install and verify:
 - `.NET 10 SDK`
 - `Node 22` + `pnpm` (`corepack enable`)
 
+Deploying a published release with `BB_RELEASE=vX.Y.Z` needs only `az`, `jq`, `curl` and `zip`, and runs in Azure Cloud Shell. See [DEPLOYMENT.md § Deploy a release from Azure Cloud Shell](../DEPLOYMENT.md#deploy-a-release-from-azure-cloud-shell).
+
 Sign in and pin the tenant and subscription so scripts refuse to operate elsewhere:
 
 ```sh
@@ -82,6 +86,8 @@ export AZURE_SUBSCRIPTION_ID=<subscription-id>
 | Grant tenant-wide admin consent for SPA sign-in scopes | `entra-app.sh` | **Cloud Application Administrator** | Tenant |
 | Grant Graph & Defender **application** permissions to `blueboard-id-api` | `grant-permissions.sh` | **Privileged Role Administrator** (or Global Administrator) | Tenant |
 | Assign users, groups & agents to `Board.*` roles | `assign-roles.sh` | **Owner** of enterprise app or **Cloud Application Administrator** | Enterprise application |
+| Create or adopt the analysts, approvers and admins security groups and assign their roles | `entra-groups.sh` (`up.sh` step `groups`) | **Groups Administrator** or User Administrator, plus enterprise app owner or **Cloud Application Administrator** | Tenant |
+| Create the Conditional Access baseline (report-only first) | `conditional-access.sh` | **Conditional Access Administrator** | Tenant |
 
 For least-privilege Azure RBAC, condition the deployer's **Role Based Access Control Administrator** role to these role definition IDs:
 
@@ -124,7 +130,7 @@ BB_ENV=prod BB_PROFILE=production POLICY_FILE=policy.json ./infra/up.sh
 
 What `up.sh` does:
 
-1. Runs `preflight.sh`, `entra-app.sh` and `deploy.sh`.
+1. Runs `preflight.sh`, `entra-app.sh`, `entra-groups.sh` (step `groups`; `BB_GROUPS=0` skips it) and `deploy.sh`.
 2. Records non-secret state (resource names, IDs, hostnames, remembered non-secret flags) in `infra/out/<env>/state.json`. `lib.sh` refuses to write any secret key to `state.json`.
 3. If you hold **Privileged Role Administrator**, runs `grant-permissions.sh` (read-only unless `ACTIONS=` is set). If you do not, `up.sh` stops cleanly and writes `infra/out/<env>/handoff.md` containing the exact command, object IDs and permission review list to pass to your Entra administrator. Once they run it, re-run `up.sh` to resume and finish.
 4. Queries `GET /api/setup` with your Entra token (if you hold `Board.Admin`) and prints one line per health check.
@@ -161,11 +167,15 @@ az role assignment create \
   --role "Log Analytics Reader" \
   --scope "<sentinel-workspace-resource-id>"
 
-# 5. Assign Entra security groups to board roles (Enterprise App Owner)
-./infra/assign-roles.sh <soc-analysts-group-id> Board.Post Board.Hunt Board.RequestActions
-./infra/assign-roles.sh <soc-leads-group-id>    Board.Post Board.Approve
-./infra/assign-roles.sh <soc-admins-group-id>   Board.Post Board.Admin
+# 5. Security groups and their board roles (Groups Administrator + Enterprise App Owner)
+./infra/entra-groups.sh          # or adopt existing groups: GROUP_ANALYSTS_ID=… GROUP_APPROVERS_ID=… GROUP_ADMINS_ID=…
+# (equivalent by hand: ./infra/assign-roles.sh <group-id> Board.Post Board.Hunt Board.RequestActions, and so on)
+
+# 6. Conditional Access baseline, report-only (Conditional Access Administrator)
+CA_EXCLUDE_IDS="<break-glass-ids>" CA_APPLY=1 ./infra/conditional-access.sh
 ```
+
+See [ENTERPRISE-ACCESS.md](../ENTERPRISE-ACCESS.md) for the roles matrix, PIM for Groups and access reviews.
 
 ## 6. Sentinel Automation Rule real-time sync connector
 

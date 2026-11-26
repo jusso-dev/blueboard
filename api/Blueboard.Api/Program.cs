@@ -55,6 +55,9 @@ builder.Services.AddHttpClient<Notifier>()
     .ConfigurePrimaryHttpMessageHandler(() => origins.Mocked ? NoRedirects() : OutboundGuard.Handler(host => Notifier.MayBePrivate(settings, host)))
     .RemoveAllLoggers();
 builder.Services.AddHttpClient<AuditExporter>().ConfigurePrimaryHttpMessageHandler(NoRedirects).RemoveAllLoggers();
+builder.Services.AddSingleton<Retention>();
+builder.Services.AddSingleton<AuditLog>();
+builder.Services.AddSingleton<Posture>();
 builder.Services.AddSingleton<Setup>();
 builder.Services.AddSingleton<Participants>();
 builder.Services.AddSingleton(settings.Ti);

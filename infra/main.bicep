@@ -103,6 +103,15 @@ param sentinelWorkspaceResourceId string = ''
 @description('publish_ti_indicator: assign Microsoft Sentinel Contributor on that workspace to the board identity. Needs Owner or User Access Administrator on the workspace.')
 param assignSentinelContributor bool = false
 
+@description('Data retention in days: 0 keeps everything (default); otherwise at least 30. A daily job removes resolved incidents, threads and finished actions older than this; audit_log is never removed (docs/assurance/DATA-FLOWS.md).')
+param retentionDays int = 0
+@description('Disable people and agents not seen for this many days: 0 is off (default); otherwise at least 30.')
+param inactiveDisableDays int = 0
+@description('Sign the browser out after this many idle minutes (0 off, max 480). Browser-only safeguard; does not revoke access tokens.')
+@minValue(0)
+@maxValue(480)
+param sessionIdleMinutes int = 15
+
 @description('Serve requests as a separate, least-privilege PostgreSQL role (id-db) instead of the Entra admin. Migrations still run as the admin (id-api).')
 param dbRuntimeRole bool = true
 @description('PostgreSQL automated backup retention in days (7 to 35).')
@@ -115,6 +124,24 @@ param pgGeoRedundantBackup bool = profile == 'production'
 param alertEmails array = []
 @description('Create the operational alert rules and action group (infra/alerts.bicep).')
 param alertsEnabled bool = true
+
+@description('Put Azure Front Door Premium with a WAF in front of the web app and the API, and accept traffic only from it (infra/front-door.bicep). Browsers and agents then use the Front Door host names.')
+param frontDoor bool = false
+@description('Front Door WAF mode: Prevention blocks, Detection only logs (use while tuning).')
+@allowed(['Prevention', 'Detection'])
+param wafMode string = 'Prevention'
+@description('Inspect API request bodies with the WAF managed rules. Off by default: SOC content (command lines, KQL, URLs) looks like attacks.')
+param apiWafBodyCheck bool = false
+@description('Two-letter country codes allowed through Front Door; empty allows all.')
+param allowedCountries array = []
+@description('With Front Door: CIDR ranges allowed to the sites\' deployment (scm/Kudu) endpoints, for az functionapp/webapp deploy. Empty keeps scm open to the internet (Entra-authenticated only).')
+param deployerIpRanges array = []
+
+@description('Minimum TLS version for the web app, the Function App (and their scm endpoints) and PostgreSQL. 1.3 in production by default.')
+@allowed(['1.2', '1.3'])
+param tlsMinVersion string = profile == 'production' ? '1.3' : '1.2'
+@description('pgaudit statement classes logged to the PostgreSQL server log (pgaudit.log), e.g. ddl,role,misc_set. Empty: pgaudit off.')
+param pgAuditLog string = 'ddl,role,misc_set'
 
 var isProd = profile == 'production'
 // Australia East has availability zones; Australia Southeast doesn't, so HA there is same-zone.
@@ -232,6 +259,39 @@ resource pgAllowAzure 'Microsoft.DBforPostgreSQL/flexibleServers/firewallRules@2
   properties: { startIpAddress: '0.0.0.0', endIpAddress: '0.0.0.0' }
 }
 
+// TLS and audit logging on the server. pgaudit must be preloaded (shared_preload_libraries), which takes effect only
+// after a server restart; the configuration resources below set it, but Azure doesn't restart for you (see
+// docs/DEPLOYMENT.md § Network and TLS hardening). Applied one at a time: concurrent configuration updates conflict.
+var pgConfig = [
+  { name: 'require_secure_transport', value: 'ON' }
+  { name: 'ssl_min_protocol_version', value: tlsMinVersion == '1.3' ? 'TLSv1.3' : 'TLSv1.2' }
+  { name: 'log_connections', value: 'ON' }
+  { name: 'log_disconnections', value: 'ON' }
+  { name: 'azure.extensions', value: 'PGAUDIT,PGCRYPTO' }
+  { name: 'shared_preload_libraries', value: 'pgaudit' }
+  // Explicit none clears an earlier deployment's audit classes. Omitting the resource would leave them active.
+  { name: 'pgaudit.log', value: empty(pgAuditLog) ? 'none' : pgAuditLog }
+]
+
+@batchSize(1)
+resource pgSettings 'Microsoft.DBforPostgreSQL/flexibleServers/configurations@2024-08-01' = [for c in pgConfig: {
+  parent: pg
+  name: c.name
+  properties: { value: c.value, source: 'user-override' }
+  dependsOn: [pgDb]
+}]
+
+// Server logs (connections, errors, pgaudit) and session data to the board's Log Analytics workspace.
+resource pgDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = {
+  scope: pg
+  name: 'to-log-analytics'
+  properties: {
+    workspaceId: logs.id
+    logs: [{ categoryGroup: 'allLogs', enabled: true }]
+    metrics: [{ category: 'AllMetrics', enabled: true }]
+  }
+}
+
 module pgAdmin 'pg-admin.bicep' = {
   name: 'pg-admin'
   params: {
@@ -240,7 +300,7 @@ module pgAdmin 'pg-admin.bicep' = {
     principalName: idApi.name
     tenantId: tenantId
   }
-  dependsOn: [pgDb]
+  dependsOn: [pgDb, pgSettings]
 }
 
 // ── Function App (Flex Consumption, .NET 10 isolated) ────────────────────────────────────────
@@ -252,6 +312,35 @@ resource plan 'Microsoft.Web/serverfarms@2024-04-01' = {
   properties: { reserved: true }
 }
 
+// ── optional edge: Front Door Premium + WAF ──────────────────────────────────────────────────
+module edge 'front-door.bicep' = if (frontDoor) {
+  name: 'front-door'
+  params: {
+    namePrefix: namePrefix
+    suffix: suffix
+    logsWorkspaceId: logs.id
+    wafMode: wafMode
+    apiWafBodyCheck: apiWafBodyCheck
+    allowedCountries: allowedCountries
+  }
+}
+
+// With Front Door, each site accepts only Front Door's backend addresses carrying this profile's id (X-Azure-FDID),
+// so the WAF can't be bypassed through the azurewebsites.net host. The deployment (scm) endpoint keeps its own,
+// Entra-authenticated access so az functionapp/webapp deploy still work.
+var deployerScmRules = [for (cidr, i) in deployerIpRanges: { name: 'Deployer${i}', priority: 100 + i, action: 'Allow', ipAddress: cidr }]
+var edgeOnly = frontDoor ? {
+  ipSecurityRestrictionsDefaultAction: 'Deny'
+  ipSecurityRestrictions: [
+    { name: 'FrontDoorOnly', priority: 100, action: 'Allow', tag: 'ServiceTag', ipAddress: 'AzureFrontDoor.Backend', headers: { 'x-azure-fdid': [edge!.outputs.frontDoorId] } }
+  ]
+  scmIpSecurityRestrictionsUseMain: false
+  // With deployerIpRanges, the deployment endpoint accepts only those ranges; az functionapp/webapp deploy go through
+  // it, so the deploying machine must be inside them. Without, scm stays reachable (still Entra-authenticated).
+  scmIpSecurityRestrictionsDefaultAction: empty(deployerIpRanges) ? 'Allow' : 'Deny'
+  scmIpSecurityRestrictions: deployerScmRules
+} : {}
+
 resource api 'Microsoft.Web/sites@2024-04-01' = {
   name: '${namePrefix}-api-${suffix}'
   location: location
@@ -262,12 +351,13 @@ resource api 'Microsoft.Web/sites@2024-04-01' = {
     httpsOnly: true
     publicNetworkAccess: 'Enabled'
     siteConfig: union({
-      minTlsVersion: '1.2'
+      minTlsVersion: tlsMinVersion
+      scmMinTlsVersion: tlsMinVersion
       ftpsState: 'Disabled'
       http20Enabled: true
       // The browser calls the API cross-origin with a bearer token (no cookies), so only the web origin is allowed.
-      cors: { allowedOrigins: union(['https://${web.properties.defaultHostName}'], extraCorsOrigins), supportCredentials: false }
-    }, isProd ? { vnetRouteAllEnabled: true } : {})
+      cors: { allowedOrigins: union(['https://${web.properties.defaultHostName}'], frontDoor ? ['https://${edge!.outputs.webHostname}'] : [], extraCorsOrigins), supportCredentials: false }
+    }, isProd ? { vnetRouteAllEnabled: true } : {}, edgeOnly)
     functionAppConfig: {
       deployment: {
         storage: {
@@ -315,7 +405,7 @@ var notifySettings = union(notifySecretSettings, {
   NOTIFY_MAIL_FROM: notifyMailFrom
   NOTIFY_MAIL_TO: notifyMailTo
   NOTIFY_REMIND_MINUTES: string(notifyRemindMinutes)
-  BOARD_WEB_URL: empty(webBaseUrl) ? 'https://${web.properties.defaultHostName}' : webBaseUrl
+  BOARD_WEB_URL: empty(webBaseUrl) ? 'https://${publicWebHost}' : webBaseUrl
   WEBHOOK_ALLOWED_HOSTS: webhookAllowedHosts
   WEBHOOK_SIGNING_KEY: isProd && !empty(webhookSigningKey) ? '@Microsoft.KeyVault(VaultName=${vaultName};SecretName=webhook-signing-key)' : webhookSigningKey
 })
@@ -359,6 +449,13 @@ resource apiSettings 'Microsoft.Web/sites/config@2024-04-01' = {
     BOARD_API_CLIENT_ID: boardApiClientId
     INGEST_ENABLED: string(ingestEnabled)
     BROKER_EXECUTE: string(brokerExecute)
+    RETENTION_DAYS: string(retentionDays)
+    INACTIVE_DISABLE_DAYS: string(inactiveDisableDays)
+    SESSION_IDLE_MINUTES: string(sessionIdleMinutes)
+    // Read-only facts for Admin → Posture (what this deployment enforces); not used for any decision.
+    BOARD_PROFILE: profile
+    BOARD_EDGE: frontDoor ? 'front_door_waf' : 'none'
+    BOARD_WAF_MODE: frontDoor ? wafMode : 'none'
   }, dbSettings, productionSettings, notifySettings, tiSettings)
   dependsOn: isProd ? [kvSecretsRole, kvPolicySecret] : []
 }
@@ -411,14 +508,15 @@ resource web 'Microsoft.Web/sites@2024-04-01' = {
     httpsOnly: true
     publicNetworkAccess: 'Enabled'
     clientAffinityEnabled: false
-    siteConfig: {
+    siteConfig: union({
       linuxFxVersion: 'DOTNETCORE|10.0'
-      minTlsVersion: '1.2'
+      minTlsVersion: tlsMinVersion
+      scmMinTlsVersion: tlsMinVersion
       ftpsState: 'Disabled'
       http20Enabled: true
       alwaysOn: true
       healthCheckPath: '/healthz'
-    }
+    }, edgeOnly)
   }
 }
 
@@ -429,7 +527,7 @@ resource webSettings 'Microsoft.Web/sites/config@2024-04-01' = {
     // Public values only: the SPA reads them from /config.json to sign in and find the API.
     BLUEBOARD_TENANT_ID: tenantId
     BLUEBOARD_CLIENT_ID: boardApiClientId
-    BLUEBOARD_API_URL: 'https://${api.properties.defaultHostName}'
+    BLUEBOARD_API_URL: 'https://${publicApiHost}'
     BLUEBOARD_API_SCOPE: '${boardApiAudience}/Board.Access'
     BLUEBOARD_AUTHORITY_HOST: environment().authentication.loginEndpoint
   }
@@ -569,12 +667,31 @@ module auditExport 'audit-export.bicep' = if (isProd) {
   }
 }
 
-output webHostname string = web.properties.defaultHostName
+// The host names people and agents use: Front Door's when it's on (the sites themselves then refuse direct traffic).
+var publicWebHost = frontDoor ? edge!.outputs.webHostname : web.properties.defaultHostName
+var publicApiHost = frontDoor ? edge!.outputs.apiHostname : api.properties.defaultHostName
+
+module edgeOrigins 'front-door-origins.bicep' = if (frontDoor) {
+  name: 'front-door-origins'
+  params: {
+    profileName: edge!.outputs.profileName
+    webEndpointName: edge!.outputs.webEndpointName
+    apiEndpointName: edge!.outputs.apiEndpointName
+    webOriginHost: web.properties.defaultHostName
+    apiOriginHost: api.properties.defaultHostName
+  }
+}
+
+output webHostname string = publicWebHost
 output webName string = web.name
 output apiName string = api.name
-output apiHostname string = api.properties.defaultHostName
+output apiHostname string = publicApiHost
+output frontDoorEnabled bool = frontDoor
 output apiIdentityPrincipalId string = idApi.properties.principalId
 output pgServerName string = pg.name
+@description('True in the mvp profile: PostgreSQL has a public endpoint (Entra auth only, firewall AllowAzureServices). Use production for real data.')
+output pgPublic bool = !isProd
+output tlsMinVersion string = tlsMinVersion
 output dbIdentityName string = dbRuntimeRole ? idDb!.name : idApi.name
 
 // ── operational alerts ───────────────────────────────────────────────────────────────────────

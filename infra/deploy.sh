@@ -16,6 +16,10 @@
 #   NVD_API_KEY=…           optional, raises the NVD rate limit
 #   SENTINEL_WORKSPACE_ID=… resource id of the Sentinel workspace for publish_ti_indicator
 #   ASSIGN_SENTINEL_CONTRIBUTOR=false   give the board Microsoft Sentinel Contributor on that workspace
+#   BB_RELEASE=vX.Y.Z       deploy that GitHub release's packages (checksums verified; build provenance too when the
+#                           GitHub CLI is signed in) instead of building from source. Needs only az, jq, curl and zip,
+#                           so it runs in Azure Cloud Shell. Check out the same tag so main.bicep matches.
+#                           BB_RELEASE_REPO=owner/repo for a fork
 #   BB_ALLOW_DIRTY=1        deploy from a working tree with uncommitted changes
 #   BB_YES=1                skip confirmation prompts (CI)
 #   Approver notifications (docs/OPERATIONS.md), all optional. URLs and the HMAC key are passed as secure
@@ -23,6 +27,22 @@
 #   NOTIFY_TEAMS_WEBHOOK_URL, NOTIFY_WEBHOOK_URL, NOTIFY_WEBHOOK_SECRET, NOTIFY_ALLOWED_HOSTS,
 #   NOTIFY_MAIL_FROM, NOTIFY_MAIL_TO, NOTIFY_REMIND_MINUTES (default 15), BOARD_WEB_URL (custom domain)
 #   ALERT_EMAILS=…          operational alert recipients, space or comma separated (infra/alerts.bicep; docs/OPERATIONS.md)
+#   FRONT_DOOR=false        Azure Front Door Premium + WAF in front of both apps; the apps then accept only Front Door
+#                           traffic and people and agents use the Front Door host names (infra/front-door.bicep)
+#   WAF_MODE=Prevention     Prevention (block) or Detection (log only, while tuning)
+#   API_WAF_BODY_CHECK=false  inspect API request bodies too (SOC content trips the OWASP rules: tune before enabling)
+#   ALLOWED_COUNTRIES=…     two-letter country codes Front Door lets through (space or comma separated); empty: all
+#   DEPLOYER_IP_RANGES=…    with FRONT_DOOR=true: CIDRs allowed to the apps' deployment (scm) endpoints, space or comma
+#                           separated. Defaults to this machine's public IP (/32). az functionapp/webapp deploy go
+#                           through scm, so every later deploy must come from inside these ranges. none: leave scm open
+#   TLS_MIN_VERSION=1.3|1.2 minimum TLS for both apps, their scm endpoints and PostgreSQL (default 1.3 in production,
+#                           1.2 in mvp). Storage stays at 1.2 (Azure Storage offers no 1.3 minimum)
+#   PG_AUDIT_LOG=ddl,role,misc_set  pgaudit classes for the PostgreSQL log (empty: pgaudit off). Needs a server restart
+#                           the first time (docs/DEPLOYMENT.md § Network and TLS hardening)
+#   RETENTION_DAYS=0        data retention: 0 keeps everything; 30 or more removes resolved incidents, threads and finished
+#                           actions older than that, daily (audit_log is kept). Preview: blueboard retention --days N
+#   SESSION_IDLE_MINUTES=15 browser idle sign-out: 0 off, otherwise up to 480 minutes
+#   INACTIVE_DISABLE_DAYS=0 disable inactive participants daily: 0 off, otherwise at least 30 days
 #   DB_RUNTIME_ROLE=true    serve requests as a least-privilege PostgreSQL role (blueboard-id-db); false: the Entra admin
 #   EXTRA_CORS_ORIGINS=…    more web origins for the API's CORS list, space or comma separated (a custom domain:
 #                           https://board.example.com). The default web host is always allowed
@@ -69,9 +89,59 @@ POLICY_FILE="${POLICY_FILE:-$BB_ROOT/policy.example.json}"
 CORS_JSON="$(jq -cn --arg o "${EXTRA_CORS_ORIGINS:-}" '[$o | splits("[ ,]+") | select(length > 0)]')"
 ALERT_JSON="$(jq -cn --arg o "${ALERT_EMAILS:-}" '[$o | splits("[ ,]+") | select(length > 0)]')"
 DB_RUNTIME_ROLE="${DB_RUNTIME_ROLE:-true}"
+RETENTION_DAYS="${RETENTION_DAYS:-0}"
+SESSION_IDLE_MINUTES="${SESSION_IDLE_MINUTES:-15}"
+INACTIVE_DISABLE_DAYS="${INACTIVE_DISABLE_DAYS:-0}"
+if ! [[ "$SESSION_IDLE_MINUTES" =~ ^(0|[1-9][0-9]{0,2})$ ]] || [[ "$SESSION_IDLE_MINUTES" -gt 480 ]]; then
+  die "SESSION_IDLE_MINUTES must be 0 (off) to 480"
+fi
+if ! [[ "$INACTIVE_DISABLE_DAYS" =~ ^(0|[1-9][0-9]{0,8})$ ]] || { [[ "$INACTIVE_DISABLE_DAYS" -ne 0 ]] && [[ "$INACTIVE_DISABLE_DAYS" -lt 30 ]]; }; then
+  die "INACTIVE_DISABLE_DAYS must be 0 (off) or at least 30"
+fi
+FRONT_DOOR="${FRONT_DOOR:-false}"
+case "$FRONT_DOOR" in true | false) ;; *) die "FRONT_DOOR must be true or false" ;; esac
+WAF_MODE="${WAF_MODE:-Prevention}"
+case "$WAF_MODE" in Prevention | Detection) ;; *) die "WAF_MODE must be Prevention or Detection" ;; esac
+API_WAF_BODY_CHECK="${API_WAF_BODY_CHECK:-false}"
+case "$API_WAF_BODY_CHECK" in true | false) ;; *) die "API_WAF_BODY_CHECK must be true or false" ;; esac
+COUNTRIES_JSON="$(jq -cn --arg o "${ALLOWED_COUNTRIES:-}" '[$o | splits("[ ,]+") | select(length > 0) | ascii_upcase]')"
+if [[ -z "${TLS_MIN_VERSION:-}" ]]; then
+  [[ "$BB_PROFILE" == "production" ]] && TLS_MIN_VERSION=1.3 || TLS_MIN_VERSION=1.2
+fi
+case "$TLS_MIN_VERSION" in 1.2 | 1.3) ;; *) die "TLS_MIN_VERSION must be 1.2 or 1.3" ;; esac
+PG_AUDIT_LOG="${PG_AUDIT_LOG-ddl,role,misc_set}"
+[[ "$PG_AUDIT_LOG" =~ ^[a-z_,]*$ ]] || die "PG_AUDIT_LOG must be pgaudit classes, comma separated (e.g. ddl,role,misc_set)"
+# Deployment (scm) endpoint lockdown, with Front Door only. The default is this machine's address, detected here.
+DEPLOYER_JSON='[]'
+if [[ "$FRONT_DOOR" == "true" && "${DEPLOYER_IP_RANGES:-}" != "none" ]]; then
+  if [[ -z "${DEPLOYER_IP_RANGES:-}" ]]; then
+    my_ip="$(curl -fsS --max-time 10 https://api.ipify.org 2>/dev/null || true)"
+    [[ "$my_ip" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] ||
+      die "FRONT_DOOR=true locks the deployment endpoints to DEPLOYER_IP_RANGES, and this machine's public IP couldn't be detected: set DEPLOYER_IP_RANGES=<cidr> (or none to leave scm open)"
+    # Detected, not chosen: used for this deploy only and not remembered, so a deploy from another machine detects its own.
+    DEPLOYER_IP_RANGES="$my_ip/32"
+    DEPLOYER_IP_DETECTED=1
+  fi
+  DEPLOYER_JSON="$(jq -cn --arg o "$DEPLOYER_IP_RANGES" '[$o | splits("[ ,]+") | select(length > 0)]')"
+  jq -e 'length > 0 and all(test("^[0-9]{1,3}(\\.[0-9]{1,3}){3}/[0-9]{1,2}$"))' <<<"$DEPLOYER_JSON" >/dev/null ||
+    die "DEPLOYER_IP_RANGES must be IPv4 CIDRs (e.g. 203.0.113.10/32), space or comma separated, or none"
+fi
+jq -e 'all(test("^[A-Z]{2}$"))' <<<"$COUNTRIES_JSON" >/dev/null || die "ALLOWED_COUNTRIES must be two-letter country codes"
+if ! [[ "$RETENTION_DAYS" =~ ^[0-9]+$ ]] || { [[ "$RETENTION_DAYS" -ne 0 ]] && [[ "$RETENTION_DAYS" -lt 30 ]]; }; then
+  die "RETENTION_DAYS must be 0 (keep everything) or at least 30"
+fi
 case "$DB_RUNTIME_ROLE" in true | false) ;; *) die "DB_RUNTIME_ROLE must be true or false" ;; esac
 
-require az jq git dotnet pnpm zip curl
+RELEASE_DIR=""
+if [[ -n "${BB_RELEASE:-}" ]]; then
+  require az jq git zip curl
+  RELEASE_DIR="$(release_fetch "$BB_RELEASE")"
+  checked_out="$(git -C "$BB_ROOT" describe --tags --exact-match 2>/dev/null || git -C "$BB_ROOT" rev-parse --short HEAD)"
+  [[ "$checked_out" == "$BB_RELEASE" ]] ||
+    warn "deploying $BB_RELEASE packages with infrastructure from $checked_out: git checkout $BB_RELEASE so they match"
+else
+  require az jq git dotnet pnpm zip curl
+fi
 check_az_context
 : "${BOARD_API_CLIENT_ID:?run BB_ENV=$BB_ENV ./infra/entra-app.sh first}"
 : "${BOARD_API_AUDIENCE:?run BB_ENV=$BB_ENV ./infra/entra-app.sh first}"
@@ -81,8 +151,15 @@ check_az_context
 POLICY_FILE="$(cd "$(dirname "$POLICY_FILE")" && pwd)/$(basename "$POLICY_FILE")"
 jq -e '.protected_users and .protected_devices' "$POLICY_FILE" >/dev/null || die "$POLICY_FILE is not a valid blueboard policy"
 # Same strict parser as the Function App: an unknown key would stop it at start-up, so catch it before deploying.
-dotnet run --project "$BB_ROOT/api/Blueboard.Tools" -c Release -- policy-check "$POLICY_FILE" >/dev/null \
-  || die "$POLICY_FILE failed the policy check (run: dotnet run --project api/Blueboard.Tools -- policy-check $POLICY_FILE)"
+if [[ -n "$RELEASE_DIR" && -x "$RELEASE_DIR/tools/blueboard" ]]; then
+  "$RELEASE_DIR/tools/blueboard" policy-check "$POLICY_FILE" >/dev/null \
+    || die "$POLICY_FILE failed the policy check (run: $RELEASE_DIR/tools/blueboard policy-check $POLICY_FILE)"
+elif command -v dotnet >/dev/null 2>&1; then
+  dotnet run --project "$BB_ROOT/api/Blueboard.Tools" -c Release -- policy-check "$POLICY_FILE" >/dev/null \
+    || die "$POLICY_FILE failed the policy check (run: dotnet run --project api/Blueboard.Tools -- policy-check $POLICY_FILE)"
+else
+  die "can't check $POLICY_FILE: release $BB_RELEASE has no policy-check tool for $(release_rid) and the .NET SDK isn't installed"
+fi
 if [[ "$BROKER_EXECUTE" == "true" && "$POLICY_FILE" == *policy.example.json ]]; then
   die "BROKER_EXECUTE=true needs your own POLICY_FILE (the example lists contoso.com placeholders)"
 fi
@@ -91,7 +168,7 @@ cd "$BB_ROOT" || die "cannot cd to $BB_ROOT"
 if [[ -n "$(git status --porcelain)" && "${BB_ALLOW_DIRTY:-}" != "1" ]]; then
   die "working tree has uncommitted changes: commit first, or set BB_ALLOW_DIRTY=1"
 fi
-VERSION="$(git rev-parse --short HEAD)"
+VERSION="${BB_RELEASE:-$(git rev-parse --short HEAD)}"
 
 if [[ "$BROKER_EXECUTE" == "true" ]]; then
   warn "BROKER_EXECUTE=true: approved actions will isolate devices, disable users and block indicators in your tenant."
@@ -115,6 +192,14 @@ for v in NOTIFY_TEAMS_WEBHOOK_URL NOTIFY_WEBHOOK_URL NOTIFY_WEBHOOK_SECRET NVD_A
 done
 
 log "deploying blueboard $VERSION → $RESOURCE_GROUP ($LOCATION) · env $BB_ENV · profile $BB_PROFILE · broker execute: $BROKER_EXECUTE"
+log "TLS minimum $TLS_MIN_VERSION · pgaudit: ${PG_AUDIT_LOG:-off}"
+if [[ "$FRONT_DOOR" == "true" ]]; then
+  if [[ "$DEPLOYER_JSON" == "[]" ]]; then
+    warn "FRONT_DOOR=true with DEPLOYER_IP_RANGES=none: the deployment (scm) endpoints stay reachable from the internet (Entra-authenticated)"
+  else
+    log "deployment (scm) endpoints limited to: $(jq -r 'join(", ")' <<<"$DEPLOYER_JSON") (later deploys must come from these)"
+  fi
+fi
 confirm "Continue?"
 
 # 2. providers + resource group ----------------------------------------------------------------
@@ -136,16 +221,19 @@ trap 'rm -f "$params"' EXIT
 chmod 600 "$params"
 jq -n --rawfile policy "$POLICY_FILE" \
   --arg teams "${NOTIFY_TEAMS_WEBHOOK_URL:-}" --arg hook "${NOTIFY_WEBHOOK_URL:-}" --arg hmac "${NOTIFY_WEBHOOK_SECRET:-}" \
-  --arg nvd "${NVD_API_KEY:-}" --arg signing "${WEBHOOK_SIGNING_KEY:-}" --argjson cors "$CORS_JSON" --argjson alerts "$ALERT_JSON" \
+  --arg nvd "${NVD_API_KEY:-}" --arg signing "${WEBHOOK_SIGNING_KEY:-}" --argjson cors "$CORS_JSON" --argjson alerts "$ALERT_JSON" --argjson countries "$COUNTRIES_JSON" --argjson deployers "$DEPLOYER_JSON" \
   '{"$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#", contentVersion: "1.0.0.0",
     parameters: {policyJson: {value: $policy}, notifyTeamsWebhookUrl: {value: $teams}, notifyWebhookUrl: {value: $hook},
                  notifyWebhookSecret: {value: $hmac}, nvdApiKey: {value: $nvd}, webhookSigningKey: {value: $signing},
-                 extraCorsOrigins: {value: $cors}, alertEmails: {value: $alerts}}}' >"$params"
+                 extraCorsOrigins: {value: $cors}, alertEmails: {value: $alerts}, allowedCountries: {value: $countries}, deployerIpRanges: {value: $deployers}}}' >"$params"
 out="$(az deployment group create -g "$RESOURCE_GROUP" -n "blueboard-main" -f infra/main.bicep \
   -p @"$params" \
   -p location="$LOCATION" webSkuName="$WEB_SKU" namePrefix="$PREFIX" profile="$BB_PROFILE" \
   boardApiClientId="$BOARD_API_CLIENT_ID" boardApiAudience="$BOARD_API_AUDIENCE" \
-  ingestEnabled="$INGEST_ENABLED" brokerExecute="$BROKER_EXECUTE" dbRuntimeRole="$DB_RUNTIME_ROLE" \
+  ingestEnabled="$INGEST_ENABLED" brokerExecute="$BROKER_EXECUTE" dbRuntimeRole="$DB_RUNTIME_ROLE" retentionDays="$RETENTION_DAYS" \
+  sessionIdleMinutes="$SESSION_IDLE_MINUTES" inactiveDisableDays="$INACTIVE_DISABLE_DAYS" \
+  frontDoor="$FRONT_DOOR" wafMode="$WAF_MODE" apiWafBodyCheck="$API_WAF_BODY_CHECK" \
+  tlsMinVersion="$TLS_MIN_VERSION" pgAuditLog="$PG_AUDIT_LOG" \
   notifyAllowedHosts="${NOTIFY_ALLOWED_HOSTS:-}" notifyMailFrom="${NOTIFY_MAIL_FROM:-}" notifyMailTo="${NOTIFY_MAIL_TO:-}" \
   notifyRemindMinutes="${NOTIFY_REMIND_MINUTES:-15}" webBaseUrl="${BOARD_WEB_URL:-}" \
   webhookAllowedHosts="${WEBHOOK_ALLOWED_HOSTS:-}" \
@@ -169,11 +257,13 @@ state_set BB_PROFILE "$BB_PROFILE"
 # The non-secret settings this deploy used, so a bare re-run deploys the same configuration.
 for v in LOCATION WEB_SKU PREFIX INGEST_ENABLED POLICY_FILE SENTINEL_WORKSPACE_ID ASSIGN_SENTINEL_CONTRIBUTOR \
   NOTIFY_ALLOWED_HOSTS NOTIFY_MAIL_FROM NOTIFY_MAIL_TO NOTIFY_REMIND_MINUTES BOARD_WEB_URL EXTRA_CORS_ORIGINS \
-  ALERT_EMAILS DB_RUNTIME_ROLE \
+  ALERT_EMAILS DB_RUNTIME_ROLE RETENTION_DAYS FRONT_DOOR WAF_MODE API_WAF_BODY_CHECK ALLOWED_COUNTRIES \
+  TLS_MIN_VERSION PG_AUDIT_LOG SESSION_IDLE_MINUTES INACTIVE_DISABLE_DAYS \
   WEBHOOK_ALLOWED_HOSTS TI_PWNWATCH_ENABLED TI_KEV_ENABLED TI_EPSS_ENABLED TI_NVD_ENABLED TI_OSV_ENABLED \
   TI_SENTINEL_ENABLED TI_EXPOSURE_ENABLED TI_MSTI_ENABLED; do
   state_set "$v" "${!v:-}"
 done
+[[ -n "${DEPLOYER_IP_DETECTED:-}" ]] || state_set DEPLOYER_IP_RANGES "${DEPLOYER_IP_RANGES:-}"
 state_set SECURE_SETTINGS_PASSED "${passed# }"
 
 # 5. sign-in --------------------------------------------------------------------------------------
@@ -182,31 +272,41 @@ WEB_HOSTNAME="$WEB_HOST" "$BB_ROOT/infra/entra-app.sh" >/dev/null ||
   warn "could not update the app registration (needs app owner or Cloud Application Administrator): run BB_ENV=$BB_ENV WEB_HOSTNAME=$WEB_HOST ./infra/entra-app.sh"
 
 # 6. Function App ---------------------------------------------------------------------------------
-log "building the C# Function App"
-build="$(mktemp -d)"
-trap 'rm -rf "$build" "$params"' EXIT
-dotnet publish api/Blueboard.Api -c Release -o "$build/api" --nologo -v q
-(cd "$build/api" && zip -qr "$build/api.zip" .)
-log "deploying $API_NAME"
-az functionapp deploy -g "$RESOURCE_GROUP" -n "$API_NAME" --src-path "$build/api.zip" --type zip -o none
+if [[ -n "$RELEASE_DIR" ]]; then
+  log "deploying $API_NAME from release $BB_RELEASE"
+  az functionapp deploy -g "$RESOURCE_GROUP" -n "$API_NAME" --src-path "$RELEASE_DIR/blueboard-api-$BB_RELEASE.zip" --type zip -o none
+  log "deploying $WEB_NAME from release $BB_RELEASE"
+  az webapp deploy -g "$RESOURCE_GROUP" -n "$WEB_NAME" --src-path "$RELEASE_DIR/blueboard-web-$BB_RELEASE.zip" --type zip -o none
+else
+  log "building the C# Function App"
+  build="$(mktemp -d)"
+  trap 'rm -rf "$build" "$params"' EXIT
+  dotnet publish api/Blueboard.Api -c Release -o "$build/api" --nologo -v q
+  (cd "$build/api" && zip -qr "$build/api.zip" .)
+  log "deploying $API_NAME"
+  az functionapp deploy -g "$RESOURCE_GROUP" -n "$API_NAME" --src-path "$build/api.zip" --type zip -o none
 
-# 7. Web App -------------------------------------------------------------------------------------
-log "building the React site and its host"
-(cd web && pnpm install --frozen-lockfile --silent && pnpm build)
-dotnet publish web/host -c Release -o "$build/web" --nologo -v q
-(cd "$build/web" && zip -qr "$build/web.zip" .)
-log "deploying $WEB_NAME"
-az webapp deploy -g "$RESOURCE_GROUP" -n "$WEB_NAME" --src-path "$build/web.zip" --type zip -o none
+  # 7. Web App -------------------------------------------------------------------------------------
+  log "building the React site and its host"
+  (cd web && pnpm install --frozen-lockfile --silent && pnpm build)
+  dotnet publish web/host -c Release -o "$build/web" --nologo -v q
+  (cd "$build/web" && zip -qr "$build/web.zip" .)
+  log "deploying $WEB_NAME"
+  az webapp deploy -g "$RESOURCE_GROUP" -n "$WEB_NAME" --src-path "$build/web.zip" --type zip -o none
+fi
 
 # 8. health ---------------------------------------------------------------------------------------
 log "health check"
 ok=""
-for _ in $(seq 1 30); do
+# A new Front Door endpoint takes several minutes to reach every edge location, so it gets longer.
+tries=30
+[[ "$FRONT_DOOR" == "true" ]] && tries=90
+for _ in $(seq 1 "$tries"); do
   if curl -fsS "https://$API_HOST/api/healthz" >/dev/null 2>&1; then ok=1 && break; fi
   sleep 10
 done
 [[ "$ok" == "1" ]] || die "https://$API_HOST/api/healthz did not respond (see Application Insights)"
-curl -fsS "https://$WEB_HOST/healthz" >/dev/null || die "https://$WEB_HOST/healthz did not respond"
+curl -fsS --retry 6 --retry-delay 10 --retry-all-errors "https://$WEB_HOST/healthz" >/dev/null || die "https://$WEB_HOST/healthz did not respond"
 
 # The setup checklist runs inside the Function App with its own identity; the CLI can't use that identity from
 # here, so this calls the deployed /api/setup with your token (Board.Admin). Same checks as `blueboard doctor`.
@@ -225,10 +325,10 @@ Remaining one-time steps (need Entra admin roles, see docs/DEPLOYMENT.md):
        READ_ONLY=1 ./infra/grant-permissions.sh $API_MI $BOARD_API_CLIENT_ID
      (./infra/up.sh does this, or writes infra/out/$BB_ENV/handoff.md for the person who can)
 
-  2. Assign people to blueboard roles (Cloud Application Administrator or enterprise app owner):
-       BB_ENV=$BB_ENV ./infra/assign-roles.sh <analysts-group-id>  Board.Post Board.Hunt Board.RequestActions
-       BB_ENV=$BB_ENV ./infra/assign-roles.sh <approvers-group-id> Board.Post Board.Approve
-       BB_ENV=$BB_ENV ./infra/assign-roles.sh <admins-group-id>    Board.Post Board.Admin
+  2. Access groups with their board roles (Groups Administrator + enterprise app owner; up.sh does this):
+       BB_ENV=$BB_ENV ./infra/entra-groups.sh       then manage access by group membership
+     and the Conditional Access baseline (Conditional Access Administrator, docs/ENTERPRISE-ACCESS.md):
+       BB_ENV=$BB_ENV ./infra/conditional-access.sh
 
   3. Agents: give each agent identity Board.Post, Board.Hunt, Board.RequestActions
      (./infra/assign-roles.sh <agent-principal-id> ...) and point it at the MCP URL above.

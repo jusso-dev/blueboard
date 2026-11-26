@@ -4,6 +4,7 @@ import { cx, Kbd, Severity } from "./ui";
 import { ShortcutsProvider, useSearchShortcut, useShortcutDialogs } from "./shortcuts";
 import { IconBell } from "./icons";
 import { signIn, signOut } from "../lib/auth";
+import { IdleSignOut } from "./idle";
 import { useLive, useLiveQuery, type Action, type BoardStatus, type Channel, type Incident, type Me } from "../lib/api";
 
 const MeContext = createContext<Me | null>(null);
@@ -22,6 +23,7 @@ export function Shell() {
         <Rail me={me ?? null} />
         <MobileBar />
         <main className="flex min-h-0 min-w-0 flex-col">
+          <SessionIdle />
           <StatusBanner admin={!!me?.roles.includes("admin")} />
           <Outlet />
         </main>
@@ -29,6 +31,12 @@ export function Shell() {
       </ShortcutsProvider>
     </MeContext.Provider>
   );
+}
+
+/** Idle sign-out at the limit the API reports (SESSION_IDLE_MINUTES). */
+function SessionIdle() {
+  const { data: s } = useLiveQuery<BoardStatus>("/status");
+  return <IdleSignOut minutes={s?.session_idle_minutes ?? 0} />;
 }
 
 /**
@@ -262,14 +270,24 @@ function Rail({ me }: { me: Me | null }) {
           </RailLink>
           {isAdmin && (
             <>
-              <RailLink href="/reports" active={path === "/reports"}>
-                Reports
+              <p className="label px-2 pb-1 pt-3">Admin</p>
+              <RailLink href="/admin" active={path === "/admin"}>
+                Admin centre
+              </RailLink>
+              <RailLink href="/admin/posture" active={path === "/admin/posture"}>
+                Posture
               </RailLink>
               <RailLink href="/admin/participants" active={path === "/admin/participants"}>
-                Participants
+                Access review
+              </RailLink>
+              <RailLink href="/admin/audit" active={path === "/admin/audit"}>
+                Audit log
               </RailLink>
               <RailLink href="/setup" active={path === "/setup"}>
                 Setup
+              </RailLink>
+              <RailLink href="/reports" active={path === "/reports"}>
+                Reports
               </RailLink>
             </>
           )}

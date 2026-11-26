@@ -30,11 +30,24 @@ const sidebars: SidebarsConfig = {
     { type: "doc", id: "ti/sources", label: "Threat Intel Sources Reference" }
   ],
   security: [
+    { type: "doc", id: "assurance/TRUST-CENTER", label: "Trust Center" },
+    {
+      type: "category",
+      label: "Assurance Pack",
+      items: [
+        { type: "doc", id: "assurance/SHARED-RESPONSIBILITY", label: "Shared Responsibility" },
+        { type: "doc", id: "assurance/ISM-SOA", label: "ISM Statement of Applicability" },
+        { type: "doc", id: "assurance/DATA-FLOWS", label: "Data Inventory & Flows" },
+        { type: "doc", id: "assurance/PEN-TEST-AND-ASSURANCE-EVIDENCE", label: "Assurance Evidence & Pen Test Scope" }
+      ]
+    },
     { type: "doc", id: "SECURITY", label: "Security Architecture & Controls" },
     { type: "doc", id: "THREAT-MODEL", label: "Threat Model (TM-01–TM-26)" },
     { type: "doc", id: "security/01-security", label: "Security Controls Pack (Printable)" }
   ],
   operations: [
+    { type: "doc", id: "QUICKSTART-AZURE", label: "Quickstart & Staged Go-Live" },
+    { type: "doc", id: "ENTERPRISE-ACCESS", label: "SSO & Role-Based Access" },
     { type: "doc", id: "DEPLOYMENT", label: "Azure Deployment" },
     { type: "doc", id: "OPERATIONS", label: "Operations & Monitoring" },
     { type: "doc", id: "MIGRATION", label: "Migration Notes" },

@@ -187,8 +187,8 @@ Further keys (`require_two_approvers`, `confirm_target`, `expiry_hours`, `limits
 
 **Network**
 - [ ] Function App **VNet integration** (Flex Consumption supports it); PostgreSQL behind a **private endpoint**; `AllowAzureServices` firewall rule removed.
-- [ ] Function App reachability: browsers call it directly, so keep it public with token auth, or put both apps behind Front Door and restrict the Function App to Front Door and known agent egress IPs.
-- [ ] Web App: a custom domain (add it to the SPA redirect URIs and the Function App CORS list) and optionally Front Door for WAF and DDoS.
+- [ ] Function App reachability: browsers call it directly, so keep it public with token auth, or deploy with `FRONT_DOOR=true` (Front Door Premium + WAF; both apps then accept only that profile's traffic). See [DEPLOYMENT.md § Front Door and WAF](DEPLOYMENT.md#front-door-and-waf).
+- [ ] Web App: a custom domain (add it to the SPA redirect URIs and the Function App CORS list), and `FRONT_DOOR=true` for a WAF, per-IP rate limits and edge DDoS absorption.
 - [ ] Storage account: shared keys stay disabled (default); add a private endpoint once the Function App is VNet-integrated.
 
 **Data**
@@ -249,17 +249,22 @@ If you suspect the board, an agent, or an approver account is compromised:
 
 ## Known limitations
 
-Residual risks in the current design:
+The full list, each with its threat, rating and treatment, is in [THREAT-MODEL.md § Known limitations](THREAT-MODEL.md#11-known-limitations). The ones an operator most often needs to act on:
 
-- **The migration identity owns the schema.** Requests run as `blueboard-id-db`, a least-privilege member of `blueboard_app`. It can only append to `audit_log`, and triggers refuse updates and deletes for everyone (`db/migrations/009`, integration-tested). `blueboard-id-api`, the PostgreSQL Entra admin that applies migrations, still owns the tables, so someone controlling that identity could drop the triggers and rewrite rows. With the production profile's audit export on, the copy in Sentinel (`BlueboardAudit_CL`) is the tamper-evident record: compare it with the table when you investigate. The Setup page warns if requests run as the owner (`DB_RUNTIME_ROLE=false`).
-- **Microsoft Sentinel Contributor is workspace-wide.** With `assignSentinelContributor` the board identity can change analytics rules, incidents and other content in the whole Sentinel workspace, not only upload indicators. Assign it only if you use `publish_ti_indicator`, ideally on a workspace used for threat intel.
-- **Protected users and devices listed by name need the incident evidence to resolve.** If a request names a device by its Defender id (or a user by object id) and that id isn't in the linked incident's evidence, the board can't map it to the host name or UPN in the protected list. The request is not rejected: it waits for a person with a note saying the list was checked by id only. List protected devices and users by id as well as by name.
-
-These are tracked in [`plans/README.md`](../plans/README.md):
-
-- **Rate limits are per principal, not per IP.** Use Front Door rate limits as well in production; Flex Consumption's `maximumInstanceCount` (40) caps cost.
-- **Live updates are polled** (every 4 s per open tab). This is fine for a SOC team; very large audiences should add SignalR Service.
-- **Not yet run against a live Defender tenant.** The Graph and MDE calls follow Microsoft's documented API shapes but haven't been exercised end to end. Test each one in a non-production tenant first.
+- **Conditional Access is created in report-only mode.** MFA, compliant device and sign-in frequency aren't enforced until you set `CA_STATE=on` (TM-08, TM-28, TM-29).
+- **No continuous access evaluation or token binding.** A revoked Entra session keeps working until its access token expires (60–90 minutes). Disabling the participant on **Admin → Participants** takes effect on the next request. The console's idle sign-out (`SESSION_IDLE_MINUTES`, default 15) runs in the browser, so it doesn't limit a stolen token used elsewhere (TM-28, TM-29).
+- **The migration identity owns the schema and also holds the Microsoft permissions.** Requests run as `blueboard-id-db`, a least-privilege member of `blueboard_app` that can only append to `audit_log`, and triggers refuse updates and deletes for every role (`db/migrations/009`, integration-tested). `blueboard-id-api`, the PostgreSQL Entra admin that applies migrations, still owns the tables, so whoever controls it could drop the triggers. pgaudit (`PG_AUDIT_LOG`) logs DDL and role changes to Log Analytics, and with the production profile's audit export on, `BlueboardAudit_CL` in Sentinel is the tamper-evident record (TM-31, TM-32). The Setup page warns if requests run as the owner (`DB_RUNTIME_ROLE=false`).
+- **The board audits changes and exports, not reads.** Requests, approvals, executions, hunts, lookups, principal, role and broker changes, and CSV exports are audited. Ordinary reads and posts are not. Role changes are recorded when first used (`principal.roles_changed`), but *who* changed them is in Entra's audit log, not the board's (TM-40, TM-42).
+- **The `mvp` profile is for evaluation.** It has a public PostgreSQL endpoint with `AllowAzureServices`, secrets in app settings, no audit export, no VNet or NSGs, and TLS 1.2 by default (TM-35).
+- **Transport.** The production profile defaults to TLS 1.3 (`TLS_MIN_VERSION`); no TLS 1.2 cipher list is pinned, and Storage stays at TLS 1.2. The PostgreSQL connection verifies the server certificate (`PG_SSL_MODE`, default `VerifyFull`) (TM-33, TM-34).
+- **Release provenance is checked only when the GitHub CLI is signed in**; checksums are always checked (TM-27). NuGet restores aren't lock-file pinned (TM-23).
+- **API request bodies aren't WAF-inspected by default**, and `DEPLOYER_IP_RANGES=none` leaves the scm endpoints open (Entra-authenticated). By default, with Front Door, scm is limited to the deploying machine's address (TM-36).
+- **Microsoft Sentinel Contributor is workspace-wide.** With `assignSentinelContributor` the board identity can change analytics rules, incidents and other content in the whole workspace. Assign it only if you use `publish_ti_indicator`, ideally on a workspace used for threat intel (TM-20).
+- **Protected users and devices listed only by name need the incident evidence to resolve an id.** A request naming an unresolvable id waits for a person with a *checked by id only* note. List protected entries by id as well as by name (TM-04).
+- **Inactivity disable is off until you set `INACTIVE_DISABLE_DAYS`** (30 or more) (TM-41).
+- **Rate limits in the board are per principal, not per IP.** `FRONT_DOOR=true` adds per-IP WAF limits; Flex Consumption's `maximumInstanceCount` (40) caps cost (TM-19).
+- **Live updates are polled** (every 4 s per open tab). Very large audiences should add SignalR Service.
+- **Not exercised end to end against a live tenant for every write action, and no independent penetration test has been published.** Test each action in a non-production tenant first.
 
 ## Reporting a vulnerability
 
