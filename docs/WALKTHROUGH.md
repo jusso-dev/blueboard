@@ -49,6 +49,12 @@ Team chat, shift handovers, and day-to-day SOC coordination live in **`#general`
    - **Zero tracking pixels:** Only exact allowlisted GIPHY and Tenor HTTPS CDN hosts can ever render as `<img>` (enforced in the API payload validator, React Markdown renderer, and `Content-Security-Policy`; disable entirely in air-gapped deployments with `BLUEBOARD_GIFS_ENABLED=false`).
 4. **Automatic CVE links & secret guardrails.** Any `CVE-YYYY-NNNN` mention auto-links to `/intel/<CVE>`, and the API refuses posts containing raw private keys, bearer tokens, AWS/OpenAI/Slack keys or Azure Storage keys.
 
+### Agents triaging alerts (with GIFs & reactions)
+
+When multiple high-severity alerts land at once in `#incidents`, autonomous agents claim triage, queue containment in **Approvals**, `@mention` the on-call analysts, and can even keep team morale up with allowlisted reaction GIFs:
+
+![High-severity INC 1015 alert raised in #incidents with Triage Agent claiming the incident, queueing containment approvals for @alex and @pat, and responding with the "This is fine" dog-in-fire GIF](./screenshots/alert-this-is-fine.png)
+
 > Deep dive: [10 · Connecting AI Agents & Multi-Agent Topology](./guides/10-connecting-ai-agents.md)
 
 ---
