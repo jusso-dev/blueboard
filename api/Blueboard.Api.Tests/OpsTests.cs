@@ -230,4 +230,21 @@ public class OpsTests
         Assert.Contains("How to fix: Run ./infra/grant-permissions.sh", text);
         Assert.EndsWith("at least one check failed" + Environment.NewLine, text);
     }
+
+    [Fact]
+    public void Access_warns_until_two_approvers_and_an_admin_have_signed_in()
+    {
+        static (string, string[]) P(string h, params string[] r) => (h, r);
+        Assert.Equal(CheckStatus.Warning, Setup.Access([P("ana", Roles.Poster)], false).Status);
+        var one = Setup.Access([P("lead", Roles.Approver, Roles.Admin)], false);
+        Assert.Equal(CheckStatus.Warning, one.Status);
+        Assert.Contains("own request", one.Detail);
+        Assert.Equal(CheckStatus.Warning, Setup.Access([P("a", Roles.Approver), P("b", Roles.Approver)], false).Status); // no admin
+        var ok = Setup.Access([P("a", Roles.Approver), P("b", Roles.Approver, Roles.Admin)], false);
+        Assert.Equal(CheckStatus.Ok, ok.Status);
+        Assert.Contains(ok.Lines!, l => l.Contains("@a") && l.Contains("@b"));
+        // require_two_approvers kinds need a third person, so the requester's own approval is never needed.
+        Assert.Equal(CheckStatus.Warning, Setup.Access([P("a", Roles.Approver), P("b", Roles.Approver, Roles.Admin)], true).Status);
+        Assert.Equal(CheckStatus.Ok, Setup.Access([P("a", Roles.Approver), P("b", Roles.Approver, Roles.Admin), P("c", Roles.Approver)], true).Status);
+    }
 }

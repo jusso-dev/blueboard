@@ -53,6 +53,8 @@ stub preflight.sh ':'
 stub entra-app.sh 'state_set BOARD_API_CLIENT_ID 11111111-2222-3333-4444-555555555555; state_set BOARD_API_AUDIENCE api://blueboard-uptest; state_set BOARD_API_SP_ID 66666666-7777-8888-9999-000000000000'
 # deploy fails while $WORK/deploy-fails exists.
 stub deploy.sh '[[ -f "$WORK/deploy-fails" ]] && { echo "simulated failure" >&2; exit 1; }; echo "deploy POLICY_FILE=${POLICY_FILE:-}" >>"$WORK/calls"; state_set API_MI_PRINCIPAL_ID aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee; state_set WEB_HOST web.example.net; state_set API_HOST api.example.net'
+# groups fails while $WORK/groups-fails exists (the deployer lacks Groups Administrator).
+stub entra-groups.sh '[[ -f "$WORK/groups-fails" ]] && { echo "Insufficient privileges" >&2; exit 1; }; state_set GROUP_ANALYSTS_ID g-analysts; state_set GROUP_APPROVERS_ID g-approvers; state_set GROUP_ADMINS_ID g-admins'
 # CHECK=1 (up.sh asking whether the hand-off was done) succeeds only when STUB_GRANTED=all.
 stub grant-permissions.sh 'args="${READ_ONLY:+READ_ONLY=$READ_ONLY }${ACTIONS:+ACTIONS=$ACTIONS }$*"
 if [[ "${CHECK:-}" == 1 ]]; then echo "check $args" >>"$WORK/calls"; [[ "${STUB_GRANTED:-}" == all ]]; exit; fi
@@ -65,8 +67,9 @@ ran() { grep -c "^$1 ran" "$WORK/calls" 2>/dev/null || true; }
 
 echo "up.sh"
 
-# 1. A failure in deploy stops the run; the earlier steps are recorded.
-touch "$WORK/deploy-fails"
+# 1. A failure in deploy stops the run; the earlier steps are recorded. Groups can't be created (no directory role):
+#    that's a hand-off note, not a failure.
+touch "$WORK/deploy-fails" "$WORK/groups-fails"
 if up; then fail "deploy failure should fail the run"; else pass "deploy failure fails the run"; fi
 check "failure message says how to resume" grep -q "resumes here" "$WORK/last.log"
 check "preflight and entra-app recorded as done" jqok '.steps.preflight and .steps["entra-app"] and (.steps.deploy == null)' "$state"
@@ -80,6 +83,10 @@ check "hand-off file written" test -f "$handoff"
 check "hand-off has the exact command with ids" grep -q "READ_ONLY=1 ./infra/grant-permissions.sh aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee 11111111-2222-3333-4444-555555555555" "$handoff"
 check "grant-permissions not run without the role" test "$(grep -c '^grant ' "$WORK/calls" || true)" = 0
 check "permissions not marked done" jqok '.steps.permissions == null' "$state"
+check "groups refusal is a hand-off note" grep -q "BB_ENV=uptest ./infra/entra-groups.sh" "$handoff"
+check "hand-off has the Conditional Access step" grep -q "conditional-access.sh" "$handoff"
+check "groups not marked done after a refusal" jqok '.steps.groups == null' "$state"
+rm -f "$WORK/groups-fails"
 
 # 3. Some permissions granted but not all: still handed off. Once all are there, the re-run finishes.
 STUB_GRANTED=some up
@@ -90,6 +97,8 @@ STUB_GRANTED=all up
 check "re-run after hand-off finishes" grep -q "is up" "$WORK/last.log"
 check "permissions marked done" jqok '.steps.permissions != null' "$state"
 check "hand-off file removed once done" test ! -f "$handoff"
+check "groups step ran once allowed and is recorded" jqok '.steps.groups != null and .GROUP_APPROVERS_ID == "g-approvers"' "$state"
+check "final summary lists the group ids" grep -q "approvers g-approvers" "$WORK/last.log"
 
 # 4. With the role, the step runs grant-permissions itself, read-only unless ACTIONS is set.
 rm -f "$state" "$WORK/calls"
@@ -119,6 +128,20 @@ if (source "$REAL_INFRA/lib.sh" && state_set NOTIFY_WEBHOOK_SECRET x) >/dev/null
 else
   pass "state_set refuses secret-like keys"
 fi
+
+# 5b. Release packages: checksums are enforced before anything is deployed.
+rel="$WORK/mirror/v9.9.9"
+mkdir -p "$rel"
+echo api >"$rel/blueboard-api-v9.9.9.zip"
+echo web >"$rel/blueboard-web-v9.9.9.zip"
+(cd "$rel" && (sha256sum blueboard-*.zip 2>/dev/null || shasum -a 256 blueboard-*.zip) >blueboard-v9.9.9.sha256)
+fetch() { (source "$REAL_INFRA/lib.sh" && BB_RELEASE_URL="file://$WORK/mirror" BB_RELEASE_SKIP_ATTESTATION=1 release_fetch "$1") >"$WORK/fetch.log" 2>&1; }
+check "release with matching checksums is accepted" fetch v9.9.9
+echo tampered >"$rel/blueboard-web-v9.9.9.zip"
+rm -rf "$BB_STATE_DIR/releases"
+if fetch v9.9.9; then fail "tampered release package accepted"; else pass "tampered release package refused"; fi
+check "tampered package deleted" test ! -f "$BB_STATE_DIR/releases/v9.9.9/blueboard-web-v9.9.9.zip"
+if fetch "v1;rm -rf /"; then fail "malformed release tag accepted"; else pass "malformed release tag refused"; fi
 
 # 6. Australia only.
 if LOCATION=westus2 "$REAL_INFRA/up.sh" >/dev/null 2>&1; then fail "non-Australian region accepted"; else pass "non-Australian region refused"; fi

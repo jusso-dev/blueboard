@@ -56,6 +56,7 @@ public sealed class Setup(Db db, Settings settings, Policy policy, MsClient ms, 
         checks.AddRange(await MicrosoftAsync(ct));
         checks.Add(await BrokerAsync(ct));
         checks.Add(PolicyCheck());
+        checks.Add(await AccessAsync(ct));
         checks.Add(await AgentsAsync(ct));
         checks.Add(await NotificationsAsync(ct));
         checks.Add(await AuditExportAsync(ct));
@@ -318,6 +319,54 @@ public sealed class Setup(Db db, Settings settings, Policy policy, MsClient ms, 
             return new("agents", name, CheckStatus.Warning, $"No agent seen in the last 15 minutes ({lines.Count} known).",
                 "Check the agents are running and their tokens are for the board API audience.", lines);
         return new("agents", name, CheckStatus.Ok, $"Last agent check-in {Ago(latest.Value)} ({lines.Count} known).", null, lines);
+    }
+
+    // access: separation of duties --------------------------------------------------------------
+    private async Task<Check> AccessAsync(CancellationToken ct)
+    {
+        var people = new List<(string Handle, string[] Roles)>();
+        try
+        {
+            await using var cmd = db.Command("select handle, roles from principals where kind = 'human' and enabled order by handle limit 500");
+            await using var r = await cmd.ExecuteReaderAsync(ct);
+            while (await r.ReadAsync(ct)) people.Add((r.GetString(0), r.GetFieldValue<string[]>(1)));
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            return new("access", AccessName, CheckStatus.Failed, "Couldn't read principals from the database.");
+        }
+        return Access(people, policy.RequireTwoApprovers.Length > 0);
+    }
+
+    internal const string AccessName = "Access (separation of duties)";
+
+    /// <summary>
+    /// Nobody approves their own request, and two-approver kinds need two people besides the requester. Counts the
+    /// enabled people whose last token carried Board.Approve / Board.Admin. Roles are refreshed at each sign-in, so a
+    /// person added to the approvers group appears here after their first visit.
+    /// </summary>
+    internal static Check Access(IReadOnlyList<(string Handle, string[] Roles)> people, bool twoApproverKinds)
+    {
+        var approvers = people.Where(p => p.Roles.Contains(Roles.Approver)).Select(p => "@" + p.Handle).ToList();
+        var admins = people.Where(p => p.Roles.Contains(Roles.Admin)).Select(p => "@" + p.Handle).ToList();
+        var needed = twoApproverKinds ? 3 : 2;
+        var lines = new List<string>
+        {
+            $"Approvers ({approvers.Count}): {(approvers.Count == 0 ? "none signed in yet" : string.Join(", ", approvers.Take(20)))}",
+            $"Admins ({admins.Count}): {(admins.Count == 0 ? "none signed in yet" : string.Join(", ", admins.Take(20)))}",
+        };
+        const string groups = "Add people to the approvers group (infra/entra-groups.sh, docs/ENTERPRISE-ACCESS.md); they appear here after they first sign in.";
+        if (approvers.Count == 0)
+            return new("access", AccessName, CheckStatus.Warning, "No approver has signed in: approval requests will wait with nobody to decide them.", groups, lines);
+        if (approvers.Count < needed)
+            return new("access", AccessName, CheckStatus.Warning,
+                twoApproverKinds
+                    ? $"{approvers.Count} approver(s): actions that need two approvers can stall when one of them requested it or is away. Have at least {needed}."
+                    : $"Only {approvers.Count} approver: nobody can approve their own request, so their requests (and anything while they're away) wait. Have at least {needed}.",
+                groups, lines);
+        if (admins.Count == 0)
+            return new("access", AccessName, CheckStatus.Warning, $"{approvers.Count} approvers, but no admin has signed in.", "Add at least one person to the admins group.", lines);
+        return new("access", AccessName, CheckStatus.Ok, $"{approvers.Count} approvers and {admins.Count} admin(s); requesters never approve their own actions.", null, lines);
     }
 
     // notifications (#3) -----------------------------------------------------------------------------

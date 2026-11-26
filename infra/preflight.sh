@@ -30,8 +30,17 @@ esac
 
 log "Tools"
 if az bicep version >/dev/null 2>&1; then ok "bicep"; else bad "az bicep install"; fi
-if dotnet --list-sdks 2>/dev/null | grep -q "^10\."; then ok ".NET 10 SDK"; else bad "install the .NET 10 SDK"; fi
-if command -v pnpm >/dev/null 2>&1; then ok "pnpm"; else bad "install pnpm (corepack enable)"; fi
+if [[ -n "${BB_RELEASE:-}" ]]; then
+  ok "BB_RELEASE=$BB_RELEASE: deploys the release's packages, so the .NET SDK and pnpm aren't needed"
+  if curl -fsSIL -o /dev/null "https://github.com/${BB_RELEASE_REPO:-jusso-dev/blueboard}/releases/download/$BB_RELEASE/blueboard-$BB_RELEASE.sha256"; then
+    ok "release $BB_RELEASE is published"
+  else
+    bad "release $BB_RELEASE not found at github.com/${BB_RELEASE_REPO:-jusso-dev/blueboard}/releases"
+  fi
+else
+  if dotnet --list-sdks 2>/dev/null | grep -q "^10\."; then ok ".NET 10 SDK"; else bad "install the .NET 10 SDK (or deploy a release: BB_RELEASE=vX.Y.Z)"; fi
+  if command -v pnpm >/dev/null 2>&1; then ok "pnpm"; else bad "install pnpm: corepack enable (or deploy a release: BB_RELEASE=vX.Y.Z)"; fi
+fi
 if command -v zip >/dev/null 2>&1; then ok "zip"; else bad "install zip"; fi
 if [[ "$(az functionapp list-flexconsumption-locations --query "[?name=='$LOCATION'] | length(@)" -o tsv 2>/dev/null)" == "1" ]]; then
   ok "Flex Consumption is available in $LOCATION"

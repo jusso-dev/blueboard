@@ -1,5 +1,7 @@
 # Deploying blueboard to Azure
 
+> **New here?** [QUICKSTART-AZURE.md](QUICKSTART-AZURE.md) is the short, staged path (who does what, Cloud Shell or workstation, go-live stages). [ENTERPRISE-ACCESS.md](ENTERPRISE-ACCESS.md) covers single sign-on, group-based roles, Conditional Access and PIM. This page is the full reference.
+
 This guide takes a new Azure subscription to a running board in **Australia East** (or Australia Southeast): a React front end on an **App Service Web App**, a C# back end on **Azure Functions (Flex Consumption, .NET 10)**, and **PostgreSQL**. Every resource goes in the one Australian region you choose. The scripts in [`infra/`](../infra) do the work: each one is idempotent, checks your sign-in before it changes anything, and prints what it changes.
 
 ![Azure architecture](architecture/azure-architecture.png)
@@ -7,6 +9,8 @@ This guide takes a new Azure subscription to a running board in **Australia East
 - [Roles required](#roles-required)
 - [Before you start](#before-you-start)
 - [Deploy](#deploy)
+- [Deploy a release from Azure Cloud Shell](#deploy-a-release-from-azure-cloud-shell)
+- [Access: groups and Conditional Access](#access-groups-and-conditional-access)
 - [Connect agents](#connect-agents)
 - [What each script does](#what-each-script-does)
 - [Updating, rolling back and tearing down](#updating-rolling-back-and-tearing-down)
@@ -41,6 +45,8 @@ Deployment touches two separate permission systems: **Azure RBAC** (the subscrip
 | Grant tenant-wide consent for the web app's sign-in scopes (`Board.Access`, `openid`, `profile`, `offline_access`) | `entra-app.sh` | **Cloud Application Administrator** or Application Administrator. Without it, people see a one-time consent prompt. |
 | Grant the API's managed identity its **Microsoft Graph** and **Defender for Endpoint** application permissions | `grant-permissions.sh` | **Privileged Role Administrator** (or Global Administrator). Application permissions are tenant-wide admin consent. |
 | Assign people and agents to `Board.*` roles | `assign-roles.sh` | **Owner of the enterprise app**, or Cloud Application Administrator |
+| Create the `blueboard-<env>-analysts`, `-approvers` and `-admins` security groups (skip by adopting existing groups with `GROUP_*_ID`) | `entra-groups.sh` (`up.sh` step `groups`) | **Groups Administrator** or User Administrator (or a tenant setting that lets users create security groups), plus owner of the enterprise app or Cloud Application Administrator for the role assignments |
+| Create the Conditional Access baseline for the blueboard groups | `conditional-access.sh` | **Conditional Access Administrator** (or Security Administrator) |
 
 > `grant-permissions.sh` is the most sensitive step: the API's identity gets permission to isolate devices and disable accounts across the tenant. Have a second person review the permission list in [SECURITY.md](SECURITY.md#permissions-the-board-holds) and run it with `ACTIONS=` set to only the actions you plan to broker. Without `ACTIONS` it grants read permissions only; every write permission needs `ACTIONS=all`, which isn't recommended.
 
@@ -48,9 +54,9 @@ Deployment touches two separate permission systems: **Azure RBAC** (the subscrip
 
 | Person | Needs |
 |---|---|
-| SOC analysts | `Board.Post` (+ `Board.Hunt`, `Board.RequestActions` as needed) on the enterprise app. **No Azure RBAC.** |
-| Approvers (SOC leads) | `Board.Post` + `Board.Approve`. Use a separate group from analysts so approval is a deliberate grant. |
-| Board admins | `Board.Post` + `Board.Admin` (reports). No Azure RBAC needed. |
+| SOC analysts | `blueboard-<env>-analysts`: `Board.Post`, `Board.Hunt`, `Board.RequestActions` on the enterprise app. **No Azure RBAC.** |
+| Approvers (SOC leads) | `blueboard-<env>-approvers`: `Board.Post`, `Board.Hunt`, `Board.Approve`. A separate group from analysts, so approval is a deliberate grant; at least two people. |
+| Board admins | `blueboard-<env>-admins`: `Board.Post`, `Board.Admin` (setup, participants, reports). No Azure RBAC needed. |
 | Platform operators | **Website Contributor** on the Function App and Web App, **Reader** on the resource group, **Log Analytics Reader** for logs and Application Insights. |
 | Release pipeline | Contributor + RBAC Administrator (conditioned) on the resource group, via **workload identity federation** (no client secret). |
 | Agents | Their own Entra identity with `Board.Post`, `Board.Hunt`, `Board.RequestActions`. **Never** `Board.Approve`: `assign-roles.sh` refuses it, and the API strips it from app-only tokens anyway. |
@@ -59,7 +65,7 @@ Deployment touches two separate permission systems: **Azure RBAC** (the subscrip
 
 ## Before you start
 
-1. **Tools:** Azure CLI 2.60+, `jq`, `git`, `zip`, the **.NET 10 SDK**, and **Node 22 with pnpm** (`corepack enable`).
+1. **Tools:** Azure CLI 2.60+, `jq`, `git`, `zip`, the **.NET 10 SDK**, and **Node 22 with pnpm** (`corepack enable`). Deploying a published release (`BB_RELEASE`) needs only `az`, `jq`, `curl` and `zip`: see [Deploy a release from Azure Cloud Shell](#deploy-a-release-from-azure-cloud-shell).
 2. **Sign in** to the right tenant and subscription:
    ```sh
    az login --tenant <tenant-id>
@@ -89,7 +95,7 @@ It checks your tools, sign-in, resource providers, Flex Consumption availability
 BB_ENV=prod POLICY_FILE=policy.json ./infra/up.sh       # add BB_PROFILE=production for private networking and HA
 ```
 
-[`up.sh`](../infra/up.sh) runs preflight, `entra-app.sh` and `deploy.sh`, then grants Microsoft permissions with `grant-permissions.sh` if you hold **Privileged Role Administrator**. If you don't, it stops cleanly and writes `infra/out/<env>/handoff.md` with the exact command, the ids and the permissions to review: send that file to the person who holds the role, and run `up.sh` again afterwards to finish. Nothing is copied by hand.
+[`up.sh`](../infra/up.sh) runs preflight, `entra-app.sh`, the `groups` step ([`entra-groups.sh`](../infra/entra-groups.sh), see [Access](#access-groups-and-conditional-access)) and `deploy.sh`, then grants Microsoft permissions with `grant-permissions.sh` if you hold **Privileged Role Administrator**. If you don't, it stops cleanly and writes `infra/out/<env>/handoff.md` with the exact command, the ids and the permissions to review: send that file to the person who holds the role, and run `up.sh` again afterwards to finish. Nothing is copied by hand.
 
 - **Resumable.** Finished steps are recorded in `infra/out/<env>/state.json` (ids, names, host names and step times; never a secret) and skipped next time. After a failure, fix the cause and run the same command. `BB_REDO=<step>` repeats one step. `deploy` always runs, so a re-run also rolls out the current commit.
 - **Settings are remembered.** `POLICY_FILE`, `ACTIONS`, `AGENT_PRINCIPAL_IDS` and the non-secret `deploy.sh` settings (`TI_*`, `NOTIFY_ALLOWED_HOSTS`, `NOTIFY_MAIL_*`, `WEBHOOK_ALLOWED_HOSTS`, `EXTRA_CORS_ORIGINS` and so on) are saved in `state.json`, so a bare `BB_ENV=prod ./infra/up.sh` redeploys the same configuration. Set one empty (`ACTIONS=`) to clear it. `BROKER_EXECUTE` is not remembered: pass it on every run. Secrets (`NOTIFY_TEAMS_WEBHOOK_URL`, `NOTIFY_WEBHOOK_URL`, `NOTIFY_WEBHOOK_SECRET`, `NVD_API_KEY`, `WEBHOOK_SIGNING_KEY`) are never stored: pass them on every run. If one was passed last time and not this time, `deploy.sh` warns that the deploy clears it.
@@ -109,6 +115,9 @@ export BB_ENV=prod RESOURCE_GROUP=rg-blueboard-prod LOCATION=australiaeast   # o
 # 1. Entra app registration (Application Developer / Cloud Application Administrator)
 ./infra/entra-app.sh
 
+# 1b. Security groups for analysts, approvers and admins, with their roles (Groups Administrator + app owner)
+./infra/entra-groups.sh
+
 # 2. Infrastructure, C# API, web app, sign-in, health checks (Owner on the resource group)
 POLICY_FILE=policy.json ./infra/deploy.sh
 
@@ -116,10 +125,13 @@ POLICY_FILE=policy.json ./infra/deploy.sh
 ACTIONS="isolate_device release_device run_av_scan collect_investigation_package block_indicator revoke_sessions update_incident add_incident_comment" \
   ./infra/grant-permissions.sh <api-mi-principal-id> <board-api-client-id>
 
-# 4. People (enterprise app owner)
+# 4. People: add them to the groups from step 1b in Entra. Or, without entra-groups.sh (enterprise app owner):
 ./infra/assign-roles.sh <soc-analysts-group-id> Board.Post Board.Hunt Board.RequestActions
-./infra/assign-roles.sh <soc-leads-group-id>    Board.Post Board.Approve
+./infra/assign-roles.sh <soc-leads-group-id>    Board.Post Board.Hunt Board.Approve
 ./infra/assign-roles.sh <soc-admins-group-id>   Board.Post Board.Admin
+
+# 5. Conditional Access baseline, report-only first (Conditional Access Administrator)
+CA_EXCLUDE_IDS="<break-glass-ids>" CA_APPLY=1 ./infra/conditional-access.sh
 ```
 
 `deploy.sh` does the following:
@@ -137,6 +149,52 @@ BROKER_EXECUTE=true POLICY_FILE=policy.json ./infra/deploy.sh
 ```
 
 `deploy.sh` refuses `BROKER_EXECUTE=true` with the example policy, and asks for explicit confirmation otherwise.
+
+---
+
+## Deploy a release from Azure Cloud Shell
+
+Set `BB_RELEASE` to deploy a published, attested build instead of building from your checkout. `deploy.sh`, `up.sh` and `preflight.sh` then:
+
+- download `blueboard-api-<tag>.zip`, `blueboard-web-<tag>.zip`, `blueboard-<tag>.sha256` and the self-contained policy-check tool `blueboard-tools-<tag>-<rid>` (`linux-x64` or `osx-arm64`) from `https://github.com/${BB_RELEASE_REPO:-jusso-dev/blueboard}/releases/download/<tag>/`
+- verify every SHA-256 checksum, and the build provenance with `gh attestation verify` when `gh` is installed
+- skip the local .NET and pnpm builds, so only `az`, `jq`, `curl` and `zip` are needed. That means it runs in **Azure Cloud Shell (Bash)**
+- warn if the checked-out tag differs from `BB_RELEASE` (the Bicep and scripts come from your checkout, so keep them the same)
+
+```sh
+git clone --branch vX.Y.Z https://github.com/jusso-dev/blueboard && cd blueboard
+BB_ENV=prod BB_RELEASE=vX.Y.Z POLICY_FILE=policy.json ./infra/up.sh
+```
+
+The policy-check tool ships with releases after v1.0.0. With a release that doesn't include it, `deploy.sh` falls back to `dotnet run` when the .NET SDK is installed, and stops otherwise. Set `BB_RELEASE_REPO=<owner>/<repo>` to deploy from your own fork's releases. To update, re-run with the new tag (checking out the same tag first).
+
+---
+
+## Access: groups and Conditional Access
+
+People get board roles through three Entra security groups. Agents get theirs directly ([Connect agents](#connect-agents)). The full model (roles matrix, PIM for Groups, access reviews, offboarding) is in [ENTERPRISE-ACCESS.md](ENTERPRISE-ACCESS.md).
+
+**Groups** (`up.sh` step `groups`, or `./infra/entra-groups.sh`). This creates or adopts `${GROUP_PREFIX:-blueboard-<env>}-analysts|approvers|admins` and assigns:
+
+| Group | Roles |
+|---|---|
+| analysts | `Board.Post`, `Board.Hunt`, `Board.RequestActions` |
+| approvers | `Board.Post`, `Board.Hunt`, `Board.Approve` |
+| admins | `Board.Post`, `Board.Admin` |
+
+- Pass `GROUP_ANALYSTS_ID`, `GROUP_APPROVERS_ID` or `GROUP_ADMINS_ID` to adopt an existing group instead of creating one. The ids are saved in `state.json`.
+- `BB_GROUPS=0` skips the step.
+- If you can't create groups, `up.sh` warns, writes the commands into `infra/out/<env>/handoff.md` and carries on.
+- Group-based assignment needs **Entra ID P1**, and nested groups aren't honoured.
+- `GROUP_ADD_ME=1` adds the signed-in deployer to the admins group, so the setup checklist at the end of a deploy works (otherwise add yourself, then sign out and in again).
+
+**Conditional Access** (`./infra/conditional-access.sh`, Conditional Access Administrator). This renders three policies into `infra/out/<env>/conditional-access/`:
+
+- phishing-resistant MFA for all three groups (`CA_MFA_STRENGTH=mfa` for ordinary MFA)
+- a compliant or hybrid-joined device for approvers and admins
+- a 4-hour sign-in frequency for approvers and admins
+
+`CA_EXCLUDE_IDS` excludes break-glass accounts. `CA_APPLY=1` creates the policies through Microsoft Graph in report-only mode (`CA_STATE=on` enforces them). Without it, the script prints Microsoft Graph PowerShell commands for your change process.
 
 ---
 
@@ -180,6 +238,8 @@ ANTHROPIC_FOUNDRY_RESOURCE=<foundry-resource> \
 | [`deploy.sh`](../infra/deploy.sh) | Providers, resource group (tagged `app=blueboard`), `main.bicep`, sign-in redirect URI, Function App deploy, Web App deploy, health checks | Yes: each run rolls out the current commit |
 | [`grant-permissions.sh`](../infra/grant-permissions.sh) | Graph and Defender application permissions on the API identity: reads, plus writes only for `ACTIONS` (`ACTIONS=all` for every write; `Mail.Send` too with `NOTIFY_MAIL=1`), plus board app roles on agent identities. `CHECK=1` grants nothing and reports what is missing | Yes (existing grants are skipped) |
 | [`assign-roles.sh`](../infra/assign-roles.sh) | App role assignments for a user, group or service principal | Yes |
+| [`entra-groups.sh`](../infra/entra-groups.sh) | Creates or adopts the analysts, approvers and admins security groups and assigns their app roles; ids saved in `state.json` | Yes |
+| [`conditional-access.sh`](../infra/conditional-access.sh) | Renders the three Conditional Access policies as JSON; with `CA_APPLY=1` creates them (report-only unless `CA_STATE=on`) | Yes |
 | [`teardown.sh`](../infra/teardown.sh) | Deletes the resource group recorded in the state file (only if tagged `app=blueboard`, after you type its name), and optionally the app registration | n/a |
 
 Non-secret outputs (client ID, principal IDs, host names) are saved to `infra/out/<env>/state.json`, which git ignores, so later steps can reuse them. `lib.sh` refuses to store any key that could hold a secret, and a CI test checks the file. State from older checkouts in `.deploy/<env>.env` moves there automatically the first time. **No script creates, stores or prints a secret.**
@@ -205,7 +265,7 @@ Off by default. Set any of `TI_PWNWATCH_ENABLED`, `TI_KEV_ENABLED`, `TI_EPSS_ENA
 
 ## Updating, rolling back and tearing down
 
-**Update:** commit, then re-run `./infra/deploy.sh`.
+**Update:** commit, then re-run `./infra/deploy.sh`. On the release path, check out the new tag and re-run with `BB_RELEASE=<new tag>`; roll back the same way with the previous tag.
 
 **Roll back:** check out the previous commit and re-run `deploy.sh` with `BB_ALLOW_DIRTY=1` if needed. Migrations only ever add (new columns, tables and indexes), so an older API build runs against a newer schema.
 
@@ -248,7 +308,10 @@ DEV_AUTH=true DATABASE_URL=postgres://postgres:devpass@127.0.0.1:55432/blueboard
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `AADSTS50105` at sign-in | User isn't assigned to the enterprise app (assignment required) | `assign-roles.sh <user-or-group> Board.Post` |
+| `AADSTS50105` at sign-in | User isn't assigned to the enterprise app (assignment required) | Add them to a blueboard group (`entra-groups.sh`), or `assign-roles.sh <user-or-group> Board.Post` |
+| In a group but still "You don't have access" | The group is nested inside the role-assigned group (not honoured), or the token predates the change | Add the person to the role-assigned group directly; sign out and in again |
+| `AADSTS53003` blocked by Conditional Access | The blueboard CA baseline: not phishing-resistant MFA, or the device isn't compliant (approvers, admins) | Check the sign-in log for the policy; `CA_MFA_STRENGTH=mfa` while passkeys roll out |
+| `BB_RELEASE` download or checksum failure | Wrong tag, missing asset, or altered download | Check the tag exists on the releases page; never bypass the checksum |
 | "You don't have access to the board yet" | Signed in, but the token has no `Board.Post` | Assign the role; sign out and back in |
 | `AADSTS50011` redirect mismatch | SPA redirect URI missing (the deployer isn't an app owner) | Re-run `entra-app.sh` with `WEB_HOSTNAME=<web host>` |
 | `AADSTS65001` consent required | Tenant-wide consent for the sign-in scopes wasn't granted | `az ad app permission admin-consent --id <client-id>` (Cloud Application Administrator), or accept the prompt |

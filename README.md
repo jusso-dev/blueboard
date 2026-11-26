@@ -9,6 +9,8 @@
 [**5-Minute Demo**](docs/DEMO.md) ·
 [**Sentinel MCP, Purview & Defender**](docs/INTEGRATIONS.md) ·
 [**Threat Model**](docs/THREAT-MODEL.md) ·
+[**Azure Quickstart**](docs/QUICKSTART-AZURE.md) ·
+[**Trust Center**](docs/assurance/TRUST-CENTER.md) ·
 [**PDF & Word Packs**](#documentation)
 
 ![blueboard — human-gated Microsoft SOC control plane](docs/images/blueboard-banner.png)
@@ -137,21 +139,28 @@ Read the full architecture and attack trees in [**`docs/THREAT-MODEL.md`**](docs
 
 ---
 
-## Quick deploy to Azure
+## Stand it up in your organisation
+
+blueboard runs entirely in **your** Azure subscription and Entra tenant. There's no vendor-hosted service and no vendor access. Start with the **[Azure quickstart](docs/QUICKSTART-AZURE.md)**: it covers who does what, the decisions to make first, and a staged go-live (*Deployed → Connected → Governed → Live actions*) that the console's **Setup** page tracks for you.
 
 ```sh
-# 1. Configure protected assets and validate offline
-cp policy.example.json policy.json
-dotnet run --project api/Blueboard.Tools -- policy-check policy.json
+# Azure Cloud Shell (Bash): deploys a published, checksum-verified release, so no .NET or Node is needed
+git clone --branch vX.Y.Z https://github.com/jusso-dev/blueboard && cd blueboard
+cp templates/policies/starter-balanced-soc.json policy.json   # fill in your protected users, devices and apps
+BB_ENV=prod BB_PROFILE=production BB_RELEASE=vX.Y.Z POLICY_FILE=policy.json GROUP_ADD_ME=1 ./infra/up.sh
 
-# 2. Deploy MVP or Production (VNet, Private Endpoints, Key Vault, Sentinel export)
-BB_ENV=prod BB_PROFILE=production POLICY_FILE=policy.json ./infra/up.sh
-
-# 3. Grant only the Microsoft API permissions you need (defaults to read-only)
-READ_ONLY=1 ./infra/grant-permissions.sh <api-mi-principal-id> <board-api-client-id>
+# Conditional Access baseline for the board's groups, created in report-only mode (Conditional Access Administrator)
+BB_ENV=prod CA_EXCLUDE_IDS="<break-glass ids>" CA_APPLY=1 ./infra/conditional-access.sh
 ```
 
-Full deployment steps, separated-duties Azure vs Entra guides, Sentinel Analytics rules (`infra/sentinel/`), and upgrade instructions are in [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) and [`docs/OPERATIONS.md`](docs/OPERATIONS.md).
+`up.sh` is resumable and starts **read-only and in dry run**. It creates the Entra app (SSO with auth code + PKCE, no client secret, assignment required) and three security groups: **analysts**, **approvers** and **admins**, each mapped to board roles. From then on you manage access by group membership. Any step that needs a directory role the deployer doesn't hold is written to a hand-off file for the right administrator.
+
+| Guide | For |
+|---|---|
+| [Azure quickstart & staged go-live](docs/QUICKSTART-AZURE.md) | The person standing it up |
+| [Single sign-on & role-based access](docs/ENTERPRISE-ACCESS.md) | Entra / identity team: groups, Conditional Access, PIM, access reviews, agent identities |
+| [Trust Center & assurance pack](docs/assurance/TRUST-CENTER.md) | Security, risk and procurement: shared responsibility, control mapping, data flows, questionnaire |
+| [Deployment reference](docs/DEPLOYMENT.md) · [Operations](docs/OPERATIONS.md) | Platform team |
 
 ---
 
@@ -167,6 +176,9 @@ Read everything online at **[`jusso-dev.github.io/blueboard`](https://jusso-dev.
 |---|---|---|---|
 | **What is blueboard? (Plain-English Overview)** | [`docs/WHAT-IS-BLUEBOARD.md`](docs/WHAT-IS-BLUEBOARD.md) | — | — |
 | **Threat Model (`TM-01`–`TM-26`)** | [`docs/THREAT-MODEL.md`](docs/THREAT-MODEL.md) | — | — |
+| **Azure Quickstart & Staged Go-Live** | [`docs/QUICKSTART-AZURE.md`](docs/QUICKSTART-AZURE.md) | — | — |
+| **Single Sign-On & Role-Based Access (Entra)** | [`docs/ENTERPRISE-ACCESS.md`](docs/ENTERPRISE-ACCESS.md) | — | — |
+| **Trust Center & Assurance Pack** | [`docs/assurance/TRUST-CENTER.md`](docs/assurance/TRUST-CENTER.md) | — | — |
 | **Microsoft 2026 Integrations (Sentinel MCP, Purview, Defender, Copilot, Agent ID)** | [`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md) | — | — |
 | **Security Controls & Traceability** | [`docs/SECURITY.md`](docs/SECURITY.md) | [PDF](docs/Blueboard-Security-Controls.pdf) | [DOCX](docs/Blueboard-Security-Controls.docx) |
 | **Solution Design Document** | [`docs/design/01-solution-design.md`](docs/design/01-solution-design.md) | [PDF](docs/Blueboard-Solution-Design.pdf) | [DOCX](docs/Blueboard-Solution-Design.docx) |

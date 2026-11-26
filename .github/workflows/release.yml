@@ -1,6 +1,6 @@
 # Builds the deployable packages for a version tag (v1.2.3), attaches them to the GitHub release with an SBOM and
-# SHA-256 checksums, and records build provenance. infra/deploy.sh still builds from source; these artefacts are
-# for operators who want to deploy a reviewed, attested build (az functionapp deploy / az webapp deploy).
+# SHA-256 checksums, and records build provenance. BB_RELEASE=<tag> ./infra/up.sh deploys these artefacts (checksums
+# and provenance verified) without building, so it runs in Azure Cloud Shell; without it, deploy.sh builds from source.
 name: release
 on:
   push:
@@ -45,6 +45,13 @@ jobs:
           dotnet publish web/host -c Release -o out/web --nologo
           (cd out/web && zip -qr "$GITHUB_WORKSPACE/blueboard-web-${GITHUB_REF_NAME}.zip" .)
 
+      - name: Operator CLI (policy-check, doctor, migrate), self-contained, for deploys without the .NET SDK
+        run: |
+          for rid in linux-x64 linux-arm64 osx-arm64 osx-x64; do
+            dotnet publish api/Blueboard.Tools -c Release -r "$rid" --self-contained -p:PublishSingleFile=true -o "out/tools-$rid" --nologo
+            tar -czf "blueboard-tools-${GITHUB_REF_NAME}-${rid}.tar.gz" -C "out/tools-$rid" .
+          done
+
       - name: Infrastructure template
         run: |
           az bicep install
@@ -60,19 +67,20 @@ jobs:
           upload-release-assets: false
 
       - name: Checksums
-        run: sha256sum blueboard-*.zip blueboard-*.json > "blueboard-${GITHUB_REF_NAME}.sha256"
+        run: sha256sum blueboard-*.zip blueboard-*.json blueboard-tools-*.tar.gz > "blueboard-${GITHUB_REF_NAME}.sha256"
 
       - uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3.0.0
         with:
           subject-path: |
             blueboard-*.zip
             blueboard-main-*.json
+            blueboard-tools-*.tar.gz
 
       - name: Publish the release (or add assets to an existing one)
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          assets=(blueboard-*.zip blueboard-*.json blueboard-*.sha256)
+          assets=(blueboard-*.zip blueboard-*.json blueboard-*.sha256 blueboard-tools-*.tar.gz)
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" "${assets[@]}" --clobber
           else

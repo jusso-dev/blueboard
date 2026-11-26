@@ -8,6 +8,8 @@
 # Steps:
 #   1. preflight     read-only checks (tools, sign-in, Azure and Entra roles)
 #   2. entra-app     app registration, app roles, Board.Access scope
+#      groups        Entra security groups analysts / approvers / admins with their app roles (entra-groups.sh).
+#                    Needs Groups Administrator or User Administrator; otherwise a hand-off note, and it carries on
 #   3. deploy        Bicep, Function App, web app, sign-in redirect, health and setup checks
 #   4. permissions   Graph + Defender application permissions for the board identity. Runs only if you hold
 #                    Privileged Role Administrator or Global Administrator; otherwise writes
@@ -21,6 +23,10 @@
 #   ACTIONS            brokered actions to grant write permissions for. Unset: read permissions only (READ_ONLY=1),
 #                      so a first deploy can't change anything in the tenant
 #   AGENT_PRINCIPAL_IDS  agent service principal object ids (space separated) to give the three agent roles
+#   BB_GROUPS=0        skip the groups step (you assign roles yourself). GROUP_PREFIX and GROUP_ANALYSTS_ID /
+#                      GROUP_APPROVERS_ID / GROUP_ADMINS_ID (adopt existing groups) and GROUP_ADD_ME=1 pass through
+#   BB_RELEASE=vX.Y.Z  deploy that release's checksummed packages instead of building from source: no .NET or pnpm
+#                      needed, so it runs in Azure Cloud Shell (see infra/deploy.sh)
 #   BB_REDO=<step>     run one step again even though it's recorded as done (deploy is always re-run)
 # deploy.sh also remembers its other non-secret settings (TI_*, NOTIFY_* hosts and mail, WEBHOOK_ALLOWED_HOSTS, …),
 # but not BROKER_EXECUTE. Secrets (webhook URLs, keys) are never stored: pass them on every run, or deploy.sh warns
@@ -82,6 +88,19 @@ fi
 run_step preflight "read-only checks" "$BB_INFRA/preflight.sh"
 run_step entra-app "app registration" "$BB_INFRA/entra-app.sh"
 state_load
+# Groups are the recommended way to give people roles. Creating them needs a directory role the deployer may not hold,
+# so a refusal becomes a note in the hand-off, not a failed deployment.
+GROUPS_NOTE=""
+if [[ "${BB_GROUPS:-1}" == "1" ]] && ! step_done groups; then
+  log "step groups: Entra security groups for analysts, approvers and admins"
+  if "$BB_INFRA/entra-groups.sh"; then
+    step_mark groups
+  else
+    GROUPS_NOTE="BB_ENV=$BB_ENV ./infra/entra-groups.sh"
+    warn "groups step didn't finish (needs Groups Administrator or User Administrator): see the hand-off notes"
+  fi
+  state_load
+fi
 # Deploy rolls out the current commit, so it runs every time (it's idempotent).
 step_clear deploy
 run_step deploy "infrastructure ($BB_PROFILE), API and web app" "$BB_INFRA/deploy.sh"
@@ -95,6 +114,14 @@ grant_cmd() {
   [[ -n "${AGENT_PRINCIPAL_IDS:-}" ]] && printf ' %s' "$AGENT_PRINCIPAL_IDS"
   [[ -n "${NOTIFY_MAIL_FROM:-}" ]] && printf ' # add NOTIFY_MAIL=1 for approver email (Mail.Send)'
   return 0
+}
+
+groups_handoff() {
+  [[ -n "${GROUPS_NOTE:-}" ]] || return 0
+  printf '## Access groups (Groups Administrator or User Administrator)\n\n'
+  printf 'Creates blueboard-%s-analysts, -approvers and -admins and gives them their board roles:\n\n' "$BB_ENV"
+  # shellcheck disable=SC2016 # literal Markdown fences
+  printf '```sh\n%s\n```\n\n' "$GROUPS_NOTE"
 }
 
 write_handoff() {
@@ -139,6 +166,15 @@ When the board has run in dry run for a while and policy.json is reviewed, grant
 
 \`\`\`sh
 ACTIONS="run_av_scan collect_investigation_package add_incident_comment" ./infra/grant-permissions.sh $API_MI_PRINCIPAL_ID $BOARD_API_CLIENT_ID
+\`\`\`
+
+$(groups_handoff)
+## Conditional Access (Conditional Access Administrator)
+
+Review, then create in report-only mode, the sign-in baseline for the board's groups (docs/ENTERPRISE-ACCESS.md):
+
+\`\`\`sh
+BB_ENV=$BB_ENV CA_EXCLUDE_IDS="<break-glass object ids>" CA_APPLY=1 ./infra/conditional-access.sh
 \`\`\`
 
 ## Afterwards
@@ -207,5 +243,10 @@ blueboard ($BB_ENV, $BB_PROFILE) is up.
   MCP          https://${API_HOST:-<api>}/runtime/webhooks/mcp
   State        $(state_file)
 
-Next: assign people to roles (docs/DEPLOYMENT.md § Deploy, step 4) and connect your agents.
+Next:
+  1. Add people to the access groups. Put at least two people in approvers: nobody approves their own request.
+     $(if [[ -n "${GROUP_ANALYSTS_ID:-}" ]]; then echo "analysts $GROUP_ANALYSTS_ID · approvers ${GROUP_APPROVERS_ID:-?} · admins ${GROUP_ADMINS_ID:-?}"; else echo "First create them: BB_ENV=$BB_ENV ./infra/entra-groups.sh (Groups Administrator)"; fi)
+  2. Conditional Access baseline: BB_ENV=$BB_ENV ./infra/conditional-access.sh (docs/ENTERPRISE-ACCESS.md)
+  3. Connect your agents (docs/AGENTS.md), then open Setup until every check is OK (docs/QUICKSTART-AZURE.md)
 EOF
+[[ -z "$GROUPS_NOTE" ]] || warn "access groups still to do (Groups Administrator or User Administrator): $GROUPS_NOTE"

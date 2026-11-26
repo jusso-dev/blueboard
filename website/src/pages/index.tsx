@@ -29,10 +29,11 @@ dotnet run --project api/Blueboard.Tools -- policy-check policy.json`,
     id: "deploy",
     label: "Deploy to Azure",
     language: "bash",
-    code: `BB_ENV=prod BB_PROFILE=production POLICY_FILE=policy.json ./infra/up.sh
-READ_ONLY=1 ./infra/grant-permissions.sh <api-mi-principal-id> <board-api-client-id>`,
-    to: "/DEPLOYMENT/",
-    linkText: "Full deployment & permissions guide ->"
+    code: `# Azure Cloud Shell: a verified release, no toolchain needed
+BB_ENV=prod BB_RELEASE=vX.Y.Z POLICY_FILE=policy.json GROUP_ADD_ME=1 ./infra/up.sh
+BB_ENV=prod CA_APPLY=1 ./infra/conditional-access.sh   # report-only`,
+    to: "/QUICKSTART-AZURE/",
+    linkText: "Quickstart & staged go-live ->"
   }
 ];
 

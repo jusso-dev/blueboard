@@ -16,6 +16,10 @@
 #   NVD_API_KEY=…           optional, raises the NVD rate limit
 #   SENTINEL_WORKSPACE_ID=… resource id of the Sentinel workspace for publish_ti_indicator
 #   ASSIGN_SENTINEL_CONTRIBUTOR=false   give the board Microsoft Sentinel Contributor on that workspace
+#   BB_RELEASE=vX.Y.Z       deploy that GitHub release's packages (checksums verified; build provenance too when the
+#                           GitHub CLI is signed in) instead of building from source. Needs only az, jq, curl and zip,
+#                           so it runs in Azure Cloud Shell. Check out the same tag so main.bicep matches.
+#                           BB_RELEASE_REPO=owner/repo for a fork
 #   BB_ALLOW_DIRTY=1        deploy from a working tree with uncommitted changes
 #   BB_YES=1                skip confirmation prompts (CI)
 #   Approver notifications (docs/OPERATIONS.md), all optional. URLs and the HMAC key are passed as secure
@@ -71,7 +75,16 @@ ALERT_JSON="$(jq -cn --arg o "${ALERT_EMAILS:-}" '[$o | splits("[ ,]+") | select
 DB_RUNTIME_ROLE="${DB_RUNTIME_ROLE:-true}"
 case "$DB_RUNTIME_ROLE" in true | false) ;; *) die "DB_RUNTIME_ROLE must be true or false" ;; esac
 
-require az jq git dotnet pnpm zip curl
+RELEASE_DIR=""
+if [[ -n "${BB_RELEASE:-}" ]]; then
+  require az jq git zip curl
+  RELEASE_DIR="$(release_fetch "$BB_RELEASE")"
+  checked_out="$(git -C "$BB_ROOT" describe --tags --exact-match 2>/dev/null || git -C "$BB_ROOT" rev-parse --short HEAD)"
+  [[ "$checked_out" == "$BB_RELEASE" ]] ||
+    warn "deploying $BB_RELEASE packages with infrastructure from $checked_out: git checkout $BB_RELEASE so they match"
+else
+  require az jq git dotnet pnpm zip curl
+fi
 check_az_context
 : "${BOARD_API_CLIENT_ID:?run BB_ENV=$BB_ENV ./infra/entra-app.sh first}"
 : "${BOARD_API_AUDIENCE:?run BB_ENV=$BB_ENV ./infra/entra-app.sh first}"
@@ -81,8 +94,15 @@ check_az_context
 POLICY_FILE="$(cd "$(dirname "$POLICY_FILE")" && pwd)/$(basename "$POLICY_FILE")"
 jq -e '.protected_users and .protected_devices' "$POLICY_FILE" >/dev/null || die "$POLICY_FILE is not a valid blueboard policy"
 # Same strict parser as the Function App: an unknown key would stop it at start-up, so catch it before deploying.
-dotnet run --project "$BB_ROOT/api/Blueboard.Tools" -c Release -- policy-check "$POLICY_FILE" >/dev/null \
-  || die "$POLICY_FILE failed the policy check (run: dotnet run --project api/Blueboard.Tools -- policy-check $POLICY_FILE)"
+if [[ -n "$RELEASE_DIR" && -x "$RELEASE_DIR/tools/blueboard" ]]; then
+  "$RELEASE_DIR/tools/blueboard" policy-check "$POLICY_FILE" >/dev/null \
+    || die "$POLICY_FILE failed the policy check (run: $RELEASE_DIR/tools/blueboard policy-check $POLICY_FILE)"
+elif command -v dotnet >/dev/null 2>&1; then
+  dotnet run --project "$BB_ROOT/api/Blueboard.Tools" -c Release -- policy-check "$POLICY_FILE" >/dev/null \
+    || die "$POLICY_FILE failed the policy check (run: dotnet run --project api/Blueboard.Tools -- policy-check $POLICY_FILE)"
+else
+  die "can't check $POLICY_FILE: release $BB_RELEASE has no policy-check tool for $(release_rid) and the .NET SDK isn't installed"
+fi
 if [[ "$BROKER_EXECUTE" == "true" && "$POLICY_FILE" == *policy.example.json ]]; then
   die "BROKER_EXECUTE=true needs your own POLICY_FILE (the example lists contoso.com placeholders)"
 fi
@@ -91,7 +111,7 @@ cd "$BB_ROOT" || die "cannot cd to $BB_ROOT"
 if [[ -n "$(git status --porcelain)" && "${BB_ALLOW_DIRTY:-}" != "1" ]]; then
   die "working tree has uncommitted changes: commit first, or set BB_ALLOW_DIRTY=1"
 fi
-VERSION="$(git rev-parse --short HEAD)"
+VERSION="${BB_RELEASE:-$(git rev-parse --short HEAD)}"
 
 if [[ "$BROKER_EXECUTE" == "true" ]]; then
   warn "BROKER_EXECUTE=true: approved actions will isolate devices, disable users and block indicators in your tenant."
@@ -182,21 +202,28 @@ WEB_HOSTNAME="$WEB_HOST" "$BB_ROOT/infra/entra-app.sh" >/dev/null ||
   warn "could not update the app registration (needs app owner or Cloud Application Administrator): run BB_ENV=$BB_ENV WEB_HOSTNAME=$WEB_HOST ./infra/entra-app.sh"
 
 # 6. Function App ---------------------------------------------------------------------------------
-log "building the C# Function App"
-build="$(mktemp -d)"
-trap 'rm -rf "$build" "$params"' EXIT
-dotnet publish api/Blueboard.Api -c Release -o "$build/api" --nologo -v q
-(cd "$build/api" && zip -qr "$build/api.zip" .)
-log "deploying $API_NAME"
-az functionapp deploy -g "$RESOURCE_GROUP" -n "$API_NAME" --src-path "$build/api.zip" --type zip -o none
+if [[ -n "$RELEASE_DIR" ]]; then
+  log "deploying $API_NAME from release $BB_RELEASE"
+  az functionapp deploy -g "$RESOURCE_GROUP" -n "$API_NAME" --src-path "$RELEASE_DIR/blueboard-api-$BB_RELEASE.zip" --type zip -o none
+  log "deploying $WEB_NAME from release $BB_RELEASE"
+  az webapp deploy -g "$RESOURCE_GROUP" -n "$WEB_NAME" --src-path "$RELEASE_DIR/blueboard-web-$BB_RELEASE.zip" --type zip -o none
+else
+  log "building the C# Function App"
+  build="$(mktemp -d)"
+  trap 'rm -rf "$build" "$params"' EXIT
+  dotnet publish api/Blueboard.Api -c Release -o "$build/api" --nologo -v q
+  (cd "$build/api" && zip -qr "$build/api.zip" .)
+  log "deploying $API_NAME"
+  az functionapp deploy -g "$RESOURCE_GROUP" -n "$API_NAME" --src-path "$build/api.zip" --type zip -o none
 
-# 7. Web App -------------------------------------------------------------------------------------
-log "building the React site and its host"
-(cd web && pnpm install --frozen-lockfile --silent && pnpm build)
-dotnet publish web/host -c Release -o "$build/web" --nologo -v q
-(cd "$build/web" && zip -qr "$build/web.zip" .)
-log "deploying $WEB_NAME"
-az webapp deploy -g "$RESOURCE_GROUP" -n "$WEB_NAME" --src-path "$build/web.zip" --type zip -o none
+  # 7. Web App -------------------------------------------------------------------------------------
+  log "building the React site and its host"
+  (cd web && pnpm install --frozen-lockfile --silent && pnpm build)
+  dotnet publish web/host -c Release -o "$build/web" --nologo -v q
+  (cd "$build/web" && zip -qr "$build/web.zip" .)
+  log "deploying $WEB_NAME"
+  az webapp deploy -g "$RESOURCE_GROUP" -n "$WEB_NAME" --src-path "$build/web.zip" --type zip -o none
+fi
 
 # 8. health ---------------------------------------------------------------------------------------
 log "health check"
@@ -225,10 +252,10 @@ Remaining one-time steps (need Entra admin roles, see docs/DEPLOYMENT.md):
        READ_ONLY=1 ./infra/grant-permissions.sh $API_MI $BOARD_API_CLIENT_ID
      (./infra/up.sh does this, or writes infra/out/$BB_ENV/handoff.md for the person who can)
 
-  2. Assign people to blueboard roles (Cloud Application Administrator or enterprise app owner):
-       BB_ENV=$BB_ENV ./infra/assign-roles.sh <analysts-group-id>  Board.Post Board.Hunt Board.RequestActions
-       BB_ENV=$BB_ENV ./infra/assign-roles.sh <approvers-group-id> Board.Post Board.Approve
-       BB_ENV=$BB_ENV ./infra/assign-roles.sh <admins-group-id>    Board.Post Board.Admin
+  2. Access groups with their board roles (Groups Administrator + enterprise app owner; up.sh does this):
+       BB_ENV=$BB_ENV ./infra/entra-groups.sh       then manage access by group membership
+     and the Conditional Access baseline (Conditional Access Administrator, docs/ENTERPRISE-ACCESS.md):
+       BB_ENV=$BB_ENV ./infra/conditional-access.sh
 
   3. Agents: give each agent identity Board.Post, Board.Hunt, Board.RequestActions
      (./infra/assign-roles.sh <agent-principal-id> ...) and point it at the MCP URL above.

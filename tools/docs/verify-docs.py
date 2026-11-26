@@ -6,7 +6,7 @@ Checks:
   2. All expected PDF and editable Word (.docx) deliverables exist and pass format/ZIP/XML validation.
   3. Documents with screenshots or architecture diagrams embed their images in word/media/.
   4. Zero leftover docs/design/.build-*.html build artefacts.
-  5. Zero broken relative Markdown links or image paths across README.md and docs/{guides,admin,security,design}.
+  5. Zero broken relative Markdown links or image paths across README.md, docs/{guides,admin,security,design,assurance} and the deployment guides.
 
 Usage: python3 tools/docs/verify-docs.py [--combined-only]
 """
@@ -121,6 +121,8 @@ def check_markdown_links() -> int:
         + sorted(glob.glob("docs/admin/*.md"))
         + sorted(glob.glob("docs/security/*.md"))
         + sorted(glob.glob("docs/design/*.md"))
+        + sorted(glob.glob("docs/assurance/*.md"))
+        + ["docs/QUICKSTART-AZURE.md", "docs/ENTERPRISE-ACCESS.md", "docs/DEPLOYMENT.md"]
         + sorted(glob.glob("skills/*/SKILL.md"))
         + sorted(glob.glob("skills/*/references/*.md"))
     )
