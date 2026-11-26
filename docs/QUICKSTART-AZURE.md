@@ -214,7 +214,8 @@ Grant writes only for the actions you will broker, then switch execution on.
 
 ```sh
 # Privileged Role Administrator
-BB_ENV=prod BB_REDO=permissions ACTIONS="isolate_device release_device run_av_scan revoke_sessions" ./infra/up.sh
+BB_ENV=prod BB_RELEASE=vX.Y.Z BB_REDO=permissions ACTIONS="isolate_device release_device run_av_scan revoke_sessions" ./infra/up.sh
+#   (BB_RELEASE: the tag you deployed in Path A; up.sh also remembers it. Leave it out on the source path.)
 
 # Azure deployer (asks for confirmation; refuses the example policy)
 BB_ENV=prod BROKER_EXECUTE=true POLICY_FILE=policy.json ./infra/deploy.sh      # add BB_RELEASE=vX.Y.Z on the release path

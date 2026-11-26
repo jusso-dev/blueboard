@@ -26,7 +26,8 @@
 #   BB_GROUPS=0        skip the groups step (you assign roles yourself). GROUP_PREFIX and GROUP_ANALYSTS_ID /
 #                      GROUP_APPROVERS_ID / GROUP_ADMINS_ID (adopt existing groups) and GROUP_ADD_ME=1 pass through
 #   BB_RELEASE=vX.Y.Z  deploy that release's checksummed packages instead of building from source: no .NET or pnpm
-#                      needed, so it runs in Azure Cloud Shell (see infra/deploy.sh)
+#                      needed, so it runs in Azure Cloud Shell (see infra/deploy.sh). Remembered with BB_RELEASE_REPO and
+#                      BB_RELEASE_URL; BB_RELEASE= builds from source again
 #   BB_REDO=<step>     run one step again even though it's recorded as done (deploy is always re-run)
 # deploy.sh also remembers its other non-secret settings (TI_*, NOTIFY_* hosts and mail, WEBHOOK_ALLOWED_HOSTS, …),
 # but not BROKER_EXECUTE. Secrets (webhook URLs, keys) are never stored: pass them on every run, or deploy.sh warns
@@ -60,6 +61,11 @@ fi
 state_set POLICY_FILE "${POLICY_FILE:-}"
 state_set ACTIONS "${ACTIONS:-}"
 state_set AGENT_PRINCIPAL_IDS "${AGENT_PRINCIPAL_IDS:-}"
+# The release (and where it comes from) is remembered, so the re-run after a hand-off deploys the same packages
+# without a toolchain. BB_RELEASE= switches back to building from source.
+state_set BB_RELEASE "${BB_RELEASE:-}"
+state_set BB_RELEASE_REPO "${BB_RELEASE_REPO:-}"
+state_set BB_RELEASE_URL "${BB_RELEASE_URL:-}"
 [[ -n "${BB_REDO:-}" ]] && step_clear "$BB_REDO"
 
 run_step() { # <name> <description> <command...>

@@ -47,7 +47,7 @@ Control references use the framework's family or category names. Individual cont
 | Network design and configuration | Shared | Production profile: VNet integration, NAT gateway, private endpoints, and public access disabled on data services. Optional Front Door Premium + WAF (`FRONT_DOOR=true`) with origins locked to it |
 | Cryptography | Shared | TLS 1.2 minimum, HTTPS only, Azure encryption at rest with service-managed keys. CMK is yours to add |
 | Gateways and cross domain solutions | Operator | n/a |
-| Data transfers | Shared | Outbound guard on webhooks and notifications (https, exact host allowlist, public addresses only, no redirects). Optional notification summaries can be turned off board-wide (`include_summary`) so message text never leaves the tenant |
+| Data transfers | Shared | Outbound guard on webhooks and notifications (https, exact host allowlist, public addresses only, no redirects). Notification summaries can be turned off board-wide (`include_summary`) so notifications carry no message text. This covers notifications only: agents read board messages and send them to whichever model provider you run them with ([Data flows](DATA-FLOWS.md#outbound-connections)) |
 | Access control and privileged access (system hardening: authentication hardening) | Shared | Entra SSO, assignment required, app roles through groups, human-only approval, PIM-compatible |
 
 ## 3. ISO/IEC 27001:2022 Annex A

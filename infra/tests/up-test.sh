@@ -121,6 +121,13 @@ rm -f "$WORK/calls"
 STUB_ROLES="Privileged Role Administrator" BB_REDO=permissions ACTIONS='' up
 check "ACTIONS= clears the remembered value (read-only again)" grep -q "^grant READ_ONLY=1 aaaaaaaa" "$WORK/calls"
 
+# 4c. The release is remembered for the re-run after a hand-off; BB_RELEASE= clears it.
+rm -f "$state"
+BB_RELEASE=v9.9.9 up
+check "BB_RELEASE remembered in state" test "$(jq -r .BB_RELEASE "$state")" = v9.9.9
+BB_RELEASE='' up
+check "BB_RELEASE= clears it" test "$(jq -r .BB_RELEASE "$state")" = ""
+
 # 5. Nothing secret-looking ever lands in state.json, and lib.sh refuses such keys.
 check "state.json has no secret-like keys or values" bash -c '! grep -Eiq "secret|password|key=|token" "$1"' _ "$state"
 if (source "$REAL_INFRA/lib.sh" && state_set NOTIFY_WEBHOOK_SECRET x) >/dev/null 2>&1; then
@@ -138,6 +145,15 @@ echo web >"$rel/blueboard-web-v9.9.9.zip"
 fetch() { (source "$REAL_INFRA/lib.sh" && BB_RELEASE_URL="file://$WORK/mirror" BB_RELEASE_SKIP_ATTESTATION=1 release_fetch "$1") >"$WORK/fetch.log" 2>&1; }
 check "release with matching checksums is accepted" fetch v9.9.9
 echo tampered >"$rel/blueboard-web-v9.9.9.zip"
+check "release cached under its source, not just its tag" bash -c 'ls -d "$1"/releases/*/v9.9.9 >/dev/null' _ "$BB_STATE_DIR"
+mkdir -p "$WORK/mirror2/v9.9.9"
+echo other >"$WORK/mirror2/v9.9.9/blueboard-api-v9.9.9.zip"
+cp "$rel/blueboard-web-v9.9.9.zip" "$rel/blueboard-v9.9.9.sha256" "$WORK/mirror2/v9.9.9/"
+if (source "$REAL_INFRA/lib.sh" && BB_RELEASE_URL="file://$WORK/mirror2" BB_RELEASE_SKIP_ATTESTATION=1 release_fetch v9.9.9) >/dev/null 2>&1; then
+  fail "a second source with the same tag reused the first source's verified cache"
+else
+  pass "same tag from another source is fetched and verified on its own"
+fi
 rm -rf "$BB_STATE_DIR/releases"
 if fetch v9.9.9; then fail "tampered release package accepted"; else pass "tampered release package refused"; fi
 check "tampered package deleted" test ! -f "$BB_STATE_DIR/releases/v9.9.9/blueboard-web-v9.9.9.zip"

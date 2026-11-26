@@ -147,6 +147,18 @@ It never removes:
 - participants, channels, settings, policy or threat intel;
 - **`audit_log`**, which stays append-only.
 
+**Tables `RETENTION_DAYS` doesn't cover**, and how to handle each if your retention period applies to them:
+
+| Table | Holds | Why it stays | To remove |
+|---|---|---|---|
+| `principals` | People and agents: object id, name, sign-in name, roles | Every message, action and audit row points at its author. Removing one would break attribution | **Disable** leavers (Admin → Participants) and keep the row. To erase a person, the schema owner can pseudonymise `display_name`, `handle` and `username` in place, keeping `id` and `entra_oid` |
+| `notification_settings` | Each person's notification preferences | Small, and needed while the person has access | Deleted with care by an admin, or pseudonymised with the principal |
+| `ti_records`, `ti_record_keys`, `ti_watches`, `ti_fetch_cache` | Public threat intel (CVEs, KEV, EPSS, indicators) and its cache | Public data about vulnerabilities and indicators, not about your people. The cache refreshes itself | Turn the source off (`TI_*_ENABLED=false`). The schema owner can then truncate these tables |
+| `agent_subscriptions`, `channels`, `kv_state`, `rate_buckets`, `typing` | Configuration and short-lived counters | No content of note (`typing` expires in seconds) | Not needed |
+| `audit_log` | Who did what, with ids | Append-only for every role, by design | A planned, audited maintenance change by the schema owner: archive it (for example to `BlueboardAudit_CL` or storage), then disable the trigger, delete, and re-enable it under change control |
+
+Deleting only incidents and messages doesn't, by itself, meet a retention period that covers personal information about staff. Decide on `principals` as well.
+
 Every run that removes something writes one `retention.purged` audit row with the cutoff and counts, so the deletion itself is on record. The Setup page shows the last run (*Data retention*).
 
 Before you switch it on:

@@ -165,15 +165,18 @@ release_rid() {
   esac
 }
 
-# Downloads (once) and verifies the release's packages into infra/out/releases/<tag>; prints that folder.
+# Downloads (once) and verifies the release's packages into infra/out/releases/<source>/<tag>; prints that folder.
+# <source> is a hash of where the packages come from (repository or mirror URL), so the same tag from a fork or a
+# mirror never reuses another source's cached files.
 release_fetch() { # <tag>
-  local tag="$1" repo="${BB_RELEASE_REPO:-jusso-dev/blueboard}" dir base f want have tools
+  local tag="$1" repo="${BB_RELEASE_REPO:-jusso-dev/blueboard}" dir base f want have tools source
   [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || die "BB_RELEASE must be a release tag like v1.2.0"
-  dir="$BB_STATE_DIR/releases/$tag"
-  mkdir -p "$dir"
   # BB_RELEASE_URL: a mirror of the release assets (an internal artefact store), <url>/<tag>/<file>.
   base="${BB_RELEASE_URL:+${BB_RELEASE_URL%/}/$tag}"
   base="${base:-https://github.com/$repo/releases/download/$tag}"
+  source="$( (printf '%s' "$base" | sha256sum 2>/dev/null || printf '%s' "$base" | shasum -a 256) | cut -c1-12)"
+  dir="$BB_STATE_DIR/releases/$source/$tag"
+  mkdir -p "$dir"
   tools="blueboard-tools-$tag-$(release_rid).tar.gz"
   for f in "blueboard-$tag.sha256" "blueboard-api-$tag.zip" "blueboard-web-$tag.zip"; do
     [[ -s "$dir/$f" ]] || curl -fsSL --retry 3 -o "$dir/$f" "$base/$f" || die "couldn't download $base/$f (is $tag published?)"
@@ -188,7 +191,9 @@ release_fetch() { # <tag>
     [[ "$want" == "$have" ]] || { rm -f "$f"; die "checksum mismatch for $(basename "$f"): deleted, re-run to download again"; }
   done
   if [[ "${BB_RELEASE_SKIP_ATTESTATION:-}" != "1" ]] && command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
-    for f in "$dir"/blueboard-api-*.zip "$dir"/blueboard-web-*.zip; do
+    # Every file that will be deployed or run, the operator CLI included, before anything is extracted.
+    for f in "$dir"/blueboard-api-*.zip "$dir"/blueboard-web-*.zip "$dir"/blueboard-tools-*.tar.gz; do
+      [[ -f "$f" ]] || continue
       gh attestation verify "$f" --repo "$repo" >/dev/null 2>&1 ||
         die "build provenance for $(basename "$f") did not verify (gh attestation verify $f --repo $repo)"
     done
