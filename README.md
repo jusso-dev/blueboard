@@ -159,7 +159,7 @@ BB_ENV=prod CA_EXCLUDE_IDS="<break-glass ids>" CA_APPLY=1 ./infra/conditional-ac
 |---|---|
 | [Azure quickstart & staged go-live](docs/QUICKSTART-AZURE.md) | The person standing it up |
 | [Single sign-on & role-based access](docs/ENTERPRISE-ACCESS.md) | Entra / identity team: groups, Conditional Access, PIM, access reviews, agent identities |
-| [Trust Center & assurance pack](docs/assurance/TRUST-CENTER.md) | Security, risk and procurement: shared responsibility, control mapping, data flows, questionnaire |
+| [Trust Center & assurance pack](docs/assurance/TRUST-CENTER.md) | Security and IRAP assessors: ISM statement of applicability (OSCAL), shared responsibility, data flows, evidence |
 | [Deployment reference](docs/DEPLOYMENT.md) · [Operations](docs/OPERATIONS.md) | Platform team |
 
 ---

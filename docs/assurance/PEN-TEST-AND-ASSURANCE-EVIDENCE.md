@@ -24,7 +24,7 @@ This page lists the evidence you can collect yourself to show a deployment of bl
 | **Audit trail** | `BlueboardAudit_CL` in Log Analytics (production profile), or `select * from audit_log` as a database reader | Who requested, approved and ran each action. Policy rejects, rate-limit hits, principal changes and broker pauses |
 | **Sentinel analytics rules** | The templates in `infra/sentinel/`, deployed to your workspace | Detection coverage for misuse of the board: approval bursts, protected-target rejects, a new agent, board identity misuse, and others |
 | **Threat model** | [THREAT-MODEL.md](../THREAT-MODEL.md) | Threats TM-01 to TM-26 with their mitigations and residual risk |
-| **Control mapping** | [CONTROL-MAPPING.md](CONTROL-MAPPING.md) | Which controls the product supports and which stay with you |
+| **ISM statement of applicability** | [ISM-SOA.md](ISM-SOA.md) | Each ISM control's disposition, implementation, evidence, consumer responsibility and gap |
 
 ## Verifying a release
 

@@ -32,7 +32,7 @@ blueboard runs in **your** Azure subscription and Entra tenant. There is no vend
 | **Data retention and deletion** | Optional daily retention job (`RETENTION_DAYS`, off by default) that removes resolved incidents, old threads and finished actions, records each purge in the audit log, and keeps `audit_log` append-only | Storage, backup expiry, and Log Analytics table retention | Choose the retention period and set `RETENTION_DAYS`, preview it with `blueboard retention`, and set Log Analytics and backup retention to match |
 | **Incident response for the board** | Broker pause switch, participant disable, runbook in [SECURITY.md](../SECURITY.md#incident-response-for-the-board-itself) | Entra sign-in logs, managed identity sign-in logs, Graph activity logs | Include blueboard in your IR plan and practise the pause-and-revoke runbook |
 | **Agents and model providers** | Reference agents and templates. Agents can only request actions, not run them | Microsoft Foundry (if you use it) | Choose where agents run and which model provider they use, and assess that provider's data handling |
-| **Compliance** | [Control mapping](CONTROL-MAPPING.md) and evidence you can collect yourself | Microsoft compliance offerings (Service Trust Portal) | Carry out your own assessment. blueboard holds no certification or attestation |
+| **Compliance** | [ISM statement of applicability](ISM-SOA.md) (OSCAL component definition included) and evidence you can collect yourself | Microsoft compliance offerings (Service Trust Portal) | Carry out your own assessment. blueboard holds no certification or attestation |
 
 ## Minimum operator checklist
 

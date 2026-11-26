@@ -36,9 +36,8 @@ const sidebars: SidebarsConfig = {
       label: "Assurance Pack",
       items: [
         { type: "doc", id: "assurance/SHARED-RESPONSIBILITY", label: "Shared Responsibility" },
-        { type: "doc", id: "assurance/CONTROL-MAPPING", label: "Control Mapping (ISM, E8, ISO, SOC 2, NIST)" },
+        { type: "doc", id: "assurance/ISM-SOA", label: "ISM Statement of Applicability" },
         { type: "doc", id: "assurance/DATA-FLOWS", label: "Data Inventory & Flows" },
-        { type: "doc", id: "assurance/SECURITY-QUESTIONNAIRE", label: "Security Questionnaire" },
         { type: "doc", id: "assurance/PEN-TEST-AND-ASSURANCE-EVIDENCE", label: "Assurance Evidence & Pen Test Scope" }
       ]
     },

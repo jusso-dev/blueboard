@@ -7,9 +7,8 @@ blueboard is open-source software (MIT licence) that **you deploy and run in you
 | Assurance document | What it answers |
 |---|---|
 | [Shared responsibility](SHARED-RESPONSIBILITY.md) | What the code does for you, what Microsoft does, and what you must do |
-| [Control mapping](CONTROL-MAPPING.md) | ACSC ISM and Essential Eight, ISO/IEC 27001:2022 Annex A, SOC 2 and NIST CSF 2.0 |
+| [ISM statement of applicability](ISM-SOA.md) | Every ISM control (current release, pinned): disposition, implementation, evidence, consumer responsibility and gaps. |
 | [Data flows and inventory](DATA-FLOWS.md) | What data is stored, where it lives, how long it's kept and every outbound connection |
-| [Security questionnaire](SECURITY-QUESTIONNAIRE.md) | Pre-answered vendor security questions |
 | [Assurance evidence and pen testing](PEN-TEST-AND-ASSURANCE-EVIDENCE.md) | Evidence you can collect yourself and a suggested scope for an independent test |
 | [Security guide](../SECURITY.md) | Trust boundaries, controls in the code, Microsoft permissions, hardening checklist, incident runbook |
 | [Threat model](../THREAT-MODEL.md) | STRIDE, OWASP LLM/Agentic and MITRE ATLAS threats TM-01 to TM-26 |
