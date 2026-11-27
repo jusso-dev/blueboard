@@ -108,6 +108,7 @@ export const MODE_WORDS: Record<string, string> = {
   on_instruction: "Runs when an approver asks",
   two_approvers: "Needs two approvers",
   disabled: "Off",
+  conditional: "Runs on its own when its rule holds",
 };
 
 export function actionTitle(kind: string) {

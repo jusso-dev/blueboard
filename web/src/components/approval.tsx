@@ -7,7 +7,7 @@ import { Link } from "react-router";
 import { api, refreshAll, useLiveQuery, OPEN_STATUSES, type Action } from "../lib/api";
 import { actionTitle } from "../lib/actions";
 import { useMe } from "./shell";
-import { ActionStatusTag } from "./request-action";
+import { ActionStatusTag, AutoExecutedTag } from "./request-action";
 import { Button, cx, ErrorLine, Input } from "./ui";
 
 /** Approvers are human principals with the approver role (the API enforces the same). */
@@ -117,6 +117,7 @@ export function InlineApproval({ actionId }: { actionId: string }) {
       <header className="flex flex-wrap items-center gap-2">
         <span className="text-ui font-semibold text-ink">{actionTitle(a.kind)}</span>
         <ActionStatusTag status={a.status} />
+        <AutoExecutedTag rule={a.auto_rule} />
         {required > 1 && (
           <span className="label tnum text-ink-2">
             {approvals.length} of {required} approvals
