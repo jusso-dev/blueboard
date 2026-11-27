@@ -502,6 +502,7 @@ public sealed partial class Notifier(HttpClient http, Db db, Audit audit, MsClie
         "action.expired" => "Approval request expired",
         "action.interrupted" => "Action interrupted: outcome unknown, check Defender",
         "action.failed" => "Action failed: check Defender",
+        _ when n.Event.StartsWith("agent.", StringComparison.Ordinal) => n.Title,
         _ => "Test notification",
     };
 
@@ -581,6 +582,8 @@ public sealed partial class Notifier(HttpClient http, Db db, Audit audit, MsClie
 
     private static List<(string, string)> Rows(Notice n)
     {
+        if (n.Event.StartsWith("agent.", StringComparison.Ordinal))
+            return n.Recipients is { Count: > 0 } r ? [("Agent", "@" + n.RequestedBy), ("Detail", n.Target), ("For", For(r))] : [("Agent", "@" + n.RequestedBy), ("Detail", n.Target)];
         var rows = new List<(string, string)> { ("Action", n.Title), ("Target", n.Target), ("Requested by", "@" + n.RequestedBy) };
         if (n.IncidentGraphId is not null) rows.Add(("Incident", $"{n.IncidentGraphId} ({n.IncidentSeverity ?? "unknown"}): {n.IncidentTitle}"));
         rows.Add(("Policy notes", n.PolicyNotes.ToString(System.Globalization.CultureInfo.InvariantCulture)));

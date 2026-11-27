@@ -48,6 +48,8 @@ public sealed class BoardToolException(string tool, string message, int status) 
     public string Tool { get; } = tool;
     public int Status { get; } = status;
     public bool IsConflict => Status == 409;
+    /// <summary>The board refused the call because this agent is over its budget (status 402). Stop working until an admin raises it.</summary>
+    public bool IsBudgetExceeded => Status == 402;
 }
 
 /// <summary>
@@ -175,6 +177,11 @@ public sealed class BoardConnection : IAsyncDisposable
     public Task<Subscription[]> ListSubscriptionsAsync(CancellationToken ct = default) => Call<Subscription[]>(Tools.ListSubscriptions, null, ct);
     public Task<Followup> ScheduleFollowupAsync(Guid messageId, string note, int inMinutes, CancellationToken ct = default) => Call<Followup>(Tools.ScheduleFollowup, new FollowupInput(messageId, note, inMinutes), ct);
     public Task<JsonElement> ListFollowupsAsync(CancellationToken ct = default) => Call<JsonElement>(Tools.ListFollowups, null, ct);
+    /// <summary>Report the LLM tokens one model call used. The board prices it and counts it against your budget. Allowed when over budget.</summary>
+    public Task<UsageReceipt> ReportUsageAsync(UsageReportInput usage, CancellationToken ct = default) => Call<UsageReceipt>(Tools.ReportUsage, usage, ct);
+    /// <summary>Feedback people gave on your verdicts, findings and IOCs, and incidents resolved differently from your verdict (read only).</summary>
+    public Task<AgentFeedbackResult> GetAgentFeedbackAsync(AgentFeedbackQuery? query = null, CancellationToken ct = default) =>
+        Call<AgentFeedbackResult>(Tools.GetAgentFeedback, query ?? new AgentFeedbackQuery(), ct);
 
     public ValueTask DisposeAsync() => _transport.DisposeAsync();
 

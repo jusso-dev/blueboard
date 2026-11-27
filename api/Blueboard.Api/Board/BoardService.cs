@@ -172,7 +172,7 @@ public sealed partial class BoardService(Db db, Audit audit, Settings settings, 
             ? Payloads.Validate(type, p, system)
             : (JsonElement?)null;
         if (!system && (DetectSecretLeak(input.Body) is not null || DetectSecretLeak(payload?.GetRawText()) is not null))
-            throw new BoardException("refusing to post raw credentials, private keys or bearer tokens to the shared board");
+            throw new BoardException("refusing to post raw credentials, private keys or bearer tokens to the shared board") { Bucket = Mcp.McpObserver.SecretLeakBucket };
         // Playbook steps are posted only by the board; a participant's checklist payload would forge step progress.
         if (!system && PlaybookRunner.IsChecklist(payload)) throw new BoardException("payload.checklist is reserved for the board's playbook steps");
 

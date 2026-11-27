@@ -148,7 +148,7 @@ public sealed partial class MemoryService(Db db, Audit audit, BoardService board
         if (input.Confidence is < 0 or > 1) throw new BoardException("confidence must be between 0 and 1");
         if (input.ExpiresInHours is < 1 or > 8760) throw new BoardException("expires_in_hours must be between 1 and 8760");
         if (BoardService.DetectSecretLeak(key) is not null || BoardService.DetectSecretLeak(title) is not null || BoardService.DetectSecretLeak(content) is not null)
-            throw new BoardException("refusing to store raw credentials, private keys or bearer tokens in shared memory");
+            throw new BoardException("refusing to store raw credentials, private keys or bearer tokens in shared memory") { Bucket = Mcp.McpObserver.SecretLeakBucket };
 
         var tags = NormaliseTokens(input.Tags, 20, 60);
         var entities = NormaliseTokens(input.Entities, 30, 200);

@@ -14,6 +14,10 @@ internal sealed class FakeBoard : IBoardTransport
     public string Me = "agent";
     /// <summary>Make react and set_typing fail, to check they never stop the work.</summary>
     public bool CosmeticFails;
+    /// <summary>Make report_usage fail, to check it never stops the work.</summary>
+    public bool UsageFails;
+    /// <summary>Refuse read_feed with the board's over-budget error (status 402).</summary>
+    public bool OverBudget;
 
     public Message Add(string type, string body, string author = "analyst", string channel = "intel", string[]? mentions = null, Guid? parent = null, string kind = "human",
         Guid? incident = null, DateTimeOffset? at = null)
@@ -31,6 +35,9 @@ internal sealed class FakeBoard : IBoardTransport
         object result = tool switch
         {
             "whoami" => new Identity(Guid.NewGuid(), Me, Me, "agent", ["poster"]),
+            "read_feed" when OverBudget => "error: budget exceeded: daily spend $1.00 reached the $1.00 limit (status 402)",
+            "report_usage" when UsageFails => "error: internal error (status 500)",
+            "report_usage" => new UsageReceipt(1, S("model"), 0, 0, "price_table", false, null),
             "read_feed" => ReadFeed(args.TryGetValue("after_seq", out var a) && a is not null ? long.Parse(a.ToString()!) : (long?)null, args.TryGetValue("limit", out var l) ? Convert.ToInt32(l!.ToString()) : 50,
                 args.TryGetValue("open_requests", out var o) && string.Equals(o?.ToString(), "true", StringComparison.OrdinalIgnoreCase)),
             "claim_message" when ClaimedBy.TryGetValue(Guid.Parse(S("message_id")), out var who) && who != Me => "error: already claimed by @" + who + " (status 409)",
@@ -553,6 +560,47 @@ public class AgentLoopTests : IDisposable
         await BoardAgent.PollOnceAsync(board, Options with { AckReaction = null }, state, fake.Me, null, null, async (w, ct) => got = await w.ReactAsync("👍", ct), Ct);
         Assert.Equal("👍", Assert.Single(got!).Emoji);
         Assert.Equal(m.Id.ToString(), fake.Calls.Single(c => c.Tool == "react").Args["message_id"]!.ToString());
+    }
+
+    [Fact]
+    public async Task Work_items_report_usage_linked_to_their_claim_and_never_fail_the_work()
+    {
+        var fake = new FakeBoard();
+        await new AgentState { Cursor = "0" }.SaveAsync(StateFile, Ct);
+        var q = fake.Add("question", "what is 203.0.113.9?");
+        UsageReceipt? receipt = null;
+        await RunOnce(fake, async (w, ct) => receipt = await w.ReportUsageAsync("claude-opus-5-5", 100, 50, cacheReadTokens: 900, cacheWriteTokens: 10, requestId: "msg_1", ct: ct), null);
+        Assert.NotNull(receipt);
+        var call = Assert.Single(fake.Calls, c => c.Tool == "report_usage");
+        Assert.Equal(q.Id.ToString(), call.Args["claim_message_id"]!.ToString());
+        Assert.Equal(q.Id.ToString(), call.Args["message_id"]!.ToString());
+        Assert.Equal("900", call.Args["cache_read_tokens"]!.ToString());
+        Assert.Equal("msg_1", call.Args["request_id"]!.ToString());
+
+        // A failed report is logged, not thrown: the claim still completes as done.
+        var fake2 = new FakeBoard { UsageFails = true };
+        await new AgentState { Cursor = "0" }.SaveAsync(StateFile, Ct);
+        var q2 = fake2.Add("question", "again?");
+        await RunOnce(fake2, async (w, ct) => Assert.Null(await w.ReportUsageAsync("claude-opus-5-5", 1, 1, ct: ct)), null);
+        Assert.Contains(fake2.Calls, c => c.Tool == "complete_claim" && c.Args["message_id"]!.ToString() == q2.Id.ToString() && c.Args["outcome"]!.ToString() == "done");
+    }
+
+    [Fact]
+    public async Task Over_budget_is_a_402_the_loop_backs_off_from()
+    {
+        var fake = new FakeBoard { OverBudget = true };
+        await using var board = BoardConnection.Over(fake);
+        var ex = await Assert.ThrowsAsync<BoardToolException>(() => board.ReadFeedAsync(new FeedQuery(), Ct));
+        Assert.True(ex.IsBudgetExceeded);
+        Assert.Equal(402, ex.Status);
+
+        // RunLoopAsync waits BudgetBackoff between refused polls instead of spinning.
+        await new AgentState { Cursor = "0" }.SaveAsync(StateFile, Ct);
+        var before = fake.Count("read_feed");
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(Ct);
+        cts.CancelAfter(TimeSpan.FromMilliseconds(300));
+        await BoardAgent.RunLoopAsync(board, Options with { BudgetBackoff = TimeSpan.FromSeconds(10), RescanInterval = null }, onQuestion: (_, _) => Task.CompletedTask, ct: cts.Token);
+        Assert.Equal(1, fake.Count("read_feed") - before);
     }
 
     private async Task RunOnce(FakeBoard fake, AgentHandler? onQuestion, AgentHandler? onMention)

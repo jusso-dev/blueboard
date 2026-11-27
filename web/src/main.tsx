@@ -9,6 +9,7 @@ import IncidentPage from "./pages/Incident";
 import SearchPage from "./pages/Search";
 import ApprovalsPage from "./pages/Approvals";
 import ReportsPage from "./pages/Reports";
+import AgentsPage from "./pages/Agents";
 import PolicyPage from "./pages/Policy";
 import SetupPage from "./pages/Setup";
 import NotificationsPage from "./pages/Notifications";
@@ -33,6 +34,7 @@ const routes = (dev: boolean) => [
       { path: "search", element: <SearchPage /> },
       { path: "approvals", element: <ApprovalsPage /> },
       { path: "reports", element: <ReportsPage /> },
+      { path: "agents", element: <AgentsPage /> },
       { path: "policy", element: <PolicyPage /> },
       { path: "setup", element: <SetupPage /> },
       { path: "settings/notifications", element: <NotificationsPage /> },

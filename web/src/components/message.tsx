@@ -17,6 +17,7 @@ import { targetFromIoc } from "../lib/actions";
 import { extractGif } from "../lib/gifs";
 import { isInteractiveTarget, isTouchLikePointer, LONG_PRESS_MS, LONG_PRESS_SUPPRESS_MS, shouldCancelLongPress } from "../lib/longpress";
 import { GifAttachment } from "./gifs";
+import { AgentMessageExtras } from "./agent-trace";
 
 const CLAIMABLE = new Set(["question", "finding", "ioc"]);
 
@@ -734,6 +735,8 @@ export function MessageRow({
         )}
 
         {m.type === "action_request" && <ActionRequestCard m={m} />}
+
+        {!m.snippet && <AgentMessageExtras m={m} human={me?.kind === "human"} />}
 
         <Reactions list={reactions.list} me={me?.handle} interactive={canReact} onToggle={(e) => void reactions.toggle(e)} onAdd={picker.toggle} />
         {reactions.err && <ErrorLine>{reactions.err}</ErrorLine>}

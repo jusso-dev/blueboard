@@ -16,7 +16,8 @@ namespace Blueboard.Api.Jobs;
 /// Background work. Timer triggers run on one instance at a time (singleton lock in host storage);
 /// a Postgres advisory lock makes that hold even across deployment slots.
 /// </summary>
-public sealed class Timers(Db db, Ingest ingest, Broker broker, WebhookService hooks, Notifier notifier, AuditExporter auditExport, PlaybookRunner playbooks, IntelService intel, Retention retention, Participants participants, Settings settings, ILogger<Timers> log)
+public sealed class Timers(Db db, Ingest ingest, Broker broker, WebhookService hooks, Notifier notifier, AuditExporter auditExport, PlaybookRunner playbooks, IntelService intel, Retention retention, Participants participants, Settings settings, ILogger<Timers> log,
+    Agents.AgentBudgets? budgets = null, Agents.AgentRisk? risk = null, Agents.AgentTrace? trace = null, Agents.ObservabilitySettingsStore? observability = null)
 {
     private const long LockKey = 7_340_001;
     /// <summary>The webhook loop has its own lock so a slow ingest never delays an agent's wake-up.</summary>
@@ -26,6 +27,8 @@ public sealed class Timers(Db db, Ingest ingest, Broker broker, WebhookService h
     /// <summary>Threat intel runs take their own lock, so a slow feed never holds up incident ingest.</summary>
     private const long IntelLockKey = 7_340_010;
     private const long RetentionLockKey = 7_340_011;
+    /// <summary>Agent observability (budgets sweep, risk scores, trace retention): its own lock.</summary>
+    private const long AgentObservabilityLockKey = 7_340_017;
 
     [Function("ingest-incidents")]
     public async Task IngestIncidents([TimerTrigger("0 */1 * * * *")] TimerInfo timer, CancellationToken ct)
@@ -176,6 +179,29 @@ public sealed class Timers(Db db, Ingest ingest, Broker broker, WebhookService h
     [Function("ti-cvewatch-recheck")]
     public async Task CveWatchRecheck([TimerTrigger("0 0 18 1 * *")] TimerInfo timer, CancellationToken ct) =>
         await WithLock(IntelLockKey, async () => log.LogInformation("cve.watch re-check: {Status}", await intel.RecheckCveWatchAsync(ct)), ct);
+
+    /// <summary>
+    /// Agent observability, every 10 minutes: re-check budgets (a new UTC day or month lifts a block, an expired top-up
+    /// can impose one), recompute agent risk scores (alert / quarantine per the admin thresholds) and, once an hour,
+    /// delete tool-call traces older than the retention setting (default 30 days).
+    /// </summary>
+    [Function("agent-observability")]
+    public async Task AgentObservability([TimerTrigger("0 */10 * * * *")] TimerInfo timer, CancellationToken ct)
+    {
+        if (budgets is null || risk is null || trace is null || observability is null) return;
+        await WithLock(AgentObservabilityLockKey, async () =>
+        {
+            var blocked = await budgets.SweepAsync(ct);
+            var scored = await risk.RecomputeAllAsync(ct);
+            log.LogInformation("agent observability: {Blocked} agent(s) over budget, {Scored} risk score(s) recomputed", blocked, scored);
+            if (DateTimeOffset.UtcNow.Minute < 10)
+            {
+                var days = (await observability.GetAsync(ct)).TraceRetentionDays;
+                var purged = await trace.PurgeAsync(days, ct);
+                if (purged > 0) log.LogInformation("deleted {Count} agent trace row(s) older than {Days} days", purged, days);
+            }
+        }, ct);
+    }
 
     private async Task WithLock(long key, Func<Task> work, CancellationToken ct)
     {
