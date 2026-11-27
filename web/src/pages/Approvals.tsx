@@ -111,14 +111,19 @@ function Held({ a, canRun, mine, paused, target }: { a: Action; canRun: boolean;
 function Automatic({ a, canAct, target }: { a: Action; canAct: boolean; target: boolean }) {
   const [busy, setBusy] = useState<"keep" | "now" | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  // The reverse kind may be in confirm_target: the server then asks for the target typed back before Revert now.
+  const [askConfirm, setAskConfirm] = useState(false);
+  const [confirm, setConfirm] = useState("");
   const op = async (o: "keep" | "now") => {
     setBusy(o);
     setErr(null);
     try {
-      await api(`/actions/${a.id}/revert`, { method: "POST", body: JSON.stringify({ op: o }) });
+      await api(`/actions/${a.id}/revert`, { method: "POST", body: JSON.stringify({ op: o, confirm: o === "now" && confirm.trim() ? confirm.trim() : undefined }) });
       refreshAll();
     } catch (e) {
-      setErr((e as Error).message);
+      const message = (e as Error).message;
+      if (o === "now" && message.includes("to confirm Revert now")) setAskConfirm(true);
+      setErr(message);
     } finally {
       setBusy(null);
     }
@@ -154,7 +159,23 @@ function Automatic({ a, canAct, target }: { a: Action; canAct: boolean; target: 
               Keep
             </Button>
           )}
-          <Button size="sm" variant="danger" loading={busy === "now"} disabled={!!busy} onClick={() => void op("now")}>
+          {askConfirm && (
+            <>
+              <label className="sr-only" htmlFor={`revert-confirm-${a.id}`}>
+                Type the target to confirm Revert now
+              </label>
+              <Input
+                id={`revert-confirm-${a.id}`}
+                value={confirm}
+                onChange={(e) => setConfirm(e.target.value)}
+                placeholder="Type the target to confirm"
+                autoComplete="off"
+                spellCheck={false}
+                className="min-w-64 font-mono"
+              />
+            </>
+          )}
+          <Button size="sm" variant="danger" loading={busy === "now"} disabled={!!busy || (askConfirm && !confirm.trim())} onClick={() => void op("now")}>
             Revert now
           </Button>
         </div>

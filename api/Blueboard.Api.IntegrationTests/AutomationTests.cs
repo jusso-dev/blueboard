@@ -317,6 +317,110 @@ public sealed class AutomationTests(TestBoard t) : IClassFixture<TestBoard>
         Assert.Equal(1, await t.ScalarAsync("select count(*) from audit_log where event = 'action.revert_failed' and subject = @id", ("id", a.Id.ToString())));
     }
 
+    /// <summary>Run isolate_device under its rule, with release_device made stricter after it ran.</summary>
+    private async Task<(ActionRow Original, Broker Broker)> IsolatedThenTightened(Func<Policy, Policy> tighten)
+    {
+        var (_, _, broker) = await Fresh(File());
+        await Verdict("analyst");
+        var a = await broker.RequestAsync(await t.As("agent"), A1.Isolate(), Ct);
+        Assert.Equal("scheduled", a.RevertState);
+        var strict = tighten(File());
+        var store2 = new PolicyStore(t.Db, t.Audit, t.Board, t.System, strict, Blueboard.Api.Board.PlaybookSet.Empty);
+        return (a, new Broker(t.Db, t.Audit, t.Board, t.Ms, t.Settings, strict, t.System, null, store2));
+    }
+
+    [DbFact]
+    public async Task Timer_revert_of_a_two_approver_reverse_kind_waits_for_two_people()
+    {
+        var (a, broker) = await IsolatedThenTightened(p => p with { RequireTwoApprovers = ["release_device"] });
+        await Sql("update actions set revert_at = now() - interval '1 second' where id = @id", ("id", a.Id));
+        await broker.RevertDueAsync(Ct);
+        var after = (await broker.GetAsync(a.Id, Ct))!;
+        Assert.Equal("reverting", after.RevertState);
+        var rev = (await broker.GetAsync(after.RevertActionId!.Value, Ct))!;
+        Assert.Equal("pending_approval", rev.Status);
+        Assert.Equal(2, rev.ApprovalsRequired);
+        Assert.NotNull(rev.ExpiresAt);
+        Assert.Contains(rev.PolicyNotes, n => n.Contains("require_two_approvers"));
+        Assert.Equal(1, await t.ScalarAsync("select count(*) from messages where payload->>'action_id' = @id and body like '%waiting for two human approvals%'", ("id", rev.Id.ToString())));
+
+        // One person is not enough; the second completes it.
+        var once = await broker.DecideAsync(await t.As("analyst"), rev.Id, "approve", null, Ct);
+        Assert.Equal("approved_once", once.Status);
+        var done = await broker.DecideAsync(await t.As("analyst2"), rev.Id, "approve", null, Ct);
+        Assert.Equal("succeeded", done.Status);
+        Assert.Equal("reverted", (await broker.GetAsync(a.Id, Ct))!.RevertState);
+    }
+
+    [DbFact]
+    public async Task Timer_revert_of_a_confirm_target_reverse_kind_waits_and_a_denial_marks_it_failed()
+    {
+        var (a, broker) = await IsolatedThenTightened(p => p with { ConfirmTarget = ["release_device"] });
+        await Sql("update actions set revert_at = now() - interval '1 second' where id = @id", ("id", a.Id));
+        await broker.RevertDueAsync(Ct);
+        var rev = (await broker.GetAsync((await broker.GetAsync(a.Id, Ct))!.RevertActionId!.Value, Ct))!;
+        Assert.Equal("pending_approval", rev.Status);
+        Assert.Contains(rev.PolicyNotes, n => n.Contains("confirm_target"));
+        await broker.DecideAsync(await t.As("analyst"), rev.Id, "deny", "keep it isolated", Ct);
+        await broker.RevertDueAsync(Ct);
+        Assert.Equal("failed", (await broker.GetAsync(a.Id, Ct))!.RevertState);
+        Assert.Equal(1, await t.ScalarAsync("select count(*) from audit_log where event = 'action.revert_failed' and subject = @id", ("id", a.Id.ToString())));
+    }
+
+    [DbFact]
+    public async Task Revert_now_counts_as_one_approval_and_needs_the_typed_target()
+    {
+        var (a, broker) = await IsolatedThenTightened(p => p with { RequireTwoApprovers = ["release_device"], ConfirmTarget = ["release_device"] });
+        var analyst2 = await t.As("analyst2");
+        Assert.Contains("to confirm Revert now", (await Assert.ThrowsAsync<BoardException>(() => broker.RevertOpAsync(analyst2, a.Id, new("now"), Ct))).Message);
+        Assert.Null((await broker.GetAsync(a.Id, Ct))!.RevertActionId);
+        var after = await broker.RevertOpAsync(analyst2, a.Id, new("now", null, TestBoard.Device), Ct);
+        var rev = (await broker.GetAsync(after.RevertActionId!.Value, Ct))!;
+        Assert.Equal("approved_once", rev.Status);
+        Assert.Equal(["analyst2"], rev.Approvals!);
+        Assert.Equal("reverting", after.RevertState);
+        // The same person can't complete it; a different one, typing the target, can.
+        await Assert.ThrowsAsync<BoardException>(() => broker.DecideAsync(analyst2, rev.Id, "approve", null, Ct, TestBoard.Device));
+        var done = await broker.DecideAsync(await t.As("analyst"), rev.Id, "approve", null, Ct, TestBoard.Device);
+        Assert.Equal("succeeded", done.Status);
+        Assert.Equal("reverted", (await broker.GetAsync(a.Id, Ct))!.RevertState);
+    }
+
+    [DbFact]
+    public async Task Failed_or_interrupted_reverts_and_orphaned_claims_are_settled_and_reported()
+    {
+        var (_, _, broker) = await Fresh(File());
+        await Verdict("analyst");
+        // A reverse action that failed (or was interrupted) while the original still says reverting.
+        var a = await broker.RequestAsync(await t.As("agent"), A1.Isolate(), Ct);
+        var revertNow = await broker.RevertOpAsync(await t.As("analyst2"), a.Id, new("now"), Ct);
+        await Sql("update actions set revert_state = 'reverting' where id = @id", ("id", a.Id));
+        await Sql("update actions set status = 'failed' where id = @id", ("id", revertNow.RevertActionId!.Value));
+        await broker.RevertDueAsync(Ct);
+        Assert.Equal("failed", (await broker.GetAsync(a.Id, Ct))!.RevertState);
+
+        // A running reverse action interrupted by a crash: recovery settles the original too.
+        await Fresh(File());
+        await Verdict("analyst");
+        var b = await broker.RequestAsync(await t.As("agent"), A1.Isolate(), Ct);
+        var bNow = await broker.RevertOpAsync(await t.As("analyst2"), b.Id, new("now"), Ct);
+        await Sql("update actions set revert_state = 'reverting' where id = @id", ("id", b.Id));
+        await Sql("update actions set status = 'running', started_at = now() - interval '11 minutes' where id = @id", ("id", bNow.RevertActionId!.Value));
+        await broker.RecoverAsync(Ct);
+        Assert.Equal("failed", (await broker.GetAsync(b.Id, Ct))!.RevertState);
+
+        // Claimed for reverting but never filed: after 10 minutes it is marked failed so a person can act.
+        await Fresh(File());
+        await Verdict("analyst");
+        var c = await broker.RequestAsync(await t.As("agent"), A1.Isolate(), Ct);
+        await Sql("update actions set revert_state = 'reverting', updated_at = now() - interval '11 minutes' where id = @id", ("id", c.Id));
+        await broker.RevertDueAsync(Ct);
+        Assert.Equal("failed", (await broker.GetAsync(c.Id, Ct))!.RevertState);
+        Assert.Equal(1, await t.ScalarAsync("select count(*) from audit_log where event = 'action.revert_failed' and subject = @id", ("id", c.Id.ToString())));
+        // A person can still revert it now.
+        Assert.Equal("reverted", (await broker.RevertOpAsync(await t.As("analyst2"), c.Id, new("now"), Ct)).RevertState);
+    }
+
     [DbFact]
     public async Task Revert_after_minutes_is_refused_for_irreversible_kinds()
     {

@@ -414,4 +414,26 @@ public class AutomationTests
         Assert.True(paths.ContainsKey("/api/policy/kinds/{kind}"));
         Assert.True(paths.ContainsKey("/api/actions/{id}/revert"));
     }
+    [Fact]
+    public void Timer_revert_runs_unattended_only_when_the_reverse_kind_needs_no_more_than_one_plain_approval()
+    {
+        var plain = new Policy();
+        Assert.Null(Broker.RevertNeedsPeople("release_device", plain, Outcome.NeedsApproval, [], null));
+        Assert.Null(Broker.RevertNeedsPeople("release_device", plain with { RequireTwoApprovers = ["release_device"] }, Outcome.Auto, [], null));
+        Assert.Contains("require_two_approvers", Broker.RevertNeedsPeople("release_device", plain with { RequireTwoApprovers = ["release_device"] }, Outcome.NeedsApproval, [], null));
+        Assert.Contains("confirm_target", Broker.RevertNeedsPeople("release_device", plain with { ConfirmTarget = ["release_device"] }, Outcome.NeedsApproval, [], null));
+        Assert.Contains("not in incident", Broker.RevertNeedsPeople("release_device", plain, Outcome.NeedsApproval, ["not in incident 42 evidence: x"], null));
+        // Resolver notes are for the approver only (back-test volumes, rule to disable): they don't hold a revert.
+        var facts = new ActionFacts(Notes: ["disables defender rule 'x'"]);
+        Assert.Null(Broker.RevertNeedsPeople("disable_detection_rule", plain, Outcome.NeedsApproval, ["disables defender rule 'x'"], facts));
+    }
+
+    [Fact]
+    public void Policy_check_warns_when_a_reverse_kind_needs_more_than_one_approval()
+    {
+        var strict = PolicyReport.WarningsFor(new Policy { RequireTwoApprovers = ["release_device"], ConfirmTarget = ["enable_user"] });
+        Assert.Contains(strict, w => w.StartsWith("release_device is in require_two_approvers and is the automatic revert of isolate_device") && w.Contains("wait for people"));
+        Assert.Contains(strict, w => w.StartsWith("enable_user is in confirm_target and is the automatic revert of disable_user"));
+        Assert.DoesNotContain(PolicyReport.WarningsFor(new Policy()), w => w.Contains("is the automatic revert of"));
+    }
 }

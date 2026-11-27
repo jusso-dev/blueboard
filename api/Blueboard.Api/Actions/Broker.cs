@@ -658,6 +658,13 @@ public sealed class Broker(Db db, Audit audit, BoardService board, MsClient ms, 
                 await ReturnToApprovalAsync(a, recheck.Notes.LastOrDefault() ?? "automation no longer applies", policy, ct);
                 return;
             }
+            // A timer revert filed with no person: the reverse kind must still be one it may run unattended.
+            if (a.RevertOf is not null && a.DecidedBy is null && a.Approvals is not { Length: > 0 }
+                && RevertNeedsPeople(a.Kind, policy, recheck.Outcome, recheck.Notes, actionFacts) is { } needsPeople)
+            {
+                await ReturnToApprovalAsync(a, needsPeople, policy, ct);
+                return;
+            }
             prepared = def.Prepare?.Invoke(prms, new ActionContext(id, a.IncidentGraphId, a.IncidentId, a.RequestedBy, a.DecidedBy, a.Justification, settings.Ti, DateTimeOffset.UtcNow, actionFacts?.Data));
             result = !settings.BrokerExecute
                 ? new { dry_run = true, would = def.Describe(prms), request = prepared }
@@ -734,11 +741,21 @@ public sealed class Broker(Db db, Audit audit, BoardService board, MsClient ms, 
         var stuck = new List<(Guid Id, Guid Revert, string Status)>();
         await using (var cmd = db.Command("""
             select o.id, r.id, r.status from actions o join actions r on r.id = o.revert_action_id
-            where o.revert_state = 'reverting' and r.status in ('denied', 'expired', 'rejected') limit 20
+            where o.revert_state = 'reverting' and r.status in ('denied', 'expired', 'rejected', 'failed') limit 20
             """))
         await using (var r = await cmd.ExecuteReaderAsync(ct))
             while (await r.ReadAsync(ct)) stuck.Add((r.GetGuid(0), r.GetGuid(1), r.GetString(2)));
         foreach (var (id, rev, st) in stuck) await SettleRevertAsync(id, rev, "failed", $"the revert action was {st}", ct);
+
+        // Claimed for reverting, but the reverse action was never filed (a crash between the claim and the insert):
+        // mark it failed so a person hears about it and can choose Revert now, instead of leaving it reverting for ever.
+        var orphaned = new List<Guid>();
+        await using (var cmd = db.Command("""
+            select id from actions where revert_state = 'reverting' and revert_action_id is null and updated_at < now() - interval '10 minutes' limit 20
+            """))
+        await using (var r = await cmd.ExecuteReaderAsync(ct))
+            while (await r.ReadAsync(ct)) orphaned.Add(r.GetGuid(0));
+        foreach (var id in orphaned) await SettleRevertAsync(id, null, "failed", "the revert was interrupted before its reverse action was filed", ct);
 
         var due = new List<Guid>();
         await using (var cmd = db.Command("select id from actions where revert_state = 'scheduled' and revert_at <= now() order by revert_at limit 20"))
@@ -773,6 +790,16 @@ public sealed class Broker(Db db, Audit audit, BoardService board, MsClient ms, 
         {
             if (a.Status != "succeeded") throw BoardException.Conflict($"action is {a.Status}; only a completed action can be reverted");
             if (a.RevertState is not (null or "scheduled" or "kept" or "failed")) throw BoardException.Conflict($"revert is {a.RevertState}");
+            // Revert now is this person's approval of the reverse action: confirm_target applies to it as to any approval.
+            var (rkind, rprms, _) = Reversal.Build(a.Kind, Catalog.Get(a.Kind).Validate(a.Params), a.Result, a.Id);
+            if (rkind is not null && (await PolicyAsync(ct)).ConfirmsTarget(rkind))
+            {
+                var rdef = Catalog.Get(rkind);
+                var incident = a.IncidentId is { } iid ? await LoadIncidentAsync(iid, a.RequestedBy, ct) : null;
+                var names = PolicyEngine.ConfirmNames(rdef, rprms!, incident, await ActionFactsAsync(rdef, rprms!, DateTimeOffset.UtcNow, ct));
+                if (input.Confirm is not { } typed || !names.Contains(typed.Trim(), StringComparer.OrdinalIgnoreCase))
+                    throw new BoardException($"type the target ({names.FirstOrDefault()}) to confirm Revert now");
+            }
             if (!await RevertAsync(id, p, input.Note, ct)) throw BoardException.Conflict("a revert for this action was already filed");
         }
         return (await GetAsync(id, ct))!;
@@ -803,29 +830,42 @@ public sealed class Broker(Db db, Audit audit, BoardService board, MsClient ms, 
         var def = Catalog.Get(kind);
         var policy = await PolicyAsync(ct);
         var incident = a.IncidentId is { } iid ? await LoadIncidentAsync(iid, sys.Handle, ct) : null;
-        var decision = PolicyEngine.Evaluate(def, prms!, incident, policy, actionFacts: await ActionFactsAsync(def, prms!, DateTimeOffset.UtcNow, ct));
+        var actionFacts = await ActionFactsAsync(def, prms!, DateTimeOffset.UtcNow, ct);
+        var decision = PolicyEngine.Assess(def, prms!, incident, policy, await AutomationFactsAsync(kind, a.IncidentId, sys.Handle, null, policy, ct), actionFacts: actionFacts);
         if (decision.Outcome == Outcome.Reject)
         {
             await SettleRevertAsync(id, null, "failed", $"policy rejects {kind}: {decision.Notes[0]}", ct);
             return true;
         }
-        var paused = by is null && (await PauseOfAutomationAsync(ct)).Paused;
-        var status = paused ? "pending_approval" : "approved";
+        // The scheduled revert stands in for one approval, decided when the original was approved or ran under its rule.
+        // Anything the reverse kind needs beyond that (a second approver, a typed target, a note a person must read, a
+        // paused automation) means it waits for people like any other request. A person choosing Revert now is exactly
+        // one approval: a two-approver reverse kind still needs a second, different person.
+        var required = Math.Max(1, policy.ApprovalsFor(kind));
+        var wait = by is null
+            ? (await PauseOfAutomationAsync(ct)).Paused ? "automation is paused" : RevertNeedsPeople(kind, policy, decision.Outcome, decision.Notes, actionFacts)
+            : null;
+        var status = wait is not null ? "pending_approval" : by is not null && required > 1 ? "approved_once" : "approved";
+        var needsApproval = status != "approved";
         var justification = by is null
             ? $"Automatic revert of action {id} ({a.Kind}) {a.RevertAfterMinutes} minutes after it ran, as scheduled{(a.AutoRule is { } r ? $" by automation rule {r}" : "")}."
             : $"Revert now of action {id} ({a.Kind}), chosen by @{by.Handle}{(note is { Length: > 0 } n ? $": {n}" : ".")}";
+        var filedNote = wait is not null ? $"this revert waits for {(required > 1 ? "two approvers" : "a human approver")}: {wait}"
+            : status == "approved_once" ? $"Revert now by @{by!.Handle} is one approval; {kind} needs a second, different approver"
+            : $"automatic revert of action {id}";
         Guid revertId;
         await using (var conn = await db.OpenAsync(ct))
         await using (var tx = await conn.BeginTransactionAsync(ct))
         {
+            var final = status == "approved" && by is not null;
             await using (var ins = new NpgsqlCommand("""
                 insert into actions (kind, params, incident_id, requested_by, justification, status, requires_approval, policy_notes, expires_at, approvals_required,
                                      decided_by, decided_at, decision_note, revert_of)
-                values (@k, @p, @i, @r, @j, @s, @ra, @n, case when @ra then now() + make_interval(secs => @exp) end, 1,
+                values (@k, @p, @i, @r, @j, @s, @ra, @n, case when @ra then now() + make_interval(secs => @exp) end, @ar,
                         @db, case when @db::uuid is not null then now() end, @dn, @of) returning id
                 """, conn, tx).With("k", kind).WithJson("p", prms).With("i", a.IncidentId).With("r", sys.Id).With("j", justification)
-                .With("s", status).With("ra", paused).With("n", decision.Notes.Append(paused ? "automation is paused, so this revert waits for a person" : $"automatic revert of action {id}").ToArray())
-                .With("exp", policy.ExpiryFor(kind).TotalSeconds).With("db", by?.Id).With("dn", by is null ? null : "revert now").With("of", id))
+                .With("s", status).With("ra", needsApproval).With("n", decision.Notes.Append(filedNote).ToArray()).With("ar", required)
+                .With("exp", policy.ExpiryFor(kind).TotalSeconds).With("db", final ? by!.Id : null).With("dn", final ? "revert now" : null).With("of", id))
             {
                 try { revertId = (Guid)(await ins.ExecuteScalarAsync(ct))!; }
                 catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UniqueViolation && ex.ConstraintName == "actions_one_revert")
@@ -841,16 +881,35 @@ public sealed class Broker(Db db, Audit audit, BoardService board, MsClient ms, 
                 await link.ExecuteNonQueryAsync(ct);
             // Posted in the original action's thread; the revert's later status and result replies go there too.
             var msg = await board.PostInTransactionAsync(conn, tx, sys, new PostInput("containment",
-                $"@{a.RequestedBy} {(by is null ? "**Automatic revert**" : $"@{by.Handle} chose **Revert now**")}: {def.Title}: {def.Describe(prms!)}. Status: **{(paused ? "awaiting human approval (automation paused)" : "approved, running")}**",
+                $"@{a.RequestedBy} {(by is null ? "**Automatic revert**" : $"@{by.Handle} chose **Revert now**")}: {def.Title}: {def.Describe(prms!)}. Status: **{status switch
+                {
+                    "pending_approval" => $"waiting for {(required > 1 ? "two human approvals" : "human approval")}, not run",
+                    "approved_once" => $"approved by @{by!.Handle} (1 of {required}), waiting for a second, different approver",
+                    _ => "approved, running",
+                }}**{(wait is not null ? $" ({wait}). It stays in place until approvers decide; if they deny it or it expires, the revert is marked failed." : "")}",
                 "action_request", Json.Element(new { action_id = revertId, kind, @params = prms, status, revert_of = id }), a.RequestMessageId, a.IncidentId?.ToString()), system: true, ct);
             await using (var up = new NpgsqlCommand("update actions set request_message_id = coalesce(@root, @m) where id = @id", conn, tx)
                              .With("root", a.RequestMessageId).With("m", msg).With("id", revertId))
                 await up.ExecuteNonQueryAsync(ct);
             await tx.CommitAsync(ct);
         }
-        await audit.WriteAsync(by?.Id, "action.revert_filed", revertId.ToString(), new { revert_of = id, kind, via = by is null ? "timer" : "revert_now", paused }, ct);
-        if (!paused) await ExecuteAsync(revertId, ct);
+        await audit.WriteAsync(by?.Id, "action.revert_filed", revertId.ToString(), new { revert_of = id, kind, via = by is null ? "timer" : "revert_now", status, waiting_for_people = wait, approvals_required = required }, ct);
+        if (status == "approved") await ExecuteAsync(revertId, ct);
         return true;
+    }
+
+    /// <summary>
+    /// Why a scheduled (timer) revert of <paramref name="kind"/> can't run unattended, or null when it can. The schedule
+    /// stands in for one ordinary approval only: an Auto outcome, or a plain one-approver kind with no policy notes,
+    /// runs; two-approver and confirm_target kinds, and notes a person must read, wait for people.
+    /// </summary>
+    internal static string? RevertNeedsPeople(string kind, Policy policy, Outcome outcome, IReadOnlyList<string> notes, ActionFacts? facts)
+    {
+        if (outcome == Outcome.Auto) return null;
+        if (policy.ApprovalsFor(kind) > 1) return $"{kind} is in require_two_approvers";
+        if (policy.ConfirmsTarget(kind)) return $"{kind} is in confirm_target, so an approver must type the target";
+        var blocking = notes.Except(facts?.Notes ?? []).ToList();
+        return blocking.Count > 0 ? $"policy notes need a person to look: {blocking[0]}" : null;
     }
 
     private async Task<AutomationPause> PauseOfAutomationAsync(CancellationToken ct) =>
@@ -920,6 +979,8 @@ public sealed class Broker(Db db, Audit audit, BoardService board, MsClient ms, 
             await board.PostAsync(await system.GetAsync(ct), new PostInput("containment",
                 $"**{Catalog.Get(a.Kind).Title}** was interrupted while running. Its outcome is unknown: check Defender before requesting it again.",
                 "action_result", Json.Element(new { action_id = id, status = "failed", error = a.Error }), a.RequestMessageId, a.IncidentId?.ToString()), system: true, ct);
+            // An interrupted reverse action leaves its original in place: settle it so the requester hears.
+            if (a.RevertOf is { } original) await SettleRevertAsync(original, id, "failed", "the revert action was interrupted while running; its outcome is unknown", ct);
         }
         // Actions filed before requests became transactional could be left without their board message.
         var orphans = new List<Guid>();

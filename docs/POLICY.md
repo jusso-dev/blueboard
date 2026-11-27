@@ -173,7 +173,15 @@ Any request for a reversible kind may carry `revert_after_minutes` (5 to `max_re
 
 Everything else is irreversible, including `disable_service_principal` (the catalogue has no enable action for it), `okta_clear_user_sessions`, `okta_reset_factors`, `purge_email` and `intune_expedite_quality_update`.
 
-When the action succeeds, `revert_at` is set. The recovery timer (every minute) files the reverse action as the board's system principal, in the original's thread with an @mention of the requester, re-checks policy (a protected or disabled reverse kind fails the revert), runs it and audits `action.revert_filed` and `action.reverted`. Approvers can choose **Keep** (cancel the revert, `action.revert_kept`) or **Revert now** (the reverse runs as approved by them) from `/approvals`. If the revert can't be filed or doesn't succeed, the original is marked `revert failed`, the requester is @mentioned and approvers get `action.revert_failed`. One revert per action is enforced by a unique index.
+When the action succeeds, `revert_at` is set. The recovery timer (every minute) files the reverse action as the board's system principal, in the original's thread with an @mention of the requester, re-checks policy (a protected or disabled reverse kind fails the revert) and audits `action.revert_filed` and `action.reverted`.
+
+The schedule stands in for **one ordinary approval** of the reverse kind, nothing more. The timer runs the reverse action unattended only when policy would run it on its own, or when it needs a single approver with no `confirm_target` and no policy notes. If the reverse kind is in `require_two_approvers` or `confirm_target`, or its check raises a note a person must read (for example a target no longer in the evidence), the reverse action is filed as `pending_approval` with the kind's normal approvals and expiry; approvers are notified like any request, and the thread says the revert is waiting for people. The original stays in place until they decide. The same check runs again just before an unattended revert executes.
+
+Approvers can choose **Keep** (cancel the revert, `action.revert_kept`) or **Revert now** from `/approvals`. Revert now counts as that person's approval of the reverse action and no more: for a two-approver reverse kind it files the revert as 1 of 2 and a different approver must complete it, and for a `confirm_target` reverse kind the person must type the target (`confirm` in the request body).
+
+If the revert can't be filed, is denied, expires, is rejected on re-check, fails or is interrupted, the original is marked `revert failed`, the requester is @mentioned and approvers get `action.revert_failed`. A revert claimed but never filed (a crash in between) is marked failed after 10 minutes, so a person can choose Revert now. One revert per action is enforced by a unique index.
+
+`policy-check` warns when a reverse kind (`release_device`, `enable_user`, `unrestrict_app_execution`, `unblock_indicator`, `okta_unsuspend_user`, `disable_detection_rule`) is in `require_two_approvers` or `confirm_target`: scheduled reverts of its kind will wait for people instead of running on time.
 
 ### Playbook triggers
 

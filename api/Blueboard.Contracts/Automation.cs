@@ -68,4 +68,5 @@ public sealed record PolicyChangeDecisionInput(
 /// <summary>Keep: cancel an action's scheduled automatic revert. now: revert it immediately.</summary>
 public sealed record RevertOpInput(
     [Description("keep (cancel the scheduled revert) or now (revert immediately)")][AllowedValues("keep", "now")] string Op,
-    [Description("Optional note (up to 500 characters)")][StringLength(500)] string? Note = null);
+    [Description("Optional note (up to 500 characters)")][StringLength(500)] string? Note = null,
+    [Description("now only, when the reverse kind is in policy confirm_target: the target name typed back")][StringLength(500)] string? Confirm = null);

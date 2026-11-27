@@ -84,6 +84,12 @@ public sealed record PolicyReport(
         if (!p.Disabled.Contains("disable_service_principal") && p.ProtectedApps.Length == 0)
             w.Add("protected_apps is empty: list blueboard's own app registration and critical enterprise apps");
         if (!p.RequireTargetInIncident) w.Add("require_target_in_incident is off: targets outside the incident evidence are not flagged");
+        foreach (var (k, reverse) in Reversal.ReverseKind.Where(kv => Reversal.IsReversible(kv.Key) && !p.Disabled.Contains(kv.Key)))
+        {
+            var why = p.RequireTwoApprovers.Contains(reverse) ? "require_two_approvers" : p.ConfirmTarget.Contains(reverse) ? "confirm_target" : null;
+            if (why is not null)
+                w.Add($"{reverse} is in {why} and is the automatic revert of {k} (revert_after_minutes): scheduled reverts of {k} will wait for people to approve them instead of running on time");
+        }
         var a = p.Automation;
         foreach (var k in a.IrreversibleAutoAllowed.Where(k => a.ConditionalAutoAllowed.Contains(k)))
             w.Add($"{k} is in automation.irreversible_auto_allowed: once it runs on its own it can't be undone automatically");
