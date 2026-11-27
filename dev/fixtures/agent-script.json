@@ -2,6 +2,10 @@
   "_comment": "Canned results for AGENT_MODE=scripted (local demo, no model). Keyed by Defender incident id. Each entry runs board lookups through MCP (so they show in the audit log), then posts a finding, IOCs and a verdict in the incident thread, then requests one action that waits for a human.",
   "incidents": {
     "1001": {
+      "timeline": [
+        { "minutes_ago": 46, "entity": "ana.lopez@contoso.com", "action": "opened the message in Outlook on the web", "source": "OfficeActivity" },
+        { "minutes_ago": 45, "entity": "https://contoso-payroll-update.example/login", "action": "URL detonation: fake Microsoft sign-in page", "source": "UrlClickEvents" }
+      ],
       "lookups": [
         { "kind": "user", "value": "ana.lopez@contoso.com" },
         { "kind": "url", "value": "contoso-payroll-update.example" }
@@ -24,6 +28,12 @@
       }
     },
     "1002": {
+      "timeline": [
+        { "minutes_ago": 34, "entity": "sam.patel@contoso.com", "action": "received Invoice-4471.docm from an external sender", "source": "EmailAttachmentInfo" },
+        { "minutes_ago": 30, "entity": "ws-0142.contoso.com", "action": "powershell.exe downloaded update-check.ps1 from cdn-update-check.example", "source": "DeviceNetworkEvents" },
+        { "minutes_ago": 29, "entity": "203.0.113.77", "action": "first beacon from ws-0142 over HTTPS (60 s interval)", "source": "DeviceNetworkEvents" },
+        { "minutes_ago": 26, "entity": "ws-0142.contoso.com", "action": "scheduled task 'UpdateCheck' created for persistence", "source": "DeviceEvents" }
+      ],
       "lookups": [
         { "kind": "device", "value": "7c3f9e2a1b8d4c6e0f5a2b9d8c7e6f1a3b4c5d6e" },
         { "kind": "file", "value": "4f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b4a3f2e1d0c9b8a7f6e5d4c3b" },
@@ -47,6 +57,9 @@
       }
     },
     "1003": {
+      "timeline": [
+        { "minutes_ago": 15, "entity": "j.chen@contoso.com", "action": "IMAP session read 212 messages from 203.0.113.200", "source": "OfficeActivity" }
+      ],
       "lookups": [
         { "kind": "user", "value": "j.chen@contoso.com" },
         { "kind": "ip", "value": "203.0.113.200" }

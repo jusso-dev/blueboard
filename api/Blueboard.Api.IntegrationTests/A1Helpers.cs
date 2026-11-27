@@ -78,7 +78,7 @@ internal static class A1
         var intel = Intel(db, board, ms, enrich, sys, t.Settings);
         var gifs = new GifService(new HttpClient(), t.Settings, use);
         var memory = new MemoryService(db, audit, board, use);
-        var api = new BoardApi(ep, board, search, new Reporting(db), broker, enrich, ingest, hooks, db, policy, queries, runner, books, intel, audit, gifs, memory);
+        var api = new BoardApi(ep, board, search, new Reporting(db), broker, enrich, ingest, hooks, db, policy, queries, runner, books, intel, audit, gifs, memory, new AttackViews(db, board, policy));
         return new App { Db = db, Policy = policy, Limiter = limiter, Board = board, Broker = broker, Enrich = enrich, Auth = auth, Api = api, Hooks = hooks, Intel = intel, Gifs = gifs, Memory = memory, Playbooks = runner, Microsoft = fake,
             Budgets = budgets, Trace = trace, Feedback = feedback, Observer = observer, Ingest = ingest };
     }
@@ -88,7 +88,7 @@ internal static class A1
     {
         var books = PlaybookSet.Empty;
         return new Blueboard.Api.Mcp.BoardTools(app.Auth, app.Board, new Search(app.Db, app.Board), new IncidentQueries(app.Db, app.Board, books),
-            app.Broker, app.Enrich, app.Ingest, app.Hooks, app.Policy, app.Playbooks, books, app.Intel, null!, app.Gifs, app.Memory,
+            app.Broker, app.Enrich, app.Ingest, app.Hooks, app.Policy, app.Playbooks, books, app.Intel, null!, app.Gifs, app.Memory, new AttackViews(app.Db, app.Board, app.Policy),
             NullLogger<Blueboard.Api.Mcp.BoardTools>.Instance, observer: app.Observer, budgets: app.Budgets, feedback: app.Feedback);
     }
 

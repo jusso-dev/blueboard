@@ -22,7 +22,7 @@ namespace Blueboard.Api.Mcp;
 /// Every call authenticates the bearer token from the transport headers and re-reads the caller's roles from Entra;
 /// there is no shared key. Board content is untrusted data.
 /// </summary>
-public sealed class BoardTools(Authenticator auth, BoardService board, Search search, IncidentQueries incidents, Broker broker, Enrichment enrich, Ingest ingest, WebhookService hooks, Policy policy, PlaybookRunner playbooks, PlaybookSet playbookSet, IntelService intel, Participants participants, GifService gifs, MemoryService memory, ILogger<BoardTools> log,
+public sealed class BoardTools(Authenticator auth, BoardService board, Search search, IncidentQueries incidents, Broker broker, Enrichment enrich, Ingest ingest, WebhookService hooks, Policy policy, PlaybookRunner playbooks, PlaybookSet playbookSet, IntelService intel, Participants participants, GifService gifs, MemoryService memory, AttackViews attack, ILogger<BoardTools> log,
     PolicyStore? policyStore = null, McpObserver? observer = null, AgentBudgets? budgets = null, AgentFeedback? feedback = null)
 {
     /// <summary>
@@ -210,13 +210,29 @@ public sealed class BoardTools(Authenticator auth, BoardService board, Search se
     public Task<string> ListPlaybooks([McpToolTrigger(Tools.ListPlaybooks, Tools.ListPlaybooksDoc)] ToolInvocationContext ctx) =>
         Call(ctx, _ => Task.FromResult<object?>(new
         {
-            playbooks = playbookSet.All.Select(p => new { p.Id, p.Title, p.File, p.Priority, p.Match, steps = p.Steps.Count }),
+            playbooks = playbookSet.All.Select(p => new { p.Id, p.Title, p.File, p.Priority, p.Scope, p.Match, steps = p.Steps.Count }),
             problems = playbookSet.Problems,
         }));
 
     [Function(nameof(AttachPlaybook))]
     public Task<string> AttachPlaybook([McpToolTrigger(Tools.AttachPlaybook, Tools.AttachPlaybookDoc)] ToolInvocationContext ctx) =>
         Call<AttachPlaybookInput>(ctx, async (me, a) => await playbooks.AttachByIdAsync(me, a.Incident, a.PlaybookId));
+
+    [Function(nameof(GetIncidentTimeline))]
+    public Task<string> GetIncidentTimeline([McpToolTrigger(Tools.GetIncidentTimeline, Tools.GetIncidentTimelineDoc)] ToolInvocationContext ctx) =>
+        Call<TimelineQuery>(ctx, async (_, q) => await attack.TimelineAsync(q.Incident, q.Entity, q.Source, q.Limit));
+
+    [Function(nameof(GetIncidentGraph))]
+    public Task<string> GetIncidentGraph([McpToolTrigger(Tools.GetIncidentGraph, Tools.GetIncidentGraphDoc)] ToolInvocationContext ctx) =>
+        Call<IncidentQuery>(ctx, async (me, q) => await attack.GraphAsync(me, q.Incident));
+
+    [Function(nameof(AddTimelineEvents))]
+    public Task<string> AddTimelineEvents([McpToolTrigger(Tools.AddTimelineEvents, Tools.AddTimelineEventsDoc)] ToolInvocationContext ctx) =>
+        Call<AddTimelineEventsInput>(ctx, async (me, a) => await attack.AddEventsAsync(me, a));
+
+    [Function(nameof(StartTiPlaybook))]
+    public Task<string> StartTiPlaybook([McpToolTrigger(Tools.StartTiPlaybook, Tools.StartTiPlaybookDoc)] ToolInvocationContext ctx) =>
+        Call<StartTiPlaybookInput>(ctx, async (me, s) => await playbooks.StartForTiFindingAsync(me, s.TiFindingId, s.PlaybookId));
 
     /// <summary>Outside and tenant intel is data written by others: say so in the tool output itself.</summary>
     private const string UntrustedNotice =

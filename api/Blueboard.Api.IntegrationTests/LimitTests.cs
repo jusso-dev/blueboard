@@ -46,7 +46,7 @@ public sealed class LimitTests(TestBoard t) : IClassFixture<TestBoard>
         var agent = await NewPrincipal("agent");
         var books = PlaybookSet.Empty;
         var tools = new BoardTools(app.Auth, app.Board, new Search(app.Db, app.Board), new IncidentQueries(app.Db, app.Board, books),
-            app.Broker, app.Enrich, null!, app.Hooks, app.Policy, app.Playbooks, books, app.Intel, null!, app.Gifs, app.Memory, NullLogger<BoardTools>.Instance);
+            app.Broker, app.Enrich, null!, app.Hooks, app.Policy, app.Playbooks, books, app.Intel, null!, app.Gifs, app.Memory, new AttackViews(app.Db, app.Board, app.Policy), NullLogger<BoardTools>.Instance);
         var ctx = new ToolInvocationContext
         {
             Name = "run_hunting_query",

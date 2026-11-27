@@ -56,6 +56,14 @@ public static class Tools
     public const string ListPlaybooksDoc = "List loaded response playbooks, what Defender/Sentinel signals each matches, and their step counts.";
     public const string AttachPlaybook = "attach_playbook";
     public const string AttachPlaybookDoc = "Attach a playbook checklist to an incident that does not have one yet, posting its initial steps as claimable questions in the incident thread.";
+    public const string GetIncidentTimeline = "get_incident_timeline";
+    public const string GetIncidentTimelineDoc = "Read-only attack timeline for an incident, oldest first and deduplicated: alert first/last activity, timestamped Defender evidence (process starts, email delivery, logon sessions), events agents reported in finding/ioc payloads (marked reported, with whether the entity is in evidence), verdicts and board actions (requested, approved, executed, reverted). Every event cites its alert, message or action id. Filter by entity or source.";
+    public const string GetIncidentGraph = "get_incident_graph";
+    public const string GetIncidentGraphDoc = "Read-only attack graph for an incident: users, devices, IPs, domains, URLs, files, processes, mailboxes, email messages, apps/service principals and Azure resources from the evidence, with relationships (logged on to, ran, delivered to, resolves to ...). Nodes carry verdicts and compromise flags, a protected flag from policy, and the action kinds pending or executed against them. Inferred edges are only co-occurrence.";
+    public const string AddTimelineEvents = "add_timeline_events";
+    public const string AddTimelineEventsDoc = "Append timestamped events from your hunting results to an incident's attack timeline. Posts a finding in the incident thread with payload.events, so the events are attributed to you and cited by message id. Events are shown as reported, never as Defender evidence. 1-200 events: {ts, entity, action, source, ref}.";
+    public const string StartTiPlaybook = "start_ti_playbook";
+    public const string StartTiPlaybookDoc = "Run an intel playbook (default emerging-threat-detection) for a threat intel finding: posts its checklist steps as claimable questions in a #intel thread, with no incident needed. Idempotent: returns the existing run for the same finding and playbook.";
     public const string RunHuntingQuery = "run_hunting_query";
     public const string RunHuntingQueryDoc = "Run a read-only KQL advanced hunting query across Defender XDR tables. Max 200 rows returned. Needs Board.Hunt.";
     public const string RunSentinelQuery = "run_sentinel_query";
@@ -122,6 +130,10 @@ public static class Tools
         new(SyncIncident, SyncIncidentDoc, typeof(IncidentQuery), "poster"),
         new(ListPlaybooks, ListPlaybooksDoc, typeof(NoInput), "poster"),
         new(AttachPlaybook, AttachPlaybookDoc, typeof(AttachPlaybookInput), "poster"),
+        new(GetIncidentTimeline, GetIncidentTimelineDoc, typeof(TimelineQuery), "poster"),
+        new(GetIncidentGraph, GetIncidentGraphDoc, typeof(IncidentQuery), "poster"),
+        new(AddTimelineEvents, AddTimelineEventsDoc, typeof(AddTimelineEventsInput), "poster"),
+        new(StartTiPlaybook, StartTiPlaybookDoc, typeof(StartTiPlaybookInput), "poster"),
         new(RunHuntingQuery, RunHuntingQueryDoc, typeof(HuntInput), "hunter"),
         new(RunSentinelQuery, RunSentinelQueryDoc, typeof(SentinelQueryInput), "hunter"),
         new(LookupEntity, LookupEntityDoc, typeof(LookupInput), "hunter"),

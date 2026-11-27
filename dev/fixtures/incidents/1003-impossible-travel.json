@@ -16,6 +16,8 @@
       "serviceSource": "microsoftDefenderForCloudApps",
       "detectionSource": "microsoftDefenderForCloudApps",
       "mitreTechniques": ["T1078.004"],
+      "_firstMinutesAgo": 36,
+      "_lastMinutesAgo": 16,
       "description": "The user signed in from Sydney, Australia and then from Amsterdam, Netherlands 20 minutes later. The second sign-in used a legacy client.",
       "evidence": [
         {
@@ -23,7 +25,17 @@
           "userAccount": { "userPrincipalName": "j.chen@contoso.com", "azureAdUserId": "0b6c2f1e-1003-4a7b-9c3d-000000000003", "displayName": "Jordan Chen" }
         },
         { "@odata.type": "#microsoft.graph.security.ipEvidence", "ipAddress": "198.51.100.23" },
-        { "@odata.type": "#microsoft.graph.security.ipEvidence", "ipAddress": "203.0.113.200" }
+        { "@odata.type": "#microsoft.graph.security.ipEvidence", "ipAddress": "203.0.113.200" },
+        {
+          "@odata.type": "#microsoft.graph.security.cloudLogonSessionEvidence",
+          "account": { "userAccount": { "userPrincipalName": "j.chen@contoso.com", "azureAdUserId": "0b6c2f1e-1003-4a7b-9c3d-000000000003" } },
+          "ipAddress": "198.51.100.23", "startUtcDateTime": "@minutesAgo:36", "browser": "Edge on a managed device (Sydney)"
+        },
+        {
+          "@odata.type": "#microsoft.graph.security.cloudLogonSessionEvidence",
+          "account": { "userAccount": { "userPrincipalName": "j.chen@contoso.com", "azureAdUserId": "0b6c2f1e-1003-4a7b-9c3d-000000000003" } },
+          "ipAddress": "203.0.113.200", "startUtcDateTime": "@minutesAgo:16", "browser": "IMAP legacy client (Amsterdam)", "verdict": "suspicious"
+        }
       ]
     }
   ]

