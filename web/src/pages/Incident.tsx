@@ -11,6 +11,8 @@ import { RequestActionButton, useCanRequest } from "../components/request-action
 import { safeHref } from "../lib/gifs";
 import { Button, Empty, Severity, useStoredState } from "../components/ui";
 import { CveRef } from "../components/cve";
+import { TraceList } from "../components/agent-trace";
+import type { TraceCall } from "../lib/agents";
 
 type IncidentDetail = {
   id: string;
@@ -96,6 +98,7 @@ export default function IncidentPage() {
           onOpenThread={setThread}
           entityAction={canRequest ? (ent) => <EntityAction entity={ent} targets={targets} incident={inc.id} /> : undefined}
         />
+        <IncidentTrace id={inc.id} />
       </div>
       <Feed
         query={`incident=${inc.id}`}
@@ -107,6 +110,21 @@ export default function IncidentPage() {
         onThread={setThread}
       />
     </>
+  );
+}
+
+/** Every agent MCP call linked to this incident, fetched when opened (how the agents got to their conclusions). */
+function IncidentTrace({ id }: { id: string }) {
+  const [open, setOpen] = useState(false);
+  const { data, error } = useLiveQuery<TraceCall[]>(open ? `/incidents/${id}/trace` : null);
+  return (
+    <details className="border-b border-rule px-6 py-2 max-sm:px-4" onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}>
+      <summary className="cursor-pointer text-sm font-semibold text-ink-2 hover:text-ink">Agent trace{data ? ` (${data.length} calls)` : ""}</summary>
+      <div className="mt-2 max-h-[40dvh] overflow-y-auto">
+        {error && <p className="text-xs text-critical">{error.message}</p>}
+        {data && <TraceList calls={data} showAgent />}
+      </div>
+    </details>
   );
 }
 

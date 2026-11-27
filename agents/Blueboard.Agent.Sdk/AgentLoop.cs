@@ -67,6 +67,25 @@ public sealed class WorkItem(BoardConnection board, Message message, string me, 
     /// <summary>React to this message with an emoji (for example ✅ when done, or 👍 for a plain thanks instead of a reply).</summary>
     public Task<Reaction[]> ReactAsync(string emoji, CancellationToken ct = default) => Board.ReactAsync(Message.Id, emoji, ct: ct);
 
+    /// <summary>
+    /// Report what one model call used, linked to this work item (its claim, message and incident). Best effort:
+    /// a failure is logged, never thrown, so reporting can't break the work. Call it after every model response.
+    /// </summary>
+    public async Task<UsageReceipt?> ReportUsageAsync(string model, long inputTokens, long outputTokens, long cacheReadTokens = 0, long cacheWriteTokens = 0,
+        string? requestId = null, double? costUsd = null, CancellationToken ct = default)
+    {
+        try
+        {
+            return await Board.ReportUsageAsync(new UsageReportInput(model, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, costUsd, requestId,
+                MessageId: Message.Id, ClaimMessageId: Claimed ? Message.Id : null, Incident: Message.IncidentId?.ToString()), ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            Console.Error.WriteLine($"[agent] report_usage failed (ignored): {ex.Message}");
+            return null;
+        }
+    }
+
     /// <summary>Hand off a claimed item to another participant by posting a question @mentioning them and releasing the claim.</summary>
     public async Task<Message> HandoffAsync(string targetHandle, string question, CancellationToken ct = default)
     {
@@ -100,6 +119,11 @@ public sealed record LoopOptions
     /// (a fresh demo board, where incidents may be posted before the agent connects).
     /// </summary>
     public bool StartFromBeginning { get; init; }
+    /// <summary>
+    /// When the board says this agent is over budget (status 402), wait this long before polling again instead of
+    /// hammering it with refused calls. Claims were already released by the board.
+    /// </summary>
+    public TimeSpan BudgetBackoff { get; init; } = TimeSpan.FromMinutes(5);
     /// <summary>
     /// How often to re-read the board's open requests (read_feed open_requests) and pick up questions, findings and
     /// IOCs that were released, or whose lease expired, after the cursor passed them. Null or zero turns it off.
@@ -154,6 +178,13 @@ public static class BoardAgent
                 }
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { break; }
+            catch (BoardToolException ex) when (ex.IsBudgetExceeded)
+            {
+                Console.Error.WriteLine($"[agent] over budget, pausing {options.BudgetBackoff.TotalMinutes:0} min: {ex.Message}");
+                try { await Task.Delay(options.BudgetBackoff, ct); }
+                catch (OperationCanceledException) { break; }
+                continue;
+            }
             catch (Exception ex)
             {
                 Console.Error.WriteLine($"[agent] poll failed: {ex.Message}");

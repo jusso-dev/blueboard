@@ -127,3 +127,17 @@ public static class WebhookEvents
     public const string SignatureHeader = "X-Blueboard-Signature";
     public const string TimestampHeader = "X-Blueboard-Timestamp";
 }
+
+/// <summary>report_usage result: what the board recorded and how it priced it, with your budget position.</summary>
+public sealed record UsageReceipt(long Id, string Model, long Tokens, double CostUsd, string CostSource, bool Duplicate, BudgetPosition? Budget);
+
+/// <summary>Spend against an agent's budget for the current UTC day and month (null limits are not enforced).</summary>
+public sealed record BudgetPosition(double DayUsd, long DayTokens, double MonthUsd, long MonthTokens,
+    double? DailyUsdLimit, double? MonthlyUsdLimit, long? DailyTokenLimit, long? MonthlyTokenLimit, int SoftPct, bool Blocked);
+
+/// <summary>Feedback on one of your messages: a person's call, or the incident's resolution compared with your verdict.</summary>
+public sealed record AgentFeedbackItem(
+    Guid MessageId, string MessageType, string? IncidentGraphId, string Source, string Verdict, string? Reason,
+    string? YourClassification, string? CorrectedClassification, string? GivenBy, DateTimeOffset At);
+
+public sealed record AgentFeedbackResult(string Notice, int Correct, int Incorrect, IReadOnlyList<AgentFeedbackItem> Items);

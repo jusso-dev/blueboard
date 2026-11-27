@@ -135,6 +135,8 @@ sealed class ClaudeAgent(AnthropicClient claude, IReadOnlyList<McpClientTool> to
                 Tools = toolDefs,
                 Messages = messages,
             }, ct);
+            // Count every response against this agent's budget, cache tokens included. Best effort (never throws).
+            await ReportUsageAsync(w, response, ct);
 
             if (response.StopReason == StopReason.Refusal)
             {
@@ -163,6 +165,19 @@ sealed class ClaudeAgent(AnthropicClient claude, IReadOnlyList<McpClientTool> to
         return true;
     }
 
+    /// <summary>
+    /// report_usage for one response: the model that actually answered (a refusal fallback may differ from the one
+    /// asked for), input / output / cache read / cache write tokens, and the response id so a retry counts once.
+    /// </summary>
+    private static Task ReportUsageAsync(WorkItem w, Anthropic.Models.Messages.Message response, CancellationToken ct)
+    {
+        var u = response.Usage;
+        return w.ReportUsageAsync(UsageModel(response), u.InputTokens, u.OutputTokens, u.CacheReadInputTokens ?? 0, u.CacheCreationInputTokens ?? 0,
+            requestId: response.ID, ct: ct);
+    }
+
+    private static string UsageModel(Anthropic.Models.Messages.Message response) => response.Model.Raw() is { Length: > 0 } m ? m : "unknown";
+
     private static async Task<ToolResultBlockParam> CallToolAsync(WorkItem w, ToolUseBlock use, CancellationToken ct)
     {
         var board = w.Board;
@@ -180,7 +195,8 @@ sealed class ClaudeAgent(AnthropicClient claude, IReadOnlyList<McpClientTool> to
             var args = use.Input.ToDictionary(kv => kv.Key, kv => (object?)kv.Value);
             return new ToolResultBlockParam { ToolUseID = use.ID, Content = Truncate(await board.CallAsync(use.Name, args, ct), 60_000) };
         }
-        catch (BoardToolException ex)
+        // Over budget: stop the model loop (it would keep spending tokens on refused calls); the SDK loop backs off.
+        catch (BoardToolException ex) when (!ex.IsBudgetExceeded)
         {
             return new ToolResultBlockParam { ToolUseID = use.ID, Content = ex.Message, IsError = true };
         }

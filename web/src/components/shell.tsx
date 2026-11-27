@@ -121,6 +121,7 @@ function MobileBar() {
       { href: "/admin/audit", label: "Audit log" },
       { href: "/setup", label: "Setup" },
       { href: "/reports", label: "Reports" },
+      { href: "/agents", label: "Agents" },
     ] }] : []),
   ];
   const known = groups.some((g) => g.items.some((i) => i.href === path));
@@ -306,7 +307,7 @@ function Rail({ me }: { me: Me | null }) {
         </div>
 
         {isAdmin && (
-          <details open={path.startsWith("/admin") || path === "/setup" || path === "/reports"}>
+          <details open={path.startsWith("/admin") || path === "/setup" || path === "/reports" || path === "/agents"}>
             <summary className="cursor-pointer rounded-[var(--radius-control)] px-2 py-2 text-meta font-medium text-muted hover:text-ink">Administration</summary>
             <div className="mt-1 space-y-px">
               <RailLink href="/admin" active={path === "/admin"}>
@@ -326,6 +327,9 @@ function Rail({ me }: { me: Me | null }) {
               </RailLink>
               <RailLink href="/reports" active={path === "/reports"}>
                 Reports
+              </RailLink>
+              <RailLink href="/agents" active={path === "/agents"}>
+                Agents
               </RailLink>
             </div>
           </details>

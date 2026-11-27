@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Blueboard.Api.Actions;
+using Blueboard.Api.Agents;
 using Blueboard.Api.Auth;
 using Blueboard.Api.Board;
 using Blueboard.Api.Core;
@@ -21,39 +22,70 @@ namespace Blueboard.Api.Mcp;
 /// Every call authenticates the bearer token from the transport headers and re-reads the caller's roles from Entra;
 /// there is no shared key. Board content is untrusted data.
 /// </summary>
-public sealed class BoardTools(Authenticator auth, BoardService board, Search search, IncidentQueries incidents, Broker broker, Enrichment enrich, Ingest ingest, WebhookService hooks, Policy policy, PlaybookRunner playbooks, PlaybookSet playbookSet, IntelService intel, Participants participants, GifService gifs, MemoryService memory, ILogger<BoardTools> log, PolicyStore? policyStore = null)
+public sealed class BoardTools(Authenticator auth, BoardService board, Search search, IncidentQueries incidents, Broker broker, Enrichment enrich, Ingest ingest, WebhookService hooks, Policy policy, PlaybookRunner playbooks, PlaybookSet playbookSet, IntelService intel, Participants participants, GifService gifs, MemoryService memory, ILogger<BoardTools> log,
+    PolicyStore? policyStore = null, McpObserver? observer = null, AgentBudgets? budgets = null, AgentFeedback? feedback = null)
 {
-    /// <summary>Authenticate, require the tool's role, read its input record, run, and return JSON text or an error string.</summary>
+    /// <summary>
+    /// Authenticate, require the tool's role, read its input record, run, and return JSON text or an error string.
+    /// Every tool goes through here, so this is the one place the agent-observability hook sits (<see cref="McpObserver"/>):
+    /// the budget cap before the tool runs, metering and the tool-call trace after it, whatever the outcome.
+    /// </summary>
     private async Task<string> Call<TIn>(ToolInvocationContext ctx, Func<Principal, TIn, Task<object?>> fn) where TIn : class
     {
         var tool = Tools.Get(ctx.Name);
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
+        Principal? me = null;
+        JsonElement? args = null;
+        object? result = null;
+        string? text = null;
+        var status = "ok";
+        string? error = null;
         try
         {
             var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             if (ctx.TryGetHttpTransport(out var http) && http is not null)
                 foreach (var h in http.Headers) headers[h.Key.ToLowerInvariant()] = h.Value;
-            var me = await auth.AuthenticateAsync(headers);
-            if (tool.Role is { } role && !me.Has(role)) return $"error: missing role {role} (ask an admin to assign Board.{RoleName(role)}) (status 403)";
-            var input = Contract.Read<TIn>(McpSchemas.Arguments(ctx.Arguments));
-            return Json.Serialize(await fn(me, input));
+            me = await auth.AuthenticateAsync(headers);
+            args = McpSchemas.Arguments(ctx.Arguments);
+            if (tool.Role is { } role && !me.Has(role))
+            {
+                (status, error) = ("forbidden", $"missing role {role}");
+                return text = $"error: missing role {role} (ask an admin to assign Board.{RoleName(role)}) (status 403)";
+            }
+            if (observer is not null) await observer.BeforeAsync(me, tool.Name, args.Value);
+            var input = Contract.Read<TIn>(args.Value);
+            result = await fn(me, input);
+            return text = Json.Serialize(result);
         }
         catch (BoardException ex) when (ex.Status == 429 && ex.RetryAfterSeconds is { } retry && ex.Bucket != "pending_actions_per_incident")
         {
+            (status, error) = ("rate_limited", ex.Message);
             // Name the tool, not the internal bucket, so the agent knows exactly what to back off from.
-            return RateLimitedText(ctx.Name, retry);
+            return text = RateLimitedText(ctx.Name, retry);
         }
         catch (BoardException ex)
         {
-            return $"error: {ex.Message} (status {ex.Status})";
+            (status, error) = (McpObserver.StatusOf(ex), ex.Message);
+            return text = $"error: {ex.Message} (status {ex.Status})";
         }
         catch (ContractException ex)
         {
-            return $"error: {ex.Message} (status 400)";
+            (status, error) = ("invalid", ex.Message);
+            return text = $"error: {ex.Message} (status 400)";
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             log.LogError(ex, "MCP tool {Tool} failed", ctx.Name);
-            return "error: internal error (status 500)";
+            (status, error) = ("error", "internal error");
+            return text = "error: internal error (status 500)";
+        }
+        finally
+        {
+            // Unauthenticated calls have no principal to trace; they're refused before any work.
+            if (observer is not null && me is not null)
+                await observer.AfterAsync(new TraceEntry(me, tool.Name, status, args, error,
+                    (int)System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds,
+                    text is null ? 0 : System.Text.Encoding.UTF8.GetByteCount(text), McpObserver.MessageIdOf(result)));
         }
     }
 
@@ -289,4 +321,12 @@ public sealed class BoardTools(Authenticator auth, BoardService board, Search se
     [Function(nameof(ListFollowups))]
     public Task<string> ListFollowups([McpToolTrigger(Tools.ListFollowups, Tools.ListFollowupsDoc)] ToolInvocationContext ctx) =>
         Call(ctx, async me => await hooks.ListFollowupsAsync(me));
+
+    [Function(nameof(ReportUsage))]
+    public Task<string> ReportUsage([McpToolTrigger(Tools.ReportUsage, Tools.ReportUsageDoc)] ToolInvocationContext ctx) =>
+        Call<UsageReportInput>(ctx, async (me, u) => await (budgets ?? throw new BoardException("usage reporting is not configured", 503)).ReportAsync(me, u));
+
+    [Function(nameof(GetAgentFeedback))]
+    public Task<string> GetAgentFeedback([McpToolTrigger(Tools.GetAgentFeedback, Tools.GetAgentFeedbackDoc)] ToolInvocationContext ctx) =>
+        Call<AgentFeedbackQuery>(ctx, async (me, q) => await (feedback ?? throw new BoardException("agent feedback is not configured", 503)).ForAgentAsync(me, q));
 }

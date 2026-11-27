@@ -72,6 +72,17 @@ builder.Services.AddSingleton<MicrosoftIntel>();
 builder.Services.AddSingleton<IntelService>();
 builder.Services.AddHostedService<MigrateOnStart>();
 builder.Services.AddSingleton<Blueboard.Api.Http.Endpoint>();
+// Agent observability (WS3): usage and budgets, tool-call traces, feedback and overturns, risk. McpObserver is the one
+// hook around every MCP tool call (BoardTools.Call); IAgentRiskSource is the read-only risk API for other services.
+builder.Services.AddSingleton(new Blueboard.Api.Agents.PriceTable(settings));
+builder.Services.AddSingleton<Blueboard.Api.Agents.ObservabilitySettingsStore>();
+builder.Services.AddSingleton<Blueboard.Api.Agents.AgentBudgets>();
+builder.Services.AddSingleton<Blueboard.Api.Agents.AgentTrace>();
+builder.Services.AddSingleton<Blueboard.Api.Agents.AgentFeedback>();
+builder.Services.AddSingleton<Blueboard.Api.Agents.AgentRisk>();
+builder.Services.AddSingleton<Blueboard.Api.Agents.IAgentRiskSource>(sp => sp.GetRequiredService<Blueboard.Api.Agents.AgentRisk>());
+builder.Services.AddSingleton<Blueboard.Api.Agents.AgentReports>();
+builder.Services.AddSingleton<McpObserver>();
 
 var app = builder.Build();
 if (origins.Mocked)

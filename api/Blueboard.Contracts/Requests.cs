@@ -266,3 +266,53 @@ public sealed record AuditQuery(
 
 /// <summary>For tools and routes with no arguments.</summary>
 public sealed record NoInput;
+
+// ── agent observability (WS3) ─────────────────────────────────────────────────────────────────
+
+/// <summary>
+/// report_usage: an agent reports the LLM tokens one model call used. Untrusted: the board range-checks every field,
+/// prices it from its own price table when it knows the model, and only ever adds rows (a report can't lower a total).
+/// </summary>
+public sealed record UsageReportInput(
+    [Description("Model id the call ran on, e.g. claude-opus-5-5")]
+    [StringLength(100, MinimumLength = 1), RegularExpression("^[A-Za-z0-9._:/@\\[\\]-]{1,100}$")] string Model,
+    [Description("Uncached input tokens (0-50,000,000)")][Range(0, 50_000_000)] long InputTokens = 0,
+    [Description("Output tokens, thinking included (0-50,000,000)")][Range(0, 50_000_000)] long OutputTokens = 0,
+    [Description("Input tokens read from the prompt cache (0-50,000,000)")][Range(0, 50_000_000)] long CacheReadTokens = 0,
+    [Description("Input tokens written to the prompt cache (0-50,000,000)")][Range(0, 50_000_000)] long CacheWriteTokens = 0,
+    [Description("Your own cost estimate in USD (0-1000). Used only when the board's price table doesn't know the model.")][Range(0d, 1000d)] double? CostUsd = null,
+    [Description("Provider request/response id, so a retried report is counted once")][StringLength(200)] string? RequestId = null,
+    [Description("Board message this call produced or worked on (optional)")] Guid? MessageId = null,
+    [Description("Message you hold a claim on while making this call (optional)")] Guid? ClaimMessageId = null,
+    [Description("Board incident id or Defender incident id (optional)")][StringLength(100)] string? Incident = null);
+
+public sealed record AgentFeedbackQuery(
+    [Description("Only feedback marking your message incorrect (overturns and corrections)")] bool IncorrectOnly = false,
+    [Description("1-200, default 50")][Range(1, 200)] int Limit = 50);
+
+/// <summary>A person's verdict on an agent's verdict, finding or ioc message. People only.</summary>
+public sealed record FeedbackInput(
+    [Description("correct or incorrect")][AllowedValues("correct", "incorrect")] string Verdict,
+    [Description("Why (optional, up to 1000 characters); the agent can read it")][StringLength(1000)] string? Reason = null,
+    [Description("For a verdict marked incorrect: the right classification")]
+    [AllowedValues("truePositive", "falsePositive", "informationalExpectedActivity", "unknown")] string? CorrectedClassification = null);
+
+/// <summary>An agent's budget (Board.Admin, people only). Omitted or null limits are not enforced.</summary>
+public sealed record BudgetInput(
+    [Description("USD per UTC day")][Range(0d, 1_000_000d)] double? DailyUsd = null,
+    [Description("USD per UTC month")][Range(0d, 10_000_000d)] double? MonthlyUsd = null,
+    [Description("Tokens per UTC day")][Range(0, 100_000_000_000)] long? DailyTokens = null,
+    [Description("Tokens per UTC month")][Range(0, 1_000_000_000_000)] long? MonthlyTokens = null,
+    [Description("Soft alert at this percentage of a limit (1-100, default 80)")][Range(1, 100)] int SoftPct = 80,
+    [Description("Why (5-500 characters, kept in the audit log)")][StringLength(500, MinimumLength = 5)] string Reason = "");
+
+/// <summary>A temporary budget top-up (Board.Admin, people only).</summary>
+public sealed record TopupInput(
+    [Description("Extra USD on top of each limit until it expires")][Range(0d, 1_000_000d)] double Usd = 0,
+    [Description("Extra tokens on top of each limit until it expires")][Range(0, 100_000_000_000)] long Tokens = 0,
+    [Description("Hours the top-up lasts (1-744)")][Range(1, 744)] int Hours = 24,
+    [Description("Why (5-500 characters, kept in the audit log)")][StringLength(500, MinimumLength = 5)] string Reason = "");
+
+public sealed record AgentReportQuery(
+    [Description("From (ISO-8601), default 30 days before to")] DateTimeOffset? From = null,
+    [Description("To (ISO-8601), default now")] DateTimeOffset? To = null);
