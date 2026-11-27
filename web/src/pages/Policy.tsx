@@ -4,6 +4,7 @@ import { api, useLiveQuery, type Assessment, type CatalogEntry, type Incident } 
 import { initialParams, MODE_WORDS } from "../lib/actions";
 import { SchemaFields } from "../components/request-action";
 import { Button, cx, Empty, ErrorLine, Select, Tag } from "../components/ui";
+import { AutomationAdmin } from "../components/automation";
 
 type PolicyView = {
   version: number;
@@ -16,16 +17,29 @@ type PolicyView = {
   lists: { users: string[]; devices: string[]; indicators: string[]; apps?: string[] } | null;
 };
 
-const MODE_TONE: Record<string, "good" | "warning" | "neutral" | "critical"> = { auto: "good", approval: "warning", on_instruction: "good", two_approvers: "warning", disabled: "neutral" };
+const MODE_TONE: Record<string, "good" | "warning" | "neutral" | "critical"> = {
+  auto: "good",
+  approval: "warning",
+  on_instruction: "good",
+  two_approvers: "warning",
+  disabled: "neutral",
+  conditional: "good",
+};
 
-/** Read-only view of the effective policy (issue #11). Policy is file-based; there is no editing here. */
+/**
+ * The effective policy (issue #11): policy.json ∩ admin overrides. policy.json is the ceiling; board admins tighten here
+ * at once, and loosen only with a second admin's approval (automation section below).
+ */
 export default function PolicyPage() {
   const me = useMe();
   const { data: p, error } = useLiveQuery<PolicyView>("/policy");
   const isAdmin = !!me?.roles.includes("admin");
   return (
     <>
-      <PageHeader title="Policy" sub="What the board does with each action request: runs it, waits for people, or refuses. Set in policy.json; read-only here." />
+      <PageHeader
+        title="Policy"
+        sub="What the board does with each action request: runs it, waits for people, or refuses. policy.json sets the ceiling; admins can tighten it here, and loosen it within the ceiling with a second admin's approval."
+      />
       <div className="min-h-0 flex-1 overflow-y-auto">
         {error && <Empty title="Couldn't load the policy">{error.message}</Empty>}
         {p && (
@@ -118,6 +132,7 @@ export default function PolicyPage() {
               </section>
             )}
 
+            <AutomationAdmin me={me?.handle} />
             <Simulator />
             <p className="label px-6 max-sm:px-4 py-3">policy version {p.version}</p>
           </>
@@ -236,6 +251,7 @@ function Simulator() {
         <div className="mt-3 max-w-2xl" role="status">
           <p className={cx("text-ui font-medium", result.outcome === "reject" ? "text-critical" : result.outcome === "auto" ? "text-good" : "text-warning")}>{result.summary}</p>
           <p className="mt-0.5 text-xs text-muted">{result.describe}</p>
+          {result.revert_after_minutes != null && <p className="mt-0.5 text-xs text-ink-2">Undone automatically {result.revert_after_minutes} minutes after it runs, unless an approver chooses Keep.</p>}
           {result.notes.length > 0 && result.outcome !== "reject" && (
             <ul className="mt-1.5 space-y-0.5">
               {result.notes.map((n, i) => (

@@ -54,6 +54,14 @@ function StatusBanner({ admin }: { admin: boolean }) {
       text: `by @${s.paused_by}. Nothing runs in the tenant; approvals are recorded and held${s.held ? ` (${s.held} held)` : ""}.`,
     });
   else if (s.broker === "dry_run") lines.push({ tone: "warning", label: "Dry run", text: "Approved actions are recorded but never sent to Defender or Entra (BROKER_EXECUTE is off)." });
+  if (s.automation_paused)
+    lines.push({
+      tone: "warning",
+      label: "Automation paused",
+      text: `by @${s.automation_paused_by ?? "an admin"}. Every request waits for a person, including kinds with automation rules.`,
+    });
+  if (admin && s.pending_policy_changes)
+    lines.push({ tone: "warning", label: "Policy changes", text: `${s.pending_policy_changes} loosening change(s) wait for a second admin on Policy.` });
   if (s.broker !== "paused" && s.held > 0) lines.push({ tone: "warning", label: "Held actions", text: `${s.held} action(s) approved during a pause are waiting for Run now on Approvals.` });
   if (s.policy !== "loaded")
     lines.push({
@@ -75,8 +83,11 @@ function StatusBanner({ admin }: { admin: boolean }) {
           <span className={cx("font-semibold", l.tone === "critical" ? "text-critical" : "text-warning")}>{l.label}:</span>
           <span className="text-ink-2">{l.text}</span>
           {admin && (
-            <Link to={l.label === "Broker paused" ? "/admin/participants" : "/setup"} className="text-accent underline-offset-4 hover:underline">
-              {l.label === "Broker paused" ? "Broker controls" : "Setup"}
+            <Link
+              to={l.label === "Broker paused" ? "/admin/participants" : l.label === "Automation paused" || l.label === "Policy changes" ? "/policy" : "/setup"}
+              className="text-accent underline-offset-4 hover:underline"
+            >
+              {l.label === "Broker paused" ? "Broker controls" : l.label === "Automation paused" || l.label === "Policy changes" ? "Policy" : "Setup"}
             </Link>
           )}
         </p>

@@ -121,6 +121,13 @@ export type Action = {
   /** Set for kinds in the policy's confirm_target list: the approver types this name back to approve. */
   confirm_prompt?: string | null;
   held_at?: string | null;
+  /** Ran without a person under this automation rule (e.g. "isolate_device@v3"). */
+  auto_rule?: string | null;
+  revert_after_minutes?: number | null;
+  revert_at?: string | null;
+  revert_state?: "scheduled" | "kept" | "reverting" | "reverted" | "failed" | null;
+  revert_action_id?: string | null;
+  revert_of?: string | null;
 };
 /** Shell banner state: broker mode, pause, whether a policy file is loaded. Cheap, polled with everything else. */
 export type BoardStatus = {
@@ -131,6 +138,11 @@ export type BoardStatus = {
   held: number;
   /** Sign out after this many minutes without input (SESSION_IDLE_MINUTES); 0 is off. */
   session_idle_minutes?: number;
+  /** Automation kill switch: every automatic decision waits for a person. */
+  automation_paused?: boolean;
+  automation_paused_by?: string | null;
+  /** Policy loosening changes waiting for a second admin. */
+  pending_policy_changes?: number;
 };
 export type Me = { handle: string; display_name: string; kind: string; roles: string[] };
 
@@ -145,7 +157,7 @@ export type CatalogEntry = {
   mode: PolicyMode | null;
 };
 export type TargetType = "device" | "user" | "app" | "indicator" | "email" | "incident";
-export type PolicyMode = "auto" | "approval" | "on_instruction" | "two_approvers" | "disabled";
+export type PolicyMode = "auto" | "approval" | "on_instruction" | "two_approvers" | "disabled" | "conditional";
 export type JsonSchema = {
   type?: string;
   properties?: Record<string, JsonSchema>;
@@ -176,6 +188,9 @@ export type Assessment = {
   notes: string[];
   summary: string;
   describe: string;
+  /** Set when a destructive kind would run on its own under an automation rule. */
+  auto_rule?: string | null;
+  revert_after_minutes?: number | null;
 };
 
 /** Open = still waiting on a person: no approval yet, or 1 of 2. */

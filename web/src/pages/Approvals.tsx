@@ -1,10 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useLocation } from "react-router";
 import { PageHeader, useMe } from "../components/shell";
 import { useListNav, type NavRowProps } from "../components/shortcuts";
 import { api, refreshAll, useLiveQuery, type Action, type BoardStatus } from "../lib/api";
 import { actionTitle } from "../lib/actions";
-import { ActionStatusTag } from "../components/request-action";
+import { ActionStatusTag, AutoExecutedTag } from "../components/request-action";
+import { revertWords } from "../lib/automation";
 import { DecisionForm, useCanDecide } from "../components/approval";
 import { Button, cx, Empty, ErrorLine, Input, Segmented, Tag, Time, fmtDuration } from "../components/ui";
 
@@ -103,6 +104,70 @@ function Held({ a, canRun, mine, paused, target }: { a: Action; canRun: boolean;
   );
 }
 
+/**
+ * Actions that ran on their own under an automation rule, and anything with an automatic revert scheduled: approvers
+ * see each one, and can Keep it (cancel the revert) or Revert now.
+ */
+function Automatic({ a, canAct, target }: { a: Action; canAct: boolean; target: boolean }) {
+  const [busy, setBusy] = useState<"keep" | "now" | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const op = async (o: "keep" | "now") => {
+    setBusy(o);
+    setErr(null);
+    try {
+      await api(`/actions/${a.id}/revert`, { method: "POST", body: JSON.stringify({ op: o }) });
+      refreshAll();
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  };
+  const revert = revertWords(a.revert_state, a.revert_at);
+  const canRevert = a.status === "succeeded" && (a.revert_state == null || a.revert_state === "scheduled" || a.revert_state === "kept" || a.revert_state === "failed");
+  return (
+    <article
+      id={`action-${a.id}`}
+      tabIndex={-1}
+      aria-current={target || undefined}
+      className={cx(
+        "border-b border-rule px-6 max-sm:px-4 py-3 focus:outline-none",
+        a.auto_rule && "shadow-[inset_3px_0_0_var(--color-accent)]",
+        target && "bg-accent-soft/30",
+      )}
+    >
+      <header className="flex flex-wrap items-center gap-2">
+        <h2 className="text-sm font-semibold">{actionTitle(a.kind)}</h2>
+        <ActionStatusTag status={a.status} />
+        <AutoExecutedTag rule={a.auto_rule} />
+        {a.incident_graph_id && <span className="label tnum text-ink-2">INC {a.incident_graph_id}</span>}
+        <span className="label">requested by @{a.requested_by}</span>
+        {revert && <span className={cx("label", a.revert_state === "failed" && "text-critical")}>{revert}</span>}
+        <span className="ml-auto">
+          <Time iso={a.created_at} />
+        </span>
+      </header>
+      {canAct && canRevert && (
+        <div className="mt-2 flex flex-wrap gap-2">
+          {a.revert_state === "scheduled" && (
+            <Button size="sm" loading={busy === "keep"} disabled={!!busy} onClick={() => void op("keep")}>
+              Keep
+            </Button>
+          )}
+          <Button size="sm" variant="danger" loading={busy === "now"} disabled={!!busy} onClick={() => void op("now")}>
+            Revert now
+          </Button>
+        </div>
+      )}
+      {err && (
+        <div className="mt-1.5">
+          <ErrorLine>{err}</ErrorLine>
+        </div>
+      )}
+    </article>
+  );
+}
+
 function Pending({ a, canDecide, me, target, navProps }: { a: Action; canDecide: boolean; me: string | undefined; target: boolean; navProps?: NavRowProps }) {
   const required = a.approvals_required ?? 1;
   const approvals = a.approvals ?? [];
@@ -166,14 +231,18 @@ export default function ApprovalsPage() {
   const { data: pending, error } = useLiveQuery<Action[]>("/actions?status=open");
   const { data: held } = useLiveQuery<Action[]>("/actions?status=held");
   const { data: status } = useLiveQuery<BoardStatus>("/status");
-  const { data: all } = useLiveQuery<Action[]>(view === "history" ? "/actions" : null);
+  const { data: all } = useLiveQuery<Action[]>("/actions");
+  const automatic = useMemo(
+    () => all?.filter((a) => (a.auto_rule && Date.now() - new Date(a.created_at).getTime() < 86_400_000) || a.revert_state === "scheduled" || a.revert_state === "failed"),
+    [all],
+  );
   const canDecide = useCanDecide();
   const history = all?.filter((a) => a.status !== "pending_approval" && a.status !== "approved_once" && !a.held_at);
-  const target = useTargetAction(pending !== undefined && held !== undefined && (view === "pending" || all !== undefined));
+  const target = useTargetAction(pending !== undefined && held !== undefined && all !== undefined);
   // A link to an action that's already decided opens History with that row highlighted.
   useEffect(() => {
-    if (target && pending && held && !pending.some((a) => a.id === target) && !held.some((a) => a.id === target)) setView("history");
-  }, [target, pending, held]);
+    if (target && pending && held && automatic && ![...pending, ...held, ...automatic].some((a) => a.id === target)) setView("history");
+  }, [target, pending, held, automatic]);
   const nav = useListNav(view === "pending" ? pending : undefined, (a) => a.id);
 
   return (
@@ -191,6 +260,19 @@ export default function ApprovalsPage() {
       </PageHeader>
       <div ref={nav.container as React.RefObject<HTMLDivElement>} className="min-h-0 flex-1 overflow-y-auto" aria-live="polite">
         {error && <Empty title="Couldn't load actions">{error.message}</Empty>}
+        {view === "pending" && status?.automation_paused && (
+          <p role="status" className="border-b border-rule bg-warning-soft/40 px-6 max-sm:px-4 py-2 text-xs text-ink">
+            <span className="font-semibold text-warning">Automation paused</span> by @{status.automation_paused_by ?? "an admin"}: every request waits here, including kinds with automation rules.
+          </p>
+        )}
+        {view === "pending" && automatic && automatic.length > 0 && (
+          <section aria-label="Automatic actions and scheduled reverts">
+            <h2 className="label border-b border-rule px-6 max-sm:px-4 py-2">Ran automatically or reverting · last 24 h</h2>
+            {automatic.map((a) => (
+              <Automatic key={a.id} a={a} canAct={!!canDecide} target={target === a.id} />
+            ))}
+          </section>
+        )}
         {view === "pending" && held && held.length > 0 && (
           <section aria-label="Held actions">
             {held.map((a) => (
@@ -224,12 +306,20 @@ export default function ApprovalsPage() {
                 >
                   <td className="px-6 max-sm:px-4 py-2 text-ink">{actionTitle(a.kind)}</td>
                   <td className="py-2 pr-4">
-                    <ActionStatusTag status={a.status} />
+                    <ActionStatusTag status={a.status} /> <AutoExecutedTag rule={a.auto_rule} />
                   </td>
                   <td className="label tnum py-2 pr-4 text-ink-2">{a.incident_graph_id ?? "—"}</td>
                   <td className="py-2 pr-4 text-ink-2">@{a.requested_by}</td>
                   <td className={cx("py-2 pr-4", a.decided_by ? "text-ink-2" : "text-faint")}>
-                    {a.approvals && a.approvals.length > 1 ? a.approvals.map((h) => `@${h}`).join(", ") : a.decided_by ? `@${a.decided_by}` : a.status === "expired" ? "nobody (expired)" : "policy"}
+                    {a.approvals && a.approvals.length > 1
+                      ? a.approvals.map((h) => `@${h}`).join(", ")
+                      : a.decided_by
+                        ? `@${a.decided_by}`
+                        : a.status === "expired"
+                          ? "nobody (expired)"
+                          : a.auto_rule
+                            ? `rule ${a.auto_rule}`
+                            : "policy"}
                   </td>
                   <td className="py-2 pr-6 max-sm:pr-4 text-right">
                     <Time iso={a.created_at} />

@@ -129,7 +129,9 @@ public sealed record ActionRequest(
     [Description("Why, citing evidence on the board (20-4000 characters)")][StringLength(4000, MinimumLength = 20)] string Justification,
     [Description("Board incident id or Defender incident id")] string? Incident = null,
     [Description("Board message this responds to")] Guid? ParentId = null,
-    [Description("Board message id where a human approver told you to do this; the board treats their instruction as the approval when policy allows")] Guid? OnBehalfOf = null);
+    [Description("Board message id where a human approver told you to do this; the board treats their instruction as the approval when policy allows")] Guid? OnBehalfOf = null,
+    [Description("Reversible kinds only (isolate_device, disable_user, block_indicator, restrict_app_execution): undo it automatically this many minutes after it runs (5-10080). People can Keep or Revert now")]
+    [Range(5, 10080)] int? RevertAfterMinutes = null);
 
 public sealed record ActionQuery([Description("Action id")] Guid ActionId);
 

@@ -47,7 +47,12 @@ public sealed record ActionRow(
     string? DecidedBy, DateTimeOffset? DecidedAt, string? DecisionNote, JsonElement? Result, string? Error, DateTimeOffset CreatedAt,
     DateTimeOffset? ExpiresAt = null, int ApprovalsRequired = 1, string[]? Approvals = null, DateTimeOffset? HeldAt = null,
     // The person's board message whose instruction counted as the approval (policy act_on_instruction).
-    Guid? OnBehalfOf = null)
+    Guid? OnBehalfOf = null,
+    // Set when the action ran without a person under a conditional automation rule (e.g. "isolate_device@v3").
+    string? AutoRule = null,
+    // Automatic revert: minutes after success, when it is due, its state (scheduled | kept | reverting | reverted | failed),
+    // the revert action filed for it, and (on a revert action) the action it undoes.
+    int? RevertAfterMinutes = null, DateTimeOffset? RevertAt = null, string? RevertState = null, Guid? RevertActionId = null, Guid? RevertOf = null)
 {
     /// <summary>Set on open actions whose kind is in confirm_target: the name the approver is asked to type back.</summary>
     public string? ConfirmPrompt { get; init; }

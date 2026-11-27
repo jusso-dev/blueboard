@@ -34,6 +34,8 @@ builder.Services.AddSingleton<PurviewContentGuard>();
 builder.Services.AddSingleton<BoardService>();
 builder.Services.AddSingleton<MemoryService>();
 builder.Services.AddSingleton<SystemPrincipal>();
+// Admin overrides within policy.json (db/migrations/015): the effective policy is read from PostgreSQL with a short cache.
+builder.Services.AddSingleton<PolicyStore>();
 builder.Services.AddSingleton<Broker>();
 builder.Services.AddSingleton<Search>();
 builder.Services.AddSingleton<Reporting>();
