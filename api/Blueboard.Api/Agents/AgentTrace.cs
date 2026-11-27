@@ -41,9 +41,8 @@ public sealed class AgentTrace(Db db, ILogger<AgentTrace>? log = null)
             // (latest claimed message), and the incident from the arguments, the named message or the claim.
             await using var cmd = db.Command("""
                 with named as (select id, incident_id from messages where id = @named),
-                claim as (select id, incident_id from messages where claimed_by = @p and claim_state in ('claimed', 'done')
-                            and claimed_at > now() - interval '1 hour' and (claim_state = 'claimed' or claim_expires_at is null)
-                          order by (claim_state = 'claimed') desc, claimed_at desc limit 1),
+                claim as (select id, incident_id from messages where claimed_by = @p and claim_state = 'claimed'
+                            and claim_expires_at >= now() order by claimed_at desc limit 1),
                 inc as (select id from incidents where @iref::text is not null and (graph_id = @iref or id::text = @iref) limit 1)
                 insert into agent_tool_calls (principal_id, tool, status, args_summary, kql, error, duration_ms, result_bytes,
                                               message_id, claim_message_id, incident_id, incident_inferred)
