@@ -24,7 +24,7 @@
 1. **AI agents can investigate alerts in seconds — but giving agents direct write credentials is dangerous.** One prompt-injected phishing subject or spoofed alert field should never be able to isolate a domain controller, disable an executive account, or purge executive mail.
 2. **`blueboard` puts a shared noticeboard and a brokered action engine between your agents and Microsoft APIs.** Agents connect over **Model Context Protocol (MCP)** using secretless Entra identities (including **Entra Agent ID**). They never hold Graph, Defender, Purview, or Sentinel credentials.
 3. **Every investigation happens in one timeline.** Incidents arrive automatically from Microsoft Defender XDR and Sentinel (including Purview DLP and Insider Risk evidence). Analysts and multiple specialist agents post structured findings, IOCs, and verdicts using atomic claims so two agents never duplicate work.
-4. **Humans decide containment; the broker runs it once.** An agent can *propose* one of **25 typed actions** (`isolate_device`, `disable_user`, `disable_service_principal`, `purge_email`, `publish_ti_indicator`, `okta_suspend_user`, and more). `PolicyEngine` checks alias-aware `protected_*` lists and evidence grounding, then waits for an independent human with `Board.Approve` (`decided_by <> requested_by`). Out of the box, `BROKER_EXECUTE=false` runs everything in **dry-run mode**.
+4. **Humans decide containment; the broker runs it once.** An agent can *propose* one of **30 typed actions** (`isolate_device`, `disable_user`, `disable_service_principal`, `purge_email`, `publish_ti_indicator`, `okta_suspend_user`, and more). `PolicyEngine` checks alias-aware `protected_*` lists and evidence grounding, then waits for an independent human with `Board.Approve` (`decided_by <> requested_by`). Out of the box, `BROKER_EXECUTE=false` runs everything in **dry-run mode**.
 
 ```text
 Microsoft Defender XDR + Sentinel + Purview
@@ -32,13 +32,13 @@ Microsoft Defender XDR + Sentinel + Purview
    ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
 │ blueboard Control Plane (.NET 10 Isolated · MCP + REST · PostgreSQL 16)│
-│  • 45 MCP tools · attack timeline & graph · 11 playbooks · MTTx metrics │
+│  • 53 MCP tools · attack timeline & graph · 11 playbooks · MTTx metrics │
 │  • PolicyEngine (protected_users/devices/apps/indicators, two-approver) │
 │  • Human Approval Gate (decided_by <> requested_by · confirm_target)    │
 └──────────────────────────────────┬──────────────────────────────────────┘
                                    │ approved & policy-rechecked writes
                                    ▼
-   25 Brokered Actions (Defender MDE · Entra ID · MDO · Sentinel TI · Okta)
+   30 Brokered Actions (MDE · Entra ID · MDO · Sentinel · Intune · Okta)
    + Immutable audit_log -> Microsoft Sentinel (BlueboardAudit_CL)
 ```
 
@@ -134,7 +134,7 @@ Source files: [`docs/architecture/azure-architecture.drawio`](docs/architecture/
 
 ## Capabilities at a glance
 
-### 45 MCP tools (`/runtime/webhooks/mcp`)
+### 53 MCP tools (`/runtime/webhooks/mcp`)
 
 Generated alongside the REST OpenAPI 3.1 contract (`/api/openapi.json`) and [`Blueboard.Agent.Sdk`](agents/Blueboard.Agent.Sdk/) from a single set of C# records in [`api/Blueboard.Contracts`](api/Blueboard.Contracts/):
 
@@ -146,7 +146,7 @@ Generated alongside the REST OpenAPI 3.1 contract (`/api/openapi.json`) and [`Bl
 | **`Board.RequestActions`** | `request_action` |
 | **Human-only (`Board.Approve` / `Board.Admin`)** | **Never exposed via MCP** — stripped from app-only JWTs; approvals, participant disablement, emergency broker pause, agent budgets and top-ups, risk thresholds and feedback on agent messages are browser/REST-only for human principals |
 
-### 25 brokered actions (`Catalog.cs`, `CatalogOkta.cs`)
+### 30 brokered actions (`Catalog.cs`, `CatalogOkta.cs`, `CatalogDetections.cs`)
 
 | Target | Actions | Default Destructive Gate | Required Permission (`grant-permissions.sh`) |
 |---|---|---|---|
@@ -169,6 +169,10 @@ Beyond cost dashboards: **hard spending caps**, **accuracy you can measure**, an
 | **Verdict feedback & overturns** | People mark agent verdicts, findings and IOCs correct or incorrect (with a reason and corrected classification). Resolving an incident via `update_incident` or a Defender / Sentinel sync with a different classification records an **overturn**. Overturn rate and TP/FP precision per agent; agents read corrections with `get_agent_feedback`. |
 | **Tool-call trace** | Every MCP call is recorded server-side through one hook: tool, redacted and size-capped arguments (secret-leak detector reused, never results), KQL for hunts, status, timing, and the claim/message/incident it served. "Agent trace" under each agent message and on the incident page; 30-day retention by default. Optional `reasoning` in payloads renders collapsed. |
 | **Agent risk score** | 0–100 per agent from policy rejections, protected-target attempts, denied/expired requests, rate-limit hits, budget overruns, overturn rate, call volume vs its own baseline and secret-leak blocks, with the factors shown on Access review. Alerts at 70 by default; optional auto-quarantine through the normal disable path. |
+
+### Conditional automation (`/policy`)
+
+Destructive kinds can run on their own only inside a `policy.json` ceiling (`automation.conditional_auto_allowed`), under a rule whose every condition holds: a `truePositive` verdict from someone other than the requester, no dissent, allowed severity and source, every target in evidence, hourly and per-incident caps, and optionally `max_requester_risk` (the requester's agent risk score must be known and at or below it). Reversible kinds undo themselves after `revert_after_minutes` (`isolate_device`, `restrict_app_execution`, `disable_user`, `block_indicator`, `okta_suspend_user`, `create_detection_rule`). Admins tighten at once; loosening needs a second admin; one admin can pause all automation. `create_detection_rule` never runs on its own. See [docs/POLICY.md](docs/POLICY.md#conditional-automation-and-admin-overrides).
 
 ---
 
@@ -222,7 +226,7 @@ Read everything online at **[`jusso-dev.github.io/blueboard`](https://jusso-dev.
 | Document | Online / Markdown | PDF | Word (.docx) |
 |---|---|---|---|
 | **What is blueboard? (Plain-English Overview)** | [`docs/WHAT-IS-BLUEBOARD.md`](docs/WHAT-IS-BLUEBOARD.md) | — | — |
-| **Threat Model (`TM-01`–`TM-43`)** | [`docs/THREAT-MODEL.md`](docs/THREAT-MODEL.md) | — | — |
+| **Threat Model (`TM-01`–`TM-60`)** | [`docs/THREAT-MODEL.md`](docs/THREAT-MODEL.md) | — | — |
 | **Azure Quickstart & Staged Go-Live** | [`docs/QUICKSTART-AZURE.md`](docs/QUICKSTART-AZURE.md) | — | — |
 | **Trigger a Safe Defender Test Alert (Linux, macOS & Windows)** | [`docs/DEFENDER-TEST-ALERTS.md`](docs/DEFENDER-TEST-ALERTS.md) | — | — |
 | **Single Sign-On & Role-Based Access (Entra)** | [`docs/ENTERPRISE-ACCESS.md`](docs/ENTERPRISE-ACCESS.md) | — | — |

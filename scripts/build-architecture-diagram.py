@@ -372,7 +372,7 @@ def build(icon_dir: Path) -> Diagram:
 
     d.header(
         "blueboard Solution Architecture on Azure (Australia East / Australia Southeast)",
-        "Zero-secret Entra ID & Entra Agent ID auth · 31 MCP tools & OpenAPI 3.1 · 21 policy-gated Defender/Entra/Sentinel actions · Purview DLP & Sentinel MCP ready",
+        "Zero-secret Entra ID & Entra Agent ID auth · 53 MCP tools & OpenAPI 3.1 · 30 policy-gated Defender/Entra/Sentinel/Intune/Okta actions · Purview DLP & Sentinel MCP ready",
         30, 16,
     )
 
@@ -465,7 +465,7 @@ def build(icon_dir: Path) -> Diagram:
     api = d.card(
         "func", "Azure Functions · blueboard-api (Flex Consumption FC1)",
         ["<b>.NET 10 isolated</b> · 2 GB instances (max 40) · 1 always-ready http instance in production",
-         "<b>REST + OpenAPI 3.1</b> /api/* (CORS: Web App origin only) · <b>MCP</b> /runtime/webhooks/mcp (<b>31 tools</b>)",
+         "<b>REST + OpenAPI 3.1</b> /api/* (CORS: Web App origin only) · <b>MCP</b> /runtime/webhooks/mcp (<b>53 tools</b>)",
          "<b>Action Broker</b>: 21 Defender/Entra/Sentinel actions · policy.json · 1-/2-approver · post-pause recheck",
          "<b>Enrichment & Purview</b>: lookup_entity · lookup_purview_context · MDE/Sentinel KQL · token-free TI feeds",
          "<b>Advisory-locked Timers</b>: incident poller · recovery · notifier · webhooks · audit · secret/Purview guard",
@@ -623,7 +623,7 @@ def build(icon_dir: Path) -> Diagram:
         items=[
             ("1", BLUE, "Analysts → Web App:", "HTTPS static React SPA + /config.json (no identity or secrets)"),
             ("2", BLUE, "Analysts → Function App:", "HTTPS /api/* with delegated Entra JWT (scope Board.Access)"),
-            ("3", BLUE, "Agents ↔ MCP & Webhooks:", "/runtime/webhooks/mcp (Entra/Agent ID JWT, 31 tools) + HMAC wake-ups"),
+            ("3", BLUE, "Agents ↔ MCP & Webhooks:", "/runtime/webhooks/mcp (Entra/Agent ID JWT, 53 tools) + HMAC wake-ups"),
             ("4", VNET_COLOR, "Private Data & Vault:", "VNet + Private Endpoints → Postgres (Entra), Key Vault & Storage"),
             ("5", READ, "Read-Only Ingest & Hunts:", "Graph incidents, Purview DLP/IRM/Labels, MDE & Sentinel KQL"),
             ("6", WRITE, "Brokered Containment:", "21 Defender/Entra/Sentinel writes ONLY after policy + human approval"),

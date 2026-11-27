@@ -29,8 +29,8 @@ flowchart LR
   end
 
   subgraph Blueboard["blueboard Control Plane (Australia East/Southeast)"]
-    MCP["/runtime/webhooks/mcp<br/>(43 tools · Claims · Feed)"]
-    BRK["PolicyEngine + Human Gate<br/>(25 Brokered Actions)"]
+    MCP["/runtime/webhooks/mcp<br/>(53 tools · Claims · Feed)"]
+    BRK["PolicyEngine + Human Gate<br/>(30 Brokered Actions)"]
     PVG["Secret Guard + Optional Purview Guard<br/>(processContent DLP check)"]
   end
 
@@ -286,10 +286,10 @@ What inbound can do:
 
 What inbound can **never** do: approve, deny, run, release or request an action. There is no code path from the inbound handler to the broker, the `integration` principals have only `poster`, and `Broker.DecideAsync` requires a human approver. Integration tests prove a ticket comment containing `approve <action id> @analyst` leaves the action `pending_approval`.
 
-### Contracts for other workstreams
+### Implementation notes
 
-- **Reverse pairs (WS1 auto-revert):** `Catalog.ConnectorReverseKinds` (`IReadOnlyDictionary<string,string>`) lists true inverses only: `okta_suspend_user ↔ okta_unsuspend_user`. `okta_clear_user_sessions` and `okta_reset_factors` are deliberately absent (irreversible). Merge it into the auto-revert map (e.g. `foreach (var (k, v) in Catalog.ConnectorReverseKinds) map.TryAdd(k, v);`). `GET /api/manage/connectors` also returns it as `reverse_kinds`.
-- **New catalog kinds:** `Catalog.OktaKinds`; they run through the new optional `ActionDef.RunConnector` delegate (`Run` throws for them). Anything that iterates `Catalog.All` and calls `def.Run` directly must branch on `RunConnector`.
-- **Permissions invariant:** `Permissions.ConnectorScopeFor` covers the Okta kinds; the test `Write_permissions_match_grant_permissions_script` now requires every kind to be in `WriteFor`, `AzureRoleFor` or `ConnectorScopeFor`. WS2's new kinds need an entry in one of them.
-- **Policy:** `IncidentContext` has a new optional `IdentityLinks` parameter (last, defaulted); `Broker` takes an optional `ConnectorHub` (last, defaulted); `PolicyEngine.Evaluate/Assess` signatures are unchanged.
+- **Auto-revert:** `okta_suspend_user` is undone by `okta_unsuspend_user` (`Catalog.ConnectorReverseKinds`, merged into `Reversal.ReverseKind`). `okta_clear_user_sessions` and `okta_reset_factors` can't be undone, so they never run on their own unless `policy.json` lists them in `automation.irreversible_auto_allowed`.
+- **Catalogue:** `Catalog.OktaKinds` run through `ActionDef.RunConnector` with the connector's credential (`Run` throws for them); the broker branches on it.
+- **Permissions:** `Permissions.ConnectorScopeFor` covers the Okta kinds; `Write_permissions_match_grant_permissions_script` requires every kind to be in `WriteFor`, `AzureRoleFor` or `ConnectorScopeFor`.
+- **Policy:** `IncidentContext.IdentityLinks` carries the Okta identity links; `PolicyEngine` merges them into the user aliases before the protected-user check.
 - **Principal kind:** migration 019 adds `integration` to `principals.kind`.

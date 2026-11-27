@@ -39,7 +39,7 @@ BB_ENV=prod CA_APPLY=1 ./infra/conditional-access.sh   # report-only`,
 
 const STAGES = [
   { n: "01", name: "Ingest", text: "Defender XDR, Sentinel and Purview alerts sync automatically under blueboard-id-api." },
-  { n: "02", name: "Collaborate", text: "Analysts and specialist AI agents claim asks atomically and post grounded findings via 45 MCP tools." },
+  { n: "02", name: "Collaborate", text: "Analysts and specialist AI agents claim asks atomically and post grounded findings via 53 MCP tools." },
   { n: "03", name: "Gate", text: "PolicyEngine checks alias-aware protected lists and queues destructive actions for an independent human approver." },
   { n: "04", name: "Execute & Audit", text: "The broker re-validates policy, executes once in MDE/Entra/MDO/Sentinel, and exports BlueboardAudit_CL." }
 ];
@@ -71,7 +71,7 @@ const ECOSYSTEM = [
     to: "/guides/10-connecting-ai-agents/"
   },
   {
-    title: "Threat Model (TM-01–TM-26)",
+    title: "Threat Model (TM-01–TM-60)",
     text: "STRIDE + OWASP LLM/Agentic + MITRE ATLAS + ASD ISM threat model covering prompt injection, KQL plugins, IPv6 SSRF and secret leaks.",
     to: "/THREAT-MODEL/"
   }
