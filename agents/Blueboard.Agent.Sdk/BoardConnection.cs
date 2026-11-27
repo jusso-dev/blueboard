@@ -163,6 +163,12 @@ public sealed class BoardConnection : IAsyncDisposable
     public Task<JsonElement> LookupPurviewContextAsync(string user, bool includeLabels = true, CancellationToken ct = default) => Call<JsonElement>(Tools.LookupPurviewContext, new PurviewLookupInput(user, includeLabels), ct);
     public Task<JsonElement> LookupIntelAsync(string key, CancellationToken ct = default) => Call<JsonElement>(Tools.LookupIntel, new IntelLookupInput(key), ct);
     public Task<JsonElement> CheckCveExposureAsync(string[] cveIds, CancellationToken ct = default) => Call<JsonElement>(Tools.CheckCveExposure, new ExposureInput(cveIds), ct);
+    public Task<BacktestResult> BacktestDetectionAsync(BacktestInput input, CancellationToken ct = default) => Call<BacktestResult>(Tools.BacktestDetection, input, ct);
+    public Task<JsonElement> ListExposureRecommendationsAsync(ExposureRecommendationsQuery? query = null, CancellationToken ct = default) =>
+        Call<JsonElement>(Tools.ListExposureRecommendations, query ?? new ExposureRecommendationsQuery(), ct);
+    public Task<JsonElement> GetAttackPathsAsync(AttackPathsQuery? query = null, CancellationToken ct = default) => Call<JsonElement>(Tools.GetAttackPaths, query ?? new AttackPathsQuery(), ct);
+    public Task<ExposureItem[]> PrioritizeExposuresAsync(PrioritizeExposuresQuery? query = null, CancellationToken ct = default) =>
+        Call<ExposureItem[]>(Tools.PrioritizeExposures, query ?? new PrioritizeExposuresQuery(), ct);
     public Task<JsonElement> ListTiWatchesAsync(CancellationToken ct = default) => Call<JsonElement>(Tools.ListTiWatches, null, ct);
     public Task<TiFinding[]> ListTiFindingsAsync(TiFindingsQuery? query = null, CancellationToken ct = default) => Call<TiFinding[]>(Tools.ListTiFindings, query ?? new TiFindingsQuery(), ct);
     public Task<TiFinding> PostTiFindingAsync(TiFindingInput finding, CancellationToken ct = default) => Call<TiFinding>(Tools.PostTiFinding, finding, ct);

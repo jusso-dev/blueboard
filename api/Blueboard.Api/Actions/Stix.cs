@@ -8,7 +8,9 @@ namespace Blueboard.Api.Actions;
 
 /// <summary>What the broker knows about one action when it runs (for actions whose request depends on more than params).</summary>
 public sealed record ActionContext(
-    Guid ActionId, string? IncidentGraphId, Guid? IncidentId, string RequestedBy, string? DecidedBy, string Justification, TiSettings Ti, DateTimeOffset Now);
+    Guid ActionId, string? IncidentGraphId, Guid? IncidentId, string RequestedBy, string? DecidedBy, string Justification, TiSettings Ti, DateTimeOffset Now,
+    // Data the kind's resolver looked up at execution time (Resolvers.cs), e.g. the Intune managed device id.
+    JsonObject? Facts = null);
 
 /// <summary>
 /// STIX 2.1 indicators for the Microsoft Sentinel upload API (issue #20). Values are validated for their kind first,

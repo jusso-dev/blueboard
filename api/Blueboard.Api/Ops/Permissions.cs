@@ -35,7 +35,30 @@ public static class Permissions
         ["purge_email"] = new(MsApi.Graph, "SecurityAnalyzedMessage.ReadWrite.All"),
         ["update_incident"] = new(MsApi.Graph, "SecurityIncident.ReadWrite.All"),
         ["add_incident_comment"] = new(MsApi.Graph, "SecurityIncident.ReadWrite.All"),
+        // target defender; target sentinel needs an Azure role instead (AlsoAzureRoleFor).
+        ["create_detection_rule"] = new(MsApi.Graph, "CustomDetection.ReadWrite.All"),
+        ["disable_detection_rule"] = new(MsApi.Graph, "CustomDetection.ReadWrite.All"),
+        ["intune_sync_device"] = new(MsApi.Graph, "DeviceManagementManagedDevices.PrivilegedOperations.All"),
+        ["intune_update_defender_signatures"] = new(MsApi.Graph, "DeviceManagementManagedDevices.PrivilegedOperations.All"),
+        ["intune_expedite_quality_update"] = new(MsApi.Graph, "WindowsUpdates.ReadWrite.All"),
     };
+
+    /// <summary>
+    /// Kinds that need an Azure role as well, for one of their targets: Sentinel analytics rules are ARM resources, so
+    /// create/disable with target sentinel need Microsoft Sentinel Contributor on the workspace.
+    /// </summary>
+    public static readonly IReadOnlyDictionary<string, string> AlsoAzureRoleFor = new Dictionary<string, string>
+    {
+        ["create_detection_rule"] = "Microsoft Sentinel Contributor on the Sentinel workspace (target sentinel)",
+        ["disable_detection_rule"] = "Microsoft Sentinel Contributor on the Sentinel workspace (target sentinel)",
+    };
+
+    /// <summary>
+    /// Reads the Intune kinds make before policy runs (managed device ↔ Entra device ↔ MDE id), granted with any Intune
+    /// action. SecurityRecommendation.Read.All (MDE) backs list_exposure_recommendations (EXPOSURE=1).
+    /// </summary>
+    public static readonly Perm IntuneDeviceRead = new(MsApi.Graph, "DeviceManagementManagedDevices.Read.All");
+    public static readonly Perm RecommendationRead = new(MsApi.Defender, "SecurityRecommendation.Read.All");
 
     /// <summary>
     /// Kinds that need an Azure role rather than a Graph or Defender application permission. publish_ti_indicator needs

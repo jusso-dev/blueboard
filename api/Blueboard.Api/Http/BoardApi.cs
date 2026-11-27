@@ -19,7 +19,8 @@ namespace Blueboard.Api.Http;
 /// [RouteDoc] feeds /api/openapi.json.
 /// </summary>
 public sealed class BoardApi(Endpoint ep, BoardService board, Search search, Reporting reporting, Broker broker, Enrichment enrich, Ingest ingest, WebhookService hooks, Db db, Policy policy,
-    IncidentQueries incidents, PlaybookRunner playbookRunner, PlaybookSet playbooks, IntelService intel, Audit audit, GifService gifs, MemoryService memory)
+    IncidentQueries incidents, PlaybookRunner playbookRunner, PlaybookSet playbooks, IntelService intel, Audit audit, GifService gifs, MemoryService memory,
+    DetectionService? detections = null, ExposureService? exposure = null)
 {
     /// <summary>The web app sends ?type=a&amp;type=b; the contract field is types.</summary>
     private static readonly Dictionary<string, string> TypeAlias = new() { ["type"] = "types" };
@@ -216,6 +217,34 @@ public sealed class BoardApi(Endpoint ep, BoardService board, Search search, Rep
     [RouteDoc("Defender exposure for CVE ids", Role = Roles.Hunter)]
     public Task<IActionResult> IntelExposure([HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "intel/exposure")] HttpRequest req) =>
         ep.RunAsync(req, async me => await intel.ExposureAsync(me, (await Endpoint.BodyAsync<ExposureInput>(req)).CveIds ?? [], Ct(req)), Roles.Hunter);
+
+    // ── detection back-tests and exposure (/exposure page) ─────────────────────────────────────
+    private static T Need<T>(T? service) where T : class => service ?? throw new BoardException("not available on this board", 503);
+
+    [Function("detections-backtest")]
+    [RouteDoc("Back-test a candidate detection's KQL over 1-30 days and store the result", Body = typeof(BacktestInput), Response = typeof(BacktestResult), Role = Roles.Hunter)]
+    public Task<IActionResult> Backtest([HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "detections/backtests")] HttpRequest req) =>
+        ep.RunAsync(req, async me => await Need(detections).BacktestAsync(me, await Endpoint.BodyAsync<BacktestInput>(req), Ct(req)), Roles.Hunter);
+
+    [Function("detections-backtest-get")]
+    [RouteDoc("A stored back-test with its query (what a create_detection_rule request is bound to)")]
+    public Task<IActionResult> BacktestGet([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "detections/backtests/{id:guid}")] HttpRequest req, string id) =>
+        ep.RunAsync(req, async _ => await Need(detections).GetAsync(Id(id), Ct(req)));
+
+    [Function("exposure-prioritized")]
+    [RouteDoc("Vulnerabilities ranked by severity, exploitability, KEV, internet exposure, asset value and open incidents", Query = typeof(PrioritizeExposuresQuery), Response = typeof(ExposureItem[]), Role = Roles.Hunter)]
+    public Task<IActionResult> ExposurePrioritized([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "exposure/prioritized")] HttpRequest req) =>
+        ep.RunAsync(req, async me => await Need(exposure).PrioritizeAsync(me, Endpoint.Query<PrioritizeExposuresQuery>(req), Ct(req)), Roles.Hunter);
+
+    [Function("exposure-recommendations")]
+    [RouteDoc("Defender Vulnerability Management security recommendations", Query = typeof(ExposureRecommendationsQuery), Role = Roles.Hunter)]
+    public Task<IActionResult> ExposureRecommendations([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "exposure/recommendations")] HttpRequest req) =>
+        ep.RunAsync(req, async me => await Need(exposure).RecommendationsAsync(me, Endpoint.Query<ExposureRecommendationsQuery>(req), Ct(req)), Roles.Hunter);
+
+    [Function("exposure-attack-paths")]
+    [RouteDoc("Exposure Management attack paths to critical assets", Query = typeof(AttackPathsQuery), Role = Roles.Hunter)]
+    public Task<IActionResult> ExposureAttackPaths([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "exposure/attack-paths")] HttpRequest req) =>
+        ep.RunAsync(req, async me => await Need(exposure).AttackPathsAsync(me, Endpoint.Query<AttackPathsQuery>(req), Ct(req)), Roles.Hunter);
 
     [Function("intel-watches-list")]
     [RouteDoc("List configured tech stack and threat intel watchlists")]

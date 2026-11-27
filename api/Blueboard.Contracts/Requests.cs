@@ -94,6 +94,30 @@ public sealed record IntelLookupInput(
 public sealed record ExposureInput(
     [Description("CVE ids, e.g. [\"CVE-2021-44228\",\"CVE-2024-3400\"] (1-100)")] string[] CveIds);
 
+public sealed record BacktestInput(
+    [Description("Candidate detection KQL (read-only; same guards as run_hunting_query). Project Timestamp (Defender) or TimeGenerated (Sentinel) so hits per day are exact.")]
+    [StringLength(10000, MinimumLength = 5)] string Query,
+    [Description("defender (Defender XDR advanced hunting) or sentinel (the configured Log Analytics workspace)")]
+    [AllowedValues("defender", "sentinel")] string Target = "defender",
+    [Description("Days of history to replay, 1-30 (default 14; create_detection_rule needs at least 7)")][Range(1, 30)] int LookbackDays = 14,
+    [Description("Up to 5 result columns to count distinct values for, e.g. [\"DeviceName\",\"AccountUpn\"]")] string[]? EntityColumns = null);
+
+public sealed record BacktestQuery([Description("backtest_id from backtest_detection")] Guid BacktestId);
+
+public sealed record ExposureRecommendationsQuery(
+    [Description("Only recommendations with a public exploit")] bool ExploitableOnly = false,
+    [Description("Defender recommendation status filter: Active (default) or Exception")][AllowedValues("Active", "Exception")] string Status = "Active",
+    [Description("1-100, default 25")][Range(1, 100)] int Limit = 25);
+
+public sealed record AttackPathsQuery(
+    [Description("Only paths that start at an internet-facing node (default true)")] bool InternetFacingOnly = true,
+    [Description("Only paths that end at a critical asset, criticality level 0-1 (default true)")] bool CriticalTargetsOnly = true,
+    [Description("1-50, default 20")][Range(1, 50)] int Limit = 20);
+
+public sealed record PrioritizeExposuresQuery(
+    [Description("1-100, default 25")][Range(1, 100)] int Limit = 25,
+    [Description("Restrict to these CVE ids (optional)")] string[]? CveIds = null);
+
 public sealed record TiFindingIndicatorInput(
     [Description("ip | domain | url | sha256 | sha1 | md5 | email | cve")][AllowedValues("ip", "domain", "url", "sha256", "sha1", "md5", "email", "cve")] string Kind,
     [Description("Public indicator value (private/internal IPs are refused)")][StringLength(2048, MinimumLength = 1)] string Value);

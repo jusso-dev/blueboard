@@ -68,6 +68,14 @@ public static class Tools
     public const string LookupIntelDoc = "Threat intel for a CVE id, GHSA id, IP, domain, URL, email or file hash: one card per source (pwn.watch, CISA KEV, FIRST EPSS, NVD, OSV, Sentinel TI, Microsoft TI, Defender exposure), each with source, url and retrieved_at. Sources that are off or failing say not_checked, which is not the same as no data. Needs Board.Hunt.";
     public const string CheckCveExposure = "check_cve_exposure";
     public const string CheckCveExposureDoc = "Are we exposed? For up to 100 CVE ids, how many devices in this tenant have each one (Defender Vulnerability Management), up to 20 device names, software, severity, remediation and how many of those devices are in open incidents. Cached 6 hours; read only. Needs Board.Hunt.";
+    public const string BacktestDetection = "backtest_detection";
+    public const string BacktestDetectionDoc = "Back-test a candidate detection: replay its read-only KQL over 1-30 days of this tenant's Defender XDR (advanced hunting) or Sentinel data, through the same KQL guards as run_hunting_query. Returns total hits, hits per day, distinct entities, up to 10 sample rows, estimated alerts/day and a stored backtest_id. create_detection_rule needs a backtest_id for the exact same query and target, at least 7 days long, from the last 24 hours. Needs Board.Hunt.";
+    public const string ListExposureRecommendations = "list_exposure_recommendations";
+    public const string ListExposureRecommendationsDoc = "Defender Vulnerability Management security recommendations for this tenant (software to update, weaknesses, exposed and critical device counts, public exploit, internet-facing tag), highest exposure impact first. Read only. Needs Board.Hunt.";
+    public const string GetAttackPaths = "get_attack_paths";
+    public const string GetAttackPathsDoc = "Attack paths from Microsoft Security Exposure Management (ExposureGraphNodes / ExposureGraphEdges via advanced hunting): internet-facing or vulnerable entry nodes that reach critical assets in up to 3 hops. Read only. Needs Board.Hunt.";
+    public const string PrioritizeExposures = "prioritize_exposures";
+    public const string PrioritizeExposuresDoc = "Ranked list of the tenant's vulnerabilities (Defender Vulnerability Management) scored by severity, public exploit, CISA KEV, internet-facing devices, device criticality (asset value) and whether affected devices are in open incidents on the board. Each item lists the devices with their MDE, Entra and name ids so you can request intune_expedite_quality_update or intune_sync_device. Read only. Needs Board.Hunt.";
     public const string ListTiWatches = "list_ti_watches";
     public const string ListTiWatchesDoc = "List the organisation's configured tech stack, vendors, products, tags, CVEs and keywords to monitor for threat intelligence.";
     public const string ListTiFindings = "list_ti_findings";
@@ -75,7 +83,7 @@ public static class Tools
     public const string PostTiFinding = "post_ti_finding";
     public const string PostTiFindingDoc = "Post a structured threat intelligence finding into the Threat Intel findings table pertaining to the org's tech stack or watchlists (optionally cross-posting to #intel). Never include private/internal IPs as indicators.";
     public const string ListActionTypes = "list_action_types";
-    public const string ListActionTypesDoc = "Containment / eradication actions the board can broker, with JSON schemas for params.";
+    public const string ListActionTypesDoc = "Containment, eradication, detection-engineering and patching actions the board can broker, with JSON schemas for params.";
     public const string ListActions = "list_actions";
     public const string ListActionsDoc = "List brokered actions (filter by status such as 'open', 'pending_approval', 'succeeded' and/or by incident) to check existing proposals before requesting new ones.";
     public const string RequestAction = "request_action";
@@ -124,6 +132,10 @@ public static class Tools
         new(LookupPurviewContext, LookupPurviewContextDoc, typeof(PurviewLookupInput), "hunter"),
         new(LookupIntel, LookupIntelDoc, typeof(IntelLookupInput), "hunter"),
         new(CheckCveExposure, CheckCveExposureDoc, typeof(ExposureInput), "hunter"),
+        new(BacktestDetection, BacktestDetectionDoc, typeof(BacktestInput), "hunter"),
+        new(ListExposureRecommendations, ListExposureRecommendationsDoc, typeof(ExposureRecommendationsQuery), "hunter"),
+        new(GetAttackPaths, GetAttackPathsDoc, typeof(AttackPathsQuery), "hunter"),
+        new(PrioritizeExposures, PrioritizeExposuresDoc, typeof(PrioritizeExposuresQuery), "hunter"),
         new(ListTiWatches, ListTiWatchesDoc, typeof(NoInput), "poster"),
         new(ListTiFindings, ListTiFindingsDoc, typeof(TiFindingsQuery), "poster"),
         new(PostTiFinding, PostTiFindingDoc, typeof(TiFindingInput), "poster"),

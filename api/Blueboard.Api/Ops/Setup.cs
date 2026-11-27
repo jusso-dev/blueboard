@@ -218,6 +218,8 @@ public sealed class Setup(Db db, Settings settings, Policy policy, MsClient ms, 
         var kinds = Catalog.All.Keys.Where(k => !policy.Disabled.Contains(k)).Order(StringComparer.Ordinal).ToList();
         foreach (var k in kinds.Where(Permissions.AzureRoleFor.ContainsKey))
             lines.Add($"Not checked here: {k} needs the Azure role {Permissions.AzureRoleFor[k]} (see docs/THREAT_INTEL.md)");
+        foreach (var k in kinds.Where(Permissions.AlsoAzureRoleFor.ContainsKey))
+            lines.Add($"Not checked here: {k} also needs the Azure role {Permissions.AlsoAzureRoleFor[k]}");
         foreach (var group in kinds.Where(Permissions.WriteFor.ContainsKey).GroupBy(k => Permissions.WriteFor[k]))
         {
             var perm = group.Key;

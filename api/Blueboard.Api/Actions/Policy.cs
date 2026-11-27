@@ -180,9 +180,9 @@ public sealed record Assessment(string Kind, string Title, bool Destructive, Out
 public static class PolicyEngine
 {
     /// <summary>Policy decision plus everything that follows from it (status, approvals, expiry). One code path for request, preview and simulate.</summary>
-    public static Assessment Assess(ActionDef def, JsonObject p, IncidentContext? incident, Policy policy)
+    public static Assessment Assess(ActionDef def, JsonObject p, IncidentContext? incident, Policy policy, ActionFacts? facts = null)
     {
-        var d = Evaluate(def, p, incident, policy);
+        var d = Evaluate(def, p, incident, policy, facts);
         var status = d.Outcome switch { Outcome.Reject => "rejected", Outcome.Auto => "approved", _ => "pending_approval" };
         var approvals = d.Outcome == Outcome.NeedsApproval ? policy.ApprovalsFor(def.Kind) : 0;
         var summary = d.Outcome switch
@@ -200,10 +200,10 @@ public static class PolicyEngine
     /// Names an approver may type to confirm the target: every target and every alias the incident evidence gives it
     /// (for a device: MDE id, DNS name and host name). The first is the friendliest to show as the prompt.
     /// </summary>
-    public static IReadOnlyList<string> ConfirmNames(ActionDef def, JsonObject p, IncidentContext? incident)
+    public static IReadOnlyList<string> ConfirmNames(ActionDef def, JsonObject p, IncidentContext? incident, ActionFacts? facts = null)
     {
         var targets = def.TargetsOf(p);
-        var (users, devices, apps) = Aliases(incident is null ? null : Entities.Extract(incident.Data));
+        var (users, devices, apps) = Aliases(incident is null ? null : Entities.Extract(incident.Data), facts);
         var names = new List<string>();
         foreach (var d in targets.Devices)
         {
@@ -217,10 +217,12 @@ public static class PolicyEngine
         return names.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
     }
 
-    public static PolicyDecision Evaluate(ActionDef def, JsonObject p, IncidentContext? incident, Policy policy)
+    public static PolicyDecision Evaluate(ActionDef def, JsonObject p, IncidentContext? incident, Policy policy, ActionFacts? facts = null)
     {
         var notes = new List<string>();
         if (policy.Disabled.Contains(def.Kind)) return new(Outcome.Reject, [$"{def.Kind} is disabled by policy"]);
+        // A kind's own precondition (Resolvers.cs), e.g. create_detection_rule's back-test binding.
+        if (facts?.Reject is { } refused) return new(Outcome.Reject, [refused]);
 
         var targets = def.TargetsOf(p);
         var pu = Lower(policy.ProtectedUsers);
@@ -228,7 +230,7 @@ public static class PolicyEngine
         var pa = Lower(policy.ProtectedApps);
         var pi = Lower(policy.ProtectedIndicators);
         var entities = incident is null ? null : Entities.Extract(incident.Data);
-        var (userAliases, deviceAliases, appAliases) = Aliases(entities);
+        var (userAliases, deviceAliases, appAliases) = Aliases(entities, facts);
 
         foreach (var u in targets.Users)
         {
@@ -239,6 +241,15 @@ public static class PolicyEngine
         foreach (var d in targets.Devices)
         {
             if (NamesFor(deviceAliases, d).Any(pd.Contains)) return new(Outcome.Reject, [$"{d} is a protected device"]);
+            // Intune reports short device names (dc01) while protected lists usually hold FQDNs: for names the board
+            // resolved itself, a protected FQDN also matches by its host label. This only ever adds rejections.
+            if (facts?.DeviceAliases?.ContainsKey(d.ToLowerInvariant()) == true && NamesFor(deviceAliases, d).Any(n => !n.Contains('.') && pd.Any(x => x.Split('.')[0] == n)))
+                return new(Outcome.Reject, [$"{d} is a protected device (matched by host name)"]);
+            if (facts?.UnresolvedDevices?.Contains(d, StringComparer.OrdinalIgnoreCase) == true)
+            {
+                notes.Add($"{d} could not be resolved to its other device names, so the protected-device list was checked by id only");
+                continue;
+            }
             if (pd.Count > 0 && !deviceAliases.ContainsKey(d.ToLowerInvariant()))
                 notes.Add($"{d} is not in the incident evidence, so its host name is unknown and the protected-device list was checked by id only");
         }
@@ -258,7 +269,8 @@ public static class PolicyEngine
             else if (policy.RequireTargetInIncident && all.Count > 0)
             {
                 var keys = entities!.Keys();
-                var missing = all.Where(t => !keys.Contains(t)).ToList();
+                // A device counts as in the evidence under any of its names (an Intune id whose MDE id is in the alert).
+                var missing = all.Where(t => !keys.Contains(t) && !(targets.Devices.Contains(t) && NamesFor(deviceAliases, t).Any(keys.Contains))).ToList();
                 if (missing.Count > 0) notes.Add($"not in incident {incident.GraphId} evidence: {string.Join(", ", missing)}");
             }
         }
@@ -279,8 +291,9 @@ public static class PolicyEngine
         }
 
         // Destructive kinds always wait for a person, whatever auto_approve says; two-approver kinds never run on their own.
-        var auto = !def.Destructive && policy.AutoApprove.Contains(def.Kind) && !policy.RequireTwoApprovers.Contains(def.Kind) && notes.Count == 0;
-        return new(auto ? Outcome.Auto : Outcome.NeedsApproval, notes);
+        var auto = !def.Destructive && !Catalog.NeverAuto.Contains(def.Kind) && policy.AutoApprove.Contains(def.Kind) && !policy.RequireTwoApprovers.Contains(def.Kind) && notes.Count == 0;
+        // The resolver's notes (back-test volumes, resolved update) are for the approver; they don't block auto-approval.
+        return new(auto ? Outcome.Auto : Outcome.NeedsApproval, [.. notes, .. facts?.Notes ?? []]);
     }
 
     private static HashSet<string> Lower(IEnumerable<string> xs) => xs.Select(x => x.ToLowerInvariant().TrimEnd('.')).ToHashSet();
@@ -328,11 +341,13 @@ public static class PolicyEngine
     }
 
     /// <summary>Every name a target is known by in the evidence: device MDE id ↔ DNS name ↔ host name; user oid ↔ UPN; app object id ↔ app id ↔ display name.</summary>
-    private static (Dictionary<string, HashSet<string>> Users, Dictionary<string, HashSet<string>> Devices, Dictionary<string, HashSet<string>> Apps) Aliases(IncidentEntities? e)
+    private static (Dictionary<string, HashSet<string>> Users, Dictionary<string, HashSet<string>> Devices, Dictionary<string, HashSet<string>> Apps) Aliases(IncidentEntities? e, ActionFacts? facts = null)
     {
         var users = new Dictionary<string, HashSet<string>>();
         var devices = new Dictionary<string, HashSet<string>>();
         var apps = new Dictionary<string, HashSet<string>>();
+        // Names the board looked up itself (Intune managed device id ↔ Entra device id ↔ MDE id ↔ name), then the evidence's.
+        foreach (var (target, names) in facts?.DeviceAliases ?? new Dictionary<string, string[]>()) Link(devices, [target, .. names]);
         if (e is null) return (users, devices, apps);
         static void Link(Dictionary<string, HashSet<string>> map, IEnumerable<string?> names)
         {
@@ -343,7 +358,12 @@ public static class PolicyEngine
                 set.UnionWith(all);
             }
         }
-        foreach (var d in e.Devices) Link(devices, [d.MdeDeviceId, d.Name, d.Name?.Split('.')[0]]);
+        foreach (var d in e.Devices)
+        {
+            // Linking unions alias sets, so an MDE id the resolver tied to an Intune id picks up the evidence's names too.
+            var known = new[] { d.MdeDeviceId, d.Name }.OfType<string>().SelectMany(n => devices.TryGetValue(n.ToLowerInvariant(), out var s) ? s : []).ToList();
+            Link(devices, [d.MdeDeviceId, d.Name, d.Name?.Split('.')[0], .. known]);
+        }
         foreach (var u in e.Users) Link(users, [u.AadUserId, u.Upn]);
         foreach (var a in e.CloudApps) Link(apps, [a.ObjectId, a.AppId, a.DisplayName]);
         return (users, devices, apps);

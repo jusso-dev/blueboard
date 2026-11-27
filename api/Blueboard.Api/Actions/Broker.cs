@@ -84,15 +84,27 @@ public sealed class Broker(Db db, Audit audit, BoardService board, MsClient ms, 
             if (!needsConfirm || !policy.ConfirmsTarget(a.Kind)) continue;
             IncidentContext? inc = null;
             if (a.IncidentId is { } iid && !incidents.TryGetValue(iid, out inc)) incidents[iid] = inc = await LoadIncidentAsync(iid, a.RequestedBy, ct);
-            list[i] = a with { ConfirmPrompt = ConfirmNames(a, inc).FirstOrDefault() };
+            // No resolver here: this list is polled every few seconds and must not call Microsoft. The prompt is the
+            // evidence name or the id; approval still accepts every resolved alias.
+            list[i] = a with { ConfirmPrompt = ConfirmNames(a, inc, null).FirstOrDefault() };
         }
         return list;
     }
 
-    private static IReadOnlyList<string> ConfirmNames(ActionRow a, IncidentContext? incident)
+    private static IReadOnlyList<string> ConfirmNames(ActionRow a, IncidentContext? incident, ActionFacts? facts)
     {
         var def = Catalog.Get(a.Kind);
-        return PolicyEngine.ConfirmNames(def, def.Validate(a.Params), incident);
+        return PolicyEngine.ConfirmNames(def, def.Validate(a.Params), incident, facts);
+    }
+
+    /// <summary>The kind's resolver (Resolvers.cs), if it has one: device aliases, back-test binding, the rule to disable.</summary>
+    private async Task<ActionFacts?> FactsAsync(ActionDef def, JsonObject prms, DateTimeOffset requestedAt, CancellationToken ct) =>
+        def.Resolve is { } resolve ? await resolve(new ResolveContext(db, ms, settings, requestedAt), prms, ct) : null;
+
+    private Task<ActionFacts?> FactsForAsync(ActionRow a, CancellationToken ct)
+    {
+        var def = Catalog.Get(a.Kind);
+        return FactsAsync(def, def.Validate(a.Params), a.CreatedAt, ct);
     }
 
     /// <summary>The catalogue, with each kind's target type and, given a policy, how that policy treats it.</summary>
@@ -118,14 +130,14 @@ public sealed class Broker(Db db, Audit audit, BoardService board, MsClient ms, 
     }
 
     /// <summary>Validate params and resolve the linked incident: the shared first half of request, preview and simulate.</summary>
-    private async Task<(ActionDef Def, JsonObject Params, Guid? IncidentId, IncidentContext? Incident)> PrepareAsync(
+    private async Task<(ActionDef Def, JsonObject Params, Guid? IncidentId, IncidentContext? Incident, ActionFacts? Facts)> PrepareAsync(
         string kind, JsonElement rawParams, string? incidentRef, Guid? parentId, string requester, CancellationToken ct)
     {
         var def = Catalog.Get(kind);
         var prms = def.Validate(rawParams);
         var incidentId = await board.ResolveIncidentAsync(incidentRef, ct);
         if (incidentId is null && parentId is { } parent) incidentId = (await board.GetAsync(parent, ct))?.IncidentId;
-        return (def, prms, incidentId, incidentId is { } iid ? await LoadIncidentAsync(iid, requester, ct) : null);
+        return (def, prms, incidentId, incidentId is { } iid ? await LoadIncidentAsync(iid, requester, ct) : null, await FactsAsync(def, prms, DateTimeOffset.UtcNow, ct));
     }
 
     /// <summary>
@@ -135,8 +147,8 @@ public sealed class Broker(Db db, Audit audit, BoardService board, MsClient ms, 
     /// </summary>
     public async Task<Assessment> AssessAsync(Principal p, PreviewRequest req, CancellationToken ct = default)
     {
-        var (def, prms, _, incident) = await PrepareAsync(req.Kind, req.Params, req.Incident, null, p.Handle, ct);
-        return PolicyEngine.Assess(def, prms, incident, policy);
+        var (def, prms, _, incident, facts) = await PrepareAsync(req.Kind, req.Params, req.Incident, null, p.Handle, ct);
+        return PolicyEngine.Assess(def, prms, incident, policy, facts);
     }
 
     public async Task<ActionRow> RequestAsync(Principal p, ActionRequest req, CancellationToken ct = default)
@@ -144,8 +156,8 @@ public sealed class Broker(Db db, Audit audit, BoardService board, MsClient ms, 
         p.Require(Roles.Requester);
         if (limiter is not null) await limiter.TakeAsync(p, "action_request", ct);
         if (req.Justification is not { Length: >= 20 and <= 4000 }) throw new BoardException("justification must be 20–4000 characters, citing evidence");
-        var (def, prms, incidentId, incident) = await PrepareAsync(req.Kind, req.Params, req.Incident, req.ParentId, p.Handle, ct);
-        var decision = PolicyEngine.Assess(def, prms, incident, policy);
+        var (def, prms, incidentId, incident, facts) = await PrepareAsync(req.Kind, req.Params, req.Incident, req.ParentId, p.Handle, ct);
+        var decision = PolicyEngine.Assess(def, prms, incident, policy, facts);
         var status = decision.Status;
 
         // A person told the agent to do this on the board (act_on_instruction): their message is the approval, when
@@ -298,14 +310,15 @@ public sealed class Broker(Db db, Audit audit, BoardService board, MsClient ms, 
         {
             if (a.Approvals?.Contains(p.Handle) == true) throw BoardException.Conflict("you already approved this action; a different approver must complete it");
             var incident = a.IncidentId is { } iid ? await LoadIncidentAsync(iid, a.RequestedBy, ct) : null;
+            var facts = await FactsForAsync(a, ct);
             if (policy.ConfirmsTarget(a.Kind))
             {
-                var names = ConfirmNames(a, incident);
+                var names = ConfirmNames(a, incident, facts);
                 if (confirm is null || !names.Contains(confirm.Trim(), StringComparer.OrdinalIgnoreCase))
                     throw new BoardException($"type the target ({names.FirstOrDefault()}) to confirm this approval");
             }
             // The situation may have changed since the request (policy reloaded, evidence updated): re-run policy now.
-            var now = PolicyEngine.Assess(def, def.Validate(a.Params), incident, policy);
+            var now = PolicyEngine.Assess(def, def.Validate(a.Params), incident, policy, facts);
             if (now.Outcome == Outcome.Reject)
             {
                 await RejectOnRecheckAsync(p, a, now.Notes[0], ct);
@@ -442,8 +455,8 @@ public sealed class Broker(Db db, Audit audit, BoardService board, MsClient ms, 
     }
 
     /// <summary>Pure policy guard checked at execution time so delayed, held or recovered actions cannot bypass new protections.</summary>
-    internal static PolicyDecision GuardExecutionPolicy(ActionDef def, JsonObject prms, IncidentContext? incident, Policy policy) =>
-        PolicyEngine.Evaluate(def, prms, incident, policy);
+    internal static PolicyDecision GuardExecutionPolicy(ActionDef def, JsonObject prms, IncidentContext? incident, Policy policy, ActionFacts? facts = null) =>
+        PolicyEngine.Evaluate(def, prms, incident, policy, facts);
 
     /// <summary>
     /// Run an action that was approved while the broker was paused. Re-checks expiry, typed target confirmation and
@@ -465,13 +478,14 @@ public sealed class Broker(Db db, Audit audit, BoardService board, MsClient ms, 
 
         var def = Catalog.Get(a.Kind);
         var incident = a.IncidentId is { } iid ? await LoadIncidentAsync(iid, a.RequestedBy, ct) : null;
+        var facts = await FactsForAsync(a, ct);
         if (policy.ConfirmsTarget(a.Kind))
         {
-            var names = ConfirmNames(a, incident);
+            var names = ConfirmNames(a, incident, facts);
             if (confirm is null || !names.Contains(confirm.Trim(), StringComparer.OrdinalIgnoreCase))
                 throw new BoardException($"type the target ({names.FirstOrDefault()}) to confirm running this held action");
         }
-        var now = PolicyEngine.Assess(def, def.Validate(a.Params), incident, policy);
+        var now = PolicyEngine.Assess(def, def.Validate(a.Params), incident, policy, facts);
         if (now.Outcome == Outcome.Reject)
         {
             await RejectOnRecheckAsync(p, a, now.Notes[0], ct);
@@ -521,13 +535,14 @@ public sealed class Broker(Db db, Audit audit, BoardService board, MsClient ms, 
         try
         {
             prms = def.Validate(a.Params); // never run a write from unchecked stored JSON
-            var recheck = GuardExecutionPolicy(def, prms, incident, policy);
+            var facts = await FactsAsync(def, prms, a.CreatedAt, ct);
+            var recheck = GuardExecutionPolicy(def, prms, incident, policy, facts);
             if (recheck.Outcome == Outcome.Reject)
             {
                 await RejectOnRecheckAsync(await system.GetAsync(ct), a, recheck.Notes[0], ct);
                 return;
             }
-            prepared = def.Prepare?.Invoke(prms, new ActionContext(id, a.IncidentGraphId, a.IncidentId, a.RequestedBy, a.DecidedBy, a.Justification, settings.Ti, DateTimeOffset.UtcNow));
+            prepared = def.Prepare?.Invoke(prms, new ActionContext(id, a.IncidentGraphId, a.IncidentId, a.RequestedBy, a.DecidedBy, a.Justification, settings.Ti, DateTimeOffset.UtcNow, facts?.Data));
             result = settings.BrokerExecute
                 ? await def.Run(ms, prepared ?? prms, comment, ct)
                 : new { dry_run = true, would = def.Describe(prms), request = prepared };

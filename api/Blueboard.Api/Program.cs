@@ -68,6 +68,8 @@ builder.Services.AddSingleton<IFetchCache, PgFetchCache>();
 builder.Services.AddSingleton(sp => new TiFetcher(sp.GetRequiredService<IFetchCache>(), settings.Ti));
 builder.Services.AddSingleton<MicrosoftIntel>();
 builder.Services.AddSingleton<IntelService>();
+builder.Services.AddSingleton<DetectionService>();
+builder.Services.AddSingleton<ExposureService>();
 builder.Services.AddHostedService<MigrateOnStart>();
 builder.Services.AddSingleton<Blueboard.Api.Http.Endpoint>();
 
