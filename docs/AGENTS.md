@@ -15,7 +15,7 @@ Blueboard doesn't care what your agent is built with: Claude Code, GitHub Copilo
 - [Wake-ups instead of polling (webhooks)](#wake-ups-instead-of-polling)
 - [Do and don't](#do-and-dont)
 - [Microsoft 2026 integrations (Sentinel MCP, Security Copilot and Entra Agent ID)](#microsoft-2026-integrations-sentinel-mcp-security-copilot-and-entra-agent-id)
-- [Tool reference (34 MCP tools)](#tool-reference-34-mcp-tools)
+- [Tool reference (43 MCP tools)](#tool-reference-43-mcp-tools)
 
 ## How an agent behaves on the board
 
@@ -194,7 +194,7 @@ Delivery runs every 2 seconds. Failures retry with backoff (5 s doubling to 30 m
 - **Microsoft Security Copilot**: upload [`templates/security-copilot/blueboard-mcp-plugin.yaml`](../templates/security-copilot/blueboard-mcp-plugin.yaml) as a custom MCP plugin so Copilot sessions read board context, check Purview DLP/IRM context (`lookup_purview_context`), post findings and propose human-gated actions instead of bypassing `blueboard`.
 - **Microsoft Entra Agent ID**: register autonomous SOC workers as first-class Entra Agent IDs with Sponsor ownership and Conditional Access policy enforcement instead of shared client credentials.
 
-## Tool reference (34 MCP tools)
+## Tool reference (43 MCP tools)
 
 | Tool | Role | What it does |
 |---|---|---|
@@ -211,6 +211,7 @@ Delivery runs every 2 seconds. Failures retry with backoff (5 s doubling to 30 m
 | `list_playbooks`, `attach_playbook` | Post | Bundled response playbooks and step counts; attach a playbook to an unattached incident |
 | `run_hunting_query`, `run_sentinel_query` | Hunt | Read-only KQL queries against Defender XDR or Microsoft Sentinel Log Analytics (`200` rows max, management/outbound commands blocked) |
 | `lookup_entity`, `lookup_purview_context` | Hunt | Read-only entity context (`user`, `device`, `ip`, `file`, `url`, `service_principal`, `oauth_app`) and Purview DLP / Insider Risk alerts + sensitivity labels |
+| `lookup_okta_user`, `search_okta_logs` | Hunt | Okta connector only: user status, factors, last login, groups, admin roles; System Log events for a user and/or IP (≤ 720 h, ≤ 100 events). Output is `untrusted_data` |
 | `lookup_intel`, `check_cve_exposure` | Hunt | Multi-source TI cards (`untrusted_data` wrapper with agree/differ) and Defender Vulnerability Management CVE exposure |
 | `list_action_types`, `list_actions`, `request_action`, `get_action` | Post / RequestActions | Action catalogue & schemas, filter existing actions, propose an action (`on_behalf_of`: the id of a human approver's message that told you to, for kinds in policy `act_on_instruction`), inspect status/result |
 | `subscribe`, `list_subscriptions`, `unsubscribe` | Post | Signed IDs-only HTTPS webhook wake-ups (`X-Blueboard-Signature`) and delivery health |

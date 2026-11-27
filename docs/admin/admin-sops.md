@@ -30,6 +30,7 @@ These 14 standard operating procedures govern day-to-day administration, change 
 12. [SOP-12: Author, validate and deploy custom playbooks](#12-sop-12-author-validate-and-deploy-custom-playbooks)
 13. [SOP-13: PostgreSQL backup, migration and audit verification](#13-sop-13-postgresql-backup-migration-and-audit-verification)
 14. [SOP-14: Incident response for a compromised agent, approver or board](#14-sop-14-incident-response-for-a-compromised-agent-approver-or-board)
+15. [SOP-15: Rotate connector credentials (Okta, ServiceNow, Jira)](#15-sop-15-rotate-connector-credentials-okta-servicenow-jira)
 
 ## 1. SOP-01: Onboard and offboard SOC analysts and approvers
 
@@ -376,3 +377,31 @@ These 14 standard operating procedures govern day-to-day administration, change 
 ### Verification
 
 - Zero active unauthorised sessions or permissions; Sentinel `BlueboardAudit_CL` matches Defender Action Center; post-incident review completed before clearing broker pause or re-enabling `BROKER_EXECUTE=true`.
+
+## 15. SOP-15: Rotate connector credentials (Okta, ServiceNow, Jira)
+
+- **Purpose**: Replace a connector credential (scheduled, or after suspected exposure) without a gap in connector service and without the new secret passing through chat, tickets or deployment history.
+- **When to run**: Every 90 days for SSWS tokens, ServiceNow client secrets, Jira API tokens and inbound webhook secrets; yearly for the Okta signing key; immediately after any suspected exposure (threat model TM-C1, TM-C2, TM-C5), an operator leaving, or a failing *Connectors* setup check that names an authentication error.
+- **Who**: `Board.Admin` + Key Vault Administrator (production) + the Okta, ServiceNow or Jira administrator.
+
+### Steps
+
+1. **Okta signing key (`private_key_jwt`, preferred)** — no secret to copy:
+   1. Create a new key version in place: `az keyvault key rotate --vault-name <vault> --name okta-signing` (or `az keyvault key create … --kty RSA --size 2048 --ops sign` for a new key name).
+   2. Export only the **public** JWK (`az keyvault key download --vault-name <vault> --name okta-signing --encoding PEM -f okta-signing.pub.pem`, convert to JWK) and **add** it to the Okta service app's public keys next to the old one; note its `kid`.
+   3. If `OKTA_SIGNING_KEY_URL` pins a version, update it (and `OKTA_JWK_KID`) with `./infra/deploy.sh` (or `az functionapp config appsettings set`). A versionless key id picks up the new version on the next token (within an hour).
+   4. **Admin → Connectors → Okta → Test**. When it succeeds, deactivate and delete the old public key in Okta.
+2. **Okta SSWS token (fallback)**: create a new token as the dedicated Okta integration admin, `az keyvault secret set --vault-name <vault> -n okta-api-token --file <path>` (never on the command line), restart the Function App so the Key Vault reference refreshes, **Test**, then revoke the old token in Okta (**Security → API → Tokens**). Plan the move to `private_key_jwt`.
+3. **ServiceNow OAuth client secret**: regenerate the secret on the OAuth application registry entry, `az keyvault secret set -n servicenow-client-secret --file <path>`, restart the Function App, **Test**. The old secret stops working at regeneration, so do this in a quiet window; outbound ticket sync retries on the next minute.
+4. **Jira API token**: create a new token for the integration account (id.atlassian.com → Security → API tokens), `az keyvault secret set -n jira-api-token --file <path>`, restart, **Test**, then revoke the old token.
+5. **Inbound webhook secrets** (`servicenow-webhook-secret`, `jira-webhook-secret`): generate 32+ random bytes (`openssl rand -base64 48 > <path>`), update the sender (ServiceNow credential record / relay secret) **and** Key Vault in the same change window, then restart. Updates signed with the old secret are refused (401) until both sides match; ticket comments are not lost in ServiceNow/Jira, only not mirrored during the gap.
+6. **mvp profile** (no Key Vault): pass the new value to `./infra/deploy.sh` as the environment variable (`OKTA_API_TOKEN`, `SERVICENOW_CLIENT_SECRET`, `SERVICENOW_WEBHOOK_SECRET`, `JIRA_API_TOKEN`, `JIRA_WEBHOOK_SECRET`). Secure values are never stored; a deploy without one clears it (deploy.sh warns).
+7. **After suspected exposure**: also pause the broker (SOP-04) if Okta write scopes were exposed, review the Okta System Log for the service app's client id (or the SSWS token's creator) and ServiceNow/Jira audit history for the integration account since the exposure window, and reverse anything unauthorised.
+8. Delete local files that held secret values; never paste them into the board, tickets or chat (the board's secret-leak filter refuses obvious tokens).
+
+### Verification
+
+- **Admin → Connectors** shows every configured connector *Healthy* with a *Last success* after the rotation, and the setup check *Connectors* is OK.
+- `audit_log` has a `connector.tested` row per connector from the person who rotated it.
+- The old credential no longer works (Okta key deactivated / token revoked, ServiceNow secret regenerated, Jira token revoked), and a test inbound request signed with the old webhook secret returns 401.
+
