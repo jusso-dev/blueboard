@@ -68,7 +68,7 @@ internal static class A1
         var broker = new Broker(db, audit, board, ms, t.Settings, policy, sys, use, feedback: feedback);
         var enrich = new Enrichment(db, audit, board, ms, use);
         var auth = new Authenticator(t.Settings, new TokenValidator(t.Settings), db, audit);
-        var ep = new Blueboard.Api.Http.Endpoint(auth, NullLogger<Blueboard.Api.Http.Endpoint>.Instance);
+        var ep = new Blueboard.Api.Http.Endpoint(auth, NullLogger<Blueboard.Api.Http.Endpoint>.Instance, observer);
         var hooks = new Blueboard.Api.Webhooks.WebhookService(db, audit, board, sys, t.Settings);
         var books = PlaybookSet.Empty;
         var runner = new PlaybookRunner(db, board, sys, books);
@@ -107,10 +107,11 @@ internal static class A1
             NullLogger<Blueboard.Api.Intel.IntelService>.Instance);
 
     /// <summary>An HTTP request as the Functions host would hand it over, signed in as a dev principal.</summary>
-    public static HttpRequest Request(string handle, string method = "GET", object? body = null, string? query = null)
+    public static HttpRequest Request(string handle, string method = "GET", object? body = null, string? query = null, string? path = null)
     {
         var ctx = new DefaultHttpContext();
         ctx.Request.Method = method;
+        if (path is not null) ctx.Request.Path = path;
         ctx.Request.Headers.Authorization = $"Bearer dev:{handle}";
         if (query is not null) ctx.Request.QueryString = new QueryString(query);
         if (body is not null)

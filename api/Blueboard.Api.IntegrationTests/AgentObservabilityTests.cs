@@ -72,6 +72,43 @@ public sealed class AgentObservabilityTests(TestBoard t) : IClassFixture<TestBoa
     }
 
     [DbFact]
+    public async Task Over_budget_agent_is_refused_on_rest_too_and_rest_calls_are_metered_and_traced()
+    {
+        var app = A1.Build(t, new Policy());
+        var agent = await NewAgent();
+        var admin = await t.As("analyst");
+        await app.Budgets.SetBudgetAsync(admin, agent.Handle, new BudgetInput(DailyUsd: 0.025, Reason: "integration test budget"), Ct);
+        var q = await t.Board.PostAsync(admin, new PostInput("triage", "Is 198.51.100.7 known?", "question"), ct: Ct);
+
+        // Under budget: REST works, and every call is metered ($0.01 default) and traced under a route label.
+        var (claimed, _) = A1.Read(await app.Api.Claim(A1.Request(agent.Handle, "POST", new { op = "claim" }, path: $"/api/claims/{q.Id}"), q.Id.ToString()));
+        Assert.Equal(200, claimed);
+        Assert.Equal(200, A1.Read(await app.Api.Messages(A1.Request(agent.Handle, path: "/api/messages", query: "?channel=triage"))).Status);
+        Assert.Equal(1, await t.ScalarAsync("select count(*) from agent_tool_calls where principal_id = @p and tool = 'rest:POST /api/claims/{id}' and status = 'ok'", ("p", agent.Id)));
+        Assert.Equal(1, await t.ScalarAsync("select calls from agent_metered_daily where principal_id = @p and tool = 'rest:GET /api/messages'", ("p", agent.Id)));
+
+        // A third priced call ($0.03) takes it over $0.025: REST is now refused with 402, like MCP.
+        A1.Read(await app.Api.Messages(A1.Request(agent.Handle, path: "/api/messages", query: "?channel=triage")));
+        var (refused, body) = A1.Read(await app.Api.Messages(A1.Request(agent.Handle, path: "/api/messages", query: "?channel=triage")));
+        Assert.Equal(402, refused);
+        Assert.StartsWith("budget exceeded", body.GetProperty("error").GetString());
+        Assert.True(await t.ScalarAsync("select count(*) from agent_tool_calls where principal_id = @p and tool = 'rest:GET /api/messages' and status = 'budget_blocked'", ("p", agent.Id)) >= 1);
+
+        // Exempt: GET /api/me (free) and releasing a claim. done is refused, even disguised by a second, differently cased key.
+        Assert.Equal(200, A1.Read(await app.Api.Me(A1.Request(agent.Handle, path: "/api/me"))).Status);
+        Assert.Equal(0, await t.ScalarAsync("select coalesce(sum(cost_usd), 0)::bigint * 1000 from agent_metered_daily where principal_id = @p and tool = 'rest:GET /api/me'", ("p", agent.Id)));
+        await t.Board.ClaimAsync(agent, q.Id, null, Ct);
+        Assert.Equal(402, A1.Read(await app.Api.Claim(A1.Request(agent.Handle, "POST", new { op = "done" }, path: $"/api/claims/{q.Id}"), q.Id.ToString())).Status);
+        var sneaky = JsonDocument.Parse("""{"op":"release","OP":"done"}""").RootElement;
+        Assert.Equal(402, A1.Read(await app.Api.Claim(A1.Request(agent.Handle, "POST", sneaky, path: $"/api/claims/{q.Id}"), q.Id.ToString())).Status);
+        Assert.Equal(200, A1.Read(await app.Api.Claim(A1.Request(agent.Handle, "POST", new { op = "release" }, path: $"/api/claims/{q.Id}"), q.Id.ToString())).Status);
+
+        // People are never budgeted or traced on REST.
+        Assert.Equal(200, A1.Read(await app.Api.Messages(A1.Request("analyst", path: "/api/messages", query: "?channel=triage"))).Status);
+        Assert.Equal(0, await t.ScalarAsync("select count(*) from agent_tool_calls where principal_id = @p and tool like 'rest:%'", ("p", admin.Id)));
+    }
+
+    [DbFact]
     public async Task Usage_reports_are_validated_deduplicated_and_priced_by_the_board()
     {
         var app = A1.Build(t, new Policy());

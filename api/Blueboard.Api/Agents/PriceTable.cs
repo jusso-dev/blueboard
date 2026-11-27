@@ -15,7 +15,7 @@ public sealed record ModelPrice(double Input, double Output, double CacheRead, d
 /// Built-in Anthropic first-party prices (November 2026), overridable and extendable with AGENT_PRICE_TABLE. Tool
 /// prices are USD per MCP call for board-side metering: every call costs <see cref="DefaultToolPriceUsd"/> unless the
 /// table prices that tool (or sets "default_tool"), so an agent that never reports its tokens still burns its budget.
-/// <see cref="FreeTools"/> are never charged.
+/// <see cref="FreeTools"/> are never charged. Agents' REST calls are metered the same way under "rest:METHOD /api/route".
 /// </summary>
 public sealed class PriceTable
 {
@@ -27,7 +27,7 @@ public sealed class PriceTable
     public const double DefaultToolPriceUsd = 0.01;
 
     /// <summary>Calls that never cost anything: identity checks and usage reporting must stay free so a blocked agent can recover.</summary>
-    public static readonly IReadOnlySet<string> FreeTools = new HashSet<string>(StringComparer.Ordinal) { "whoami", "report_usage" };
+    public static readonly IReadOnlySet<string> FreeTools = new HashSet<string>(StringComparer.Ordinal) { "whoami", "report_usage", "rest:GET /api/me" };
 
     public static readonly IReadOnlyDictionary<string, ModelPrice> BuiltIn = new Dictionary<string, ModelPrice>(StringComparer.OrdinalIgnoreCase)
     {

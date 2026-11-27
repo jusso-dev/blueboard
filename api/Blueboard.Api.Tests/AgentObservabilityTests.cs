@@ -163,4 +163,28 @@ public class AgentObservabilityTests
         Assert.Equal("forbidden", McpObserver.StatusOf(BoardException.Forbidden("no")));
         Assert.Equal("error", McpObserver.StatusOf(BoardException.NotFound("x")));
     }
+    [Fact]
+    public void Release_exemption_reads_the_outcome_exactly_as_complete_claim_does()
+    {
+        JsonElement J(string s) => JsonDocument.Parse(s).RootElement;
+        var id = Guid.NewGuid();
+        Assert.Equal("release", McpObserver.ClaimOutcome(J($$"""{"message_id":"{{id}}","outcome":"release"}""")));
+        // Mixed case is not a valid outcome for the tool, so it is no exemption either.
+        Assert.Null(McpObserver.ClaimOutcome(J($$"""{"message_id":"{{id}}","outcome":"Release"}""")));
+        // Duplicate keys: the contract (case-insensitive, last wins) reads "done", so the exemption does too.
+        Assert.Equal("done", McpObserver.ClaimOutcome(J($$"""{"message_id":"{{id}}","outcome":"release","OUTCOME":"done"}""")));
+        Assert.Equal("done", McpObserver.ClaimOp(J("""{"op":"release","OP":"done"}""")));
+        Assert.Equal("release", McpObserver.ClaimOp(J("""{"op":"release"}""")));
+    }
+
+    [Fact]
+    public void Rest_route_labels_name_the_route_not_the_record()
+    {
+        Assert.Equal("rest:POST /api/actions", Http.Endpoint.RouteLabel("post", "/api/actions"));
+        Assert.Equal("rest:POST /api/claims/{id}", Http.Endpoint.RouteLabel("POST", $"/api/claims/{Guid.NewGuid()}"));
+        Assert.Equal("rest:GET /api/incidents/{id}/timeline", Http.Endpoint.RouteLabel("GET", "/api/incidents/90210/timeline"));
+        Assert.Equal(McpObserver.RestWhoAmI, Http.Endpoint.RouteLabel("GET", "/api/me"));
+        Assert.Equal(0, new PriceTable().ToolPrice(McpObserver.RestWhoAmI));
+        Assert.Equal(PriceTable.DefaultToolPriceUsd, new PriceTable().ToolPrice("rest:POST /api/actions"));
+    }
 }
