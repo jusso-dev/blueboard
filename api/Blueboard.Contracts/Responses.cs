@@ -173,3 +173,27 @@ public sealed record AgentFeedbackItem(
     string? YourClassification, string? CorrectedClassification, string? GivenBy, DateTimeOffset At);
 
 public sealed record AgentFeedbackResult(string Notice, int Correct, int Incorrect, IReadOnlyList<AgentFeedbackItem> Items);
+/// <summary>Hits on one UTC day of a back-test window.</summary>
+public sealed record BacktestDay(string Date, long Hits);
+public sealed record BacktestValue(string Value, long Hits);
+/// <summary>Distinct values seen in one entity column, with the five most frequent.</summary>
+public sealed record BacktestEntity(string Column, long Distinct, BacktestValue[] Top);
+
+/// <summary>
+/// backtest_detection: what the candidate query matched over the window. The board ran it and stored it; cite
+/// backtest_id in create_detection_rule within bindable_until.
+/// </summary>
+public sealed record BacktestResult(
+    Guid BacktestId, string Target, string QuerySha256, int LookbackDays, long TotalHits, long UndatedHits, bool Truncated,
+    BacktestDay[] HitsPerDay, BacktestEntity[] DistinctEntities, JsonElement[] SampleRows, double EstimatedAlertsPerDay, long PeakHitsPerDay,
+    DateTimeOffset CreatedAt, DateTimeOffset BindableUntil, string[] Notes);
+
+/// <summary>One prioritised exposure: a CVE (or recommendation) on the tenant's devices, scored by what makes it urgent.</summary>
+public sealed record ExposureItem(
+    string Id, string Title, string? CveId, string Severity, double? Cvss, bool ExploitAvailable, bool KnownExploited, int Devices,
+    int InternetFacingDevices, int CriticalDevices, int InOpenIncidents, double Score, string[] Reasons, ExposureDevice[] TopDevices,
+    string? Remediation);
+
+/// <summary>A device an exposure affects, with every id the remediation request can target.</summary>
+public sealed record ExposureDevice(string? MdeDeviceId, string? Name, string? AadDeviceId, bool InternetFacing, string? AssetValue, bool InOpenIncident);
+

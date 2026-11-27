@@ -21,6 +21,7 @@ import IntelPage from "./pages/Intel";
 import IntelKeyPage from "./pages/IntelKey";
 import MemoryPage from "./pages/Memory";
 import ConnectorsPage from "./pages/Connectors";
+import ExposurePage from "./pages/Exposure";
 import DevLogin from "./pages/DevLogin";
 import NotFound from "./pages/NotFound";
 import { initAuth } from "./lib/auth";
@@ -47,6 +48,7 @@ const routes = (dev: boolean) => [
       { path: "intel", element: <IntelPage /> },
       { path: "intel/:key", element: <IntelKeyPage /> },
       { path: "memory", element: <MemoryPage /> },
+      { path: "exposure", element: <ExposurePage /> },
       { path: "*", element: <NotFound /> },
     ],
   },

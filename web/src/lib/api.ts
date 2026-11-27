@@ -156,7 +156,7 @@ export type CatalogEntry = {
   params: JsonSchema;
   mode: PolicyMode | null;
 };
-export type TargetType = "device" | "user" | "app" | "indicator" | "email" | "incident";
+export type TargetType = "device" | "user" | "app" | "indicator" | "email" | "incident" | "detection";
 export type PolicyMode = "auto" | "approval" | "on_instruction" | "two_approvers" | "disabled" | "conditional";
 export type JsonSchema = {
   type?: string;

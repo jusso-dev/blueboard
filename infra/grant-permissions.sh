@@ -14,6 +14,12 @@
 #   TI_MSTI=1 ./infra/grant-permissions.sh ...        # add ThreatIntelligence.Read.All (Microsoft Threat Intelligence lookups)
 #   PURVIEW_LABELS=1 ./infra/grant-permissions.sh ... # add InformationProtectionPolicy.Read.All (Purview sensitivity labels)
 #   PURVIEW_GUARD=1 ./infra/grant-permissions.sh ...  # add Content.Process.All (Purview processContent guard on posts)
+#   EXPOSURE=1 ./infra/grant-permissions.sh ...       # add SecurityRecommendation.Read.All (MDE) for list_exposure_recommendations
+#
+# create_detection_rule / disable_detection_rule: target defender uses CustomDetection.ReadWrite.All (Graph v1.0); target
+# sentinel needs Microsoft Sentinel Contributor on the workspace (ARM), like publish_ti_indicator. Any intune_* action
+# also grants DeviceManagementManagedDevices.Read.All so the board can resolve managed device ↔ Entra device ↔ MDE ids.
+# intune_expedite_quality_update uses the Windows Autopatch deployment API, which is Graph beta only.
 #
 # publish_ti_indicator needs no Graph permission: it needs the Azure role Microsoft Sentinel Contributor on the
 # Sentinel workspace (main.bicep assignSentinelContributor, or the az role assignment in docs/THREAT_INTEL.md).
@@ -78,11 +84,14 @@ perm_for() {
     disable_service_principal) echo "$GRAPH_APP Application.ReadWrite.All" ;;
     purge_email) echo "$GRAPH_APP SecurityAnalyzedMessage.ReadWrite.All" ;;
     update_incident | add_incident_comment) echo "$GRAPH_APP SecurityIncident.ReadWrite.All" ;;
+    create_detection_rule | disable_detection_rule) echo "$GRAPH_APP CustomDetection.ReadWrite.All" ;;
+    intune_sync_device | intune_update_defender_signatures) echo "$GRAPH_APP DeviceManagementManagedDevices.PrivilegedOperations.All" ;;
+    intune_expedite_quality_update) echo "$GRAPH_APP WindowsUpdates.ReadWrite.All" ;;
     publish_ti_indicator) echo "AZURE_RBAC" ;;
     *) return 1 ;;
   esac
 }
-ALL_ACTIONS="isolate_device release_device run_av_scan collect_investigation_package restrict_app_execution unrestrict_app_execution stop_and_quarantine_file tag_device block_indicator unblock_indicator disable_user enable_user revoke_sessions reset_password confirm_user_compromised dismiss_user_risk disable_service_principal purge_email update_incident add_incident_comment publish_ti_indicator"
+ALL_ACTIONS="isolate_device release_device run_av_scan collect_investigation_package restrict_app_execution unrestrict_app_execution stop_and_quarantine_file tag_device block_indicator unblock_indicator disable_user enable_user revoke_sessions reset_password confirm_user_compromised dismiss_user_risk disable_service_principal purge_email update_incident add_incident_comment publish_ti_indicator create_detection_rule disable_detection_rule intune_sync_device intune_update_defender_signatures intune_expedite_quality_update"
 
 log "read permissions (incident ingest, hunting, entity lookups)"
 for p in SecurityIncident.Read.All SecurityAlert.Read.All ThreatHunting.Read.All User.Read.All IdentityRiskyUser.Read.All RoleManagement.Read.Directory; do
@@ -96,6 +105,10 @@ fi
 if [[ "${PURVIEW_LABELS:-}" == "1" ]]; then
   log "Microsoft Purview sensitivity labels (PURVIEW_LABELS=1)"
   grant "$GRAPH_APP" InformationProtectionPolicy.Read.All
+fi
+if [[ "${EXPOSURE:-}" == "1" ]]; then
+  log "Defender Vulnerability Management recommendations (EXPOSURE=1)"
+  grant "$MDE_APP" SecurityRecommendation.Read.All
 fi
 if [[ "${PURVIEW_GUARD:-}" == "1" ]]; then
   log "Microsoft Purview processContent content guard (PURVIEW_GUARD=1)"
@@ -116,6 +129,15 @@ else
       warn "$a needs Microsoft Sentinel Contributor on the workspace, not a Graph permission (see docs/THREAT_INTEL.md)"
       continue
     fi
+    case "$a" in
+      create_detection_rule | disable_detection_rule)
+        warn "$a with target sentinel also needs Microsoft Sentinel Contributor on the workspace (see docs/THREAT_INTEL.md)" ;;
+      intune_*)
+        case "$done_perms" in *" $GRAPH_APP DeviceManagementManagedDevices.Read.All "*) ;; *)
+          done_perms="$done_perms$GRAPH_APP DeviceManagementManagedDevices.Read.All "
+          grant "$GRAPH_APP" DeviceManagementManagedDevices.Read.All ;;
+        esac ;;
+    esac
     case "$done_perms" in *" $perm "*) continue ;; esac
     done_perms="$done_perms$perm "
     # shellcheck disable=SC2086

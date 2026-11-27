@@ -495,7 +495,7 @@ public sealed partial class IntelService(
         return rows.Where(r => J.Str(r, column) is { } v && set.Contains(v));
     }
 
-    private async Task<HashSet<string>> OpenIncidentDevicesAsync(CancellationToken ct)
+    internal async Task<HashSet<string>> OpenIncidentDevicesAsync(CancellationToken ct)
     {
         var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         await using var cmd = db.Command("select data::text from incidents where lower(status) not in ('resolved', 'redirected') order by coalesce(updated_at_src, first_seen_at) desc limit 500");

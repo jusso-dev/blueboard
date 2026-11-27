@@ -26,6 +26,11 @@ public sealed record TiSettings
     public string? FixturesDir { get; init; }
     /// <summary>Log Analytics workspace id (GUID) that publish_ti_indicator uploads STIX objects to.</summary>
     public string? SentinelWorkspaceId { get; init; }
+    /// <summary>
+    /// ARM resource id of the Sentinel workspace (/subscriptions/…/resourceGroups/…/providers/Microsoft.OperationalInsights/workspaces/…),
+    /// for create_detection_rule / disable_detection_rule with target sentinel.
+    /// </summary>
+    public string? SentinelWorkspaceResourceId { get; init; }
     /// <summary>Public URL of the web app, used for links back to the board in published indicators.</summary>
     public string? BoardWebUrl { get; init; }
 
@@ -57,6 +62,7 @@ public sealed record TiSettings
             MaxResponseBytes = long.TryParse(env("TI_MAX_RESPONSE_BYTES"), out var max) && max > 0 ? max : 25 * 1024 * 1024,
             FixturesDir = fixtures,
             SentinelWorkspaceId = env("SENTINEL_WORKSPACE_ID"),
+            SentinelWorkspaceResourceId = env("SENTINEL_WORKSPACE_RESOURCE_ID"),
             BoardWebUrl = env("BOARD_WEB_URL"),
         };
     }

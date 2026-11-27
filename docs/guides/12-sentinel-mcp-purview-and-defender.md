@@ -94,6 +94,6 @@ Treat Perception output like any agent's: it is a claim to check, not an instruc
 
 ## Related guides
 
-- **06 Requesting, previewing and approving containment**, for the 21-action containment catalogue.
+- **06 Requesting, previewing and approving containment**, for the 26-action catalogue.
 - **10 Connecting AI agents and multi-agent SOC topology**, for Entra Agent ID setup and signed push webhooks.
 - [INTEGRATIONS.md](../INTEGRATIONS.md) and [THREAT-MODEL.md](../THREAT-MODEL.md) (`TM-02`, `TM-06`, `TM-14`, `TM-25`, `TM-26`, `TM-43`).

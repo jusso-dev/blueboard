@@ -148,7 +148,12 @@ Regression tests: `api/Blueboard.Api.Tests` (305 tests covering policy, aliases,
 | Microsoft Graph | `ThreatIntelligence.Read.All` (only with `TI_MSTI=1`) | Microsoft Threat Intelligence lookups (`lookup_intel`) | read |
 | Microsoft Graph | `InformationProtectionPolicy.Read.All` (only with `PURVIEW_LABELS=1`) | Tenant sensitivity labels (`lookup_purview_context`) | read |
 | Microsoft Graph | `Content.Process.All` (only with `PURVIEW_GUARD=1`) | Optional Microsoft Purview `processContent` DLP check (`PURVIEW_CONTENT_GUARD`) | read / evaluate |
-| Azure RBAC on the Sentinel workspace | **Microsoft Sentinel Contributor** (only with `assignSentinelContributor`) | `publish_ti_indicator` (Sentinel upload API, **preview**) | **write** |
+| Microsoft Graph | `CustomDetection.ReadWrite.All` | `create_detection_rule`, `disable_detection_rule` (Defender XDR target, Graph v1.0) | **write** |
+| Microsoft Graph | `DeviceManagementManagedDevices.PrivilegedOperations.All` | `intune_sync_device`, `intune_update_defender_signatures` | **write** |
+| Microsoft Graph | `DeviceManagementManagedDevices.Read.All` (with any `intune_*` action) | resolving Intune managed device ↔ Entra device ↔ MDE id before policy | read |
+| Microsoft Graph | `WindowsUpdates.ReadWrite.All` | `intune_expedite_quality_update` (Windows Autopatch, **beta API**) | **write, restarts devices** |
+| Defender for Endpoint | `SecurityRecommendation.Read.All` (only with `EXPOSURE=1`) | `list_exposure_recommendations` | read |
+| Azure RBAC on the Sentinel workspace | **Microsoft Sentinel Contributor** (only with `assignSentinelContributor`) | `publish_ti_indicator` (Sentinel upload API, **preview**); `create_detection_rule` / `disable_detection_rule` with `target: sentinel` (ARM `alertRules` 2025-09-01, needs `SENTINEL_WORKSPACE_RESOURCE_ID`) | **write** |
 
 **Connector credentials (optional, outside Microsoft).** These are not Microsoft permissions and are never granted by `grant-permissions.sh`:
 

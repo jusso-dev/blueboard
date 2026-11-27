@@ -451,6 +451,7 @@ var tiSettings = {
   TI_MSTI_ENABLED: string(tiMstiEnabled)
   NVD_API_KEY: isProd && !empty(nvdApiKey) ? '@Microsoft.KeyVault(VaultName=${vaultName};SecretName=nvd-api-key)' : nvdApiKey
   SENTINEL_WORKSPACE_ID: empty(sentinelWorkspaceResourceId) ? '' : sentinelWorkspace!.properties.customerId
+  SENTINEL_WORKSPACE_RESOURCE_ID: sentinelWorkspaceResourceId
 }
 // Connector settings. Secrets: Key Vault references in production, secure params in mvp. Empty values mean off.
 var kvRef = 'VaultName=${vaultName};SecretName='

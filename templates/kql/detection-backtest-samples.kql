@@ -1,0 +1,17 @@
+// =============================================================================
+// Blueboard detection back-test samples
+// Use with: backtest_detection { "query": "<one query>", "target": "defender", "lookback_days": 14 }
+// then:     request_action create_detection_rule { ..., "query": "<the same text>", "backtest_id": "<id>" }
+// Each query projects Timestamp so hits per day are exact. The local demo (mock-msapi) answers the first one.
+// =============================================================================
+
+// 1. Encoded PowerShell (demo back-test: about 3 hits a day on 3 devices)
+DeviceProcessEvents
+| where FileName in~ ("powershell.exe", "pwsh.exe") and ProcessCommandLine has "EncodedCommand"
+| project Timestamp, DeviceId, DeviceName, AccountUpn, ProcessCommandLine
+
+// 2. Office app spawning a script host (common phishing payload pattern)
+DeviceProcessEvents
+| where InitiatingProcessFileName in~ ("winword.exe", "excel.exe", "outlook.exe", "powerpnt.exe")
+| where FileName in~ ("powershell.exe", "pwsh.exe", "wscript.exe", "cscript.exe", "mshta.exe")
+| project Timestamp, DeviceId, DeviceName, AccountUpn, InitiatingProcessFileName, FileName, ProcessCommandLine

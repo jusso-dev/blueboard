@@ -222,6 +222,8 @@ public sealed class Setup(Db db, Settings settings, Policy policy, MsClient ms, 
             lines.Add($"Not checked here: {k} needs the Azure role {Permissions.AzureRoleFor[k]} (see docs/THREAT_INTEL.md)");
         foreach (var k in kinds.Where(Permissions.ConnectorScopeFor.ContainsKey))
             lines.Add($"Not checked here: {k} runs with the connector's own credential ({Permissions.ConnectorScopeFor[k]}); see the Connectors check");
+        foreach (var k in kinds.Where(Permissions.AlsoAzureRoleFor.ContainsKey))
+            lines.Add($"Not checked here: {k} also needs the Azure role {Permissions.AlsoAzureRoleFor[k]}");
         foreach (var group in kinds.Where(Permissions.WriteFor.ContainsKey).GroupBy(k => Permissions.WriteFor[k]))
         {
             var perm = group.Key;

@@ -24,7 +24,8 @@ namespace Blueboard.Api.Mcp;
 /// </summary>
 public sealed class BoardTools(Authenticator auth, BoardService board, Search search, IncidentQueries incidents, Broker broker, Enrichment enrich, Ingest ingest, WebhookService hooks, Policy policy, PlaybookRunner playbooks, PlaybookSet playbookSet, IntelService intel, Participants participants, GifService gifs, MemoryService memory, AttackViews attack, ILogger<BoardTools> log,
     PolicyStore? policyStore = null, McpObserver? observer = null, AgentBudgets? budgets = null, AgentFeedback? feedback = null,
-    Connectors.ConnectorHub? connectors = null)
+    Connectors.ConnectorHub? connectors = null,
+    DetectionService? detections = null, ExposureService? exposure = null)
 {
     /// <summary>
     /// Authenticate, require the tool's role, read its input record, run, and return JSON text or an error string.
@@ -274,6 +275,24 @@ public sealed class BoardTools(Authenticator auth, BoardService board, Search se
                 }),
             };
         });
+
+    [Function(nameof(BacktestDetection))]
+    public Task<string> BacktestDetection([McpToolTrigger(Tools.BacktestDetection, Tools.BacktestDetectionDoc)] ToolInvocationContext ctx) =>
+        Call<BacktestInput>(ctx, async (me, b) => await Need(detections).BacktestAsync(me, b));
+
+    [Function(nameof(ListExposureRecommendations))]
+    public Task<string> ListExposureRecommendations([McpToolTrigger(Tools.ListExposureRecommendations, Tools.ListExposureRecommendationsDoc)] ToolInvocationContext ctx) =>
+        Call<ExposureRecommendationsQuery>(ctx, async (me, q) => await Need(exposure).RecommendationsAsync(me, q));
+
+    [Function(nameof(GetAttackPaths))]
+    public Task<string> GetAttackPaths([McpToolTrigger(Tools.GetAttackPaths, Tools.GetAttackPathsDoc)] ToolInvocationContext ctx) =>
+        Call<AttackPathsQuery>(ctx, async (me, q) => await Need(exposure).AttackPathsAsync(me, q));
+
+    [Function(nameof(PrioritizeExposures))]
+    public Task<string> PrioritizeExposures([McpToolTrigger(Tools.PrioritizeExposures, Tools.PrioritizeExposuresDoc)] ToolInvocationContext ctx) =>
+        Call<PrioritizeExposuresQuery>(ctx, async (me, q) => await Need(exposure).PrioritizeAsync(me, q));
+
+    private static T Need<T>(T? service) where T : class => service ?? throw new BoardException("not available on this board", 503);
 
     [Function(nameof(ListTiWatches))]
     public Task<string> ListTiWatches([McpToolTrigger(Tools.ListTiWatches, Tools.ListTiWatchesDoc)] ToolInvocationContext ctx) =>

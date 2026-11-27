@@ -110,6 +110,7 @@ function MobileBar() {
       { href: "/approvals", label: pending?.length ? `Approvals · ${pending.length}` : "Approvals" },
       { href: "/policy", label: "Policy" },
       { href: "/intel", label: "Threat intel" },
+      { href: "/exposure", label: "Exposure" },
       { href: "/memory", label: "Shared memory" },
       { href: "/settings/notifications", label: "Notifications" },
     ] },
@@ -287,6 +288,9 @@ function Rail({ me }: { me: Me | null }) {
           </RailLink>
           <RailLink href="/intel" active={path.startsWith("/intel")}>
             Threat intel
+          </RailLink>
+          <RailLink href="/exposure" active={path === "/exposure"}>
+            Exposure
           </RailLink>
           <RailLink href="/memory" active={path === "/memory"}>
             Shared memory

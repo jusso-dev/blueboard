@@ -80,6 +80,8 @@ builder.Services.AddSingleton<IFetchCache, PgFetchCache>();
 builder.Services.AddSingleton(sp => new TiFetcher(sp.GetRequiredService<IFetchCache>(), settings.Ti));
 builder.Services.AddSingleton<MicrosoftIntel>();
 builder.Services.AddSingleton<IntelService>();
+builder.Services.AddSingleton<DetectionService>();
+builder.Services.AddSingleton<ExposureService>();
 builder.Services.AddHostedService<MigrateOnStart>();
 builder.Services.AddSingleton<Blueboard.Api.Http.Endpoint>();
 // Agent observability (WS3): usage and budgets, tool-call traces, feedback and overturns, risk. McpObserver is the one

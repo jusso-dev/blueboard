@@ -31,7 +31,7 @@ public sealed record PolicyReport(
         var def = Catalog.Get(kind);
         if (p.Disabled.Contains(kind)) return "disabled";
         if (p.RequireTwoApprovers.Contains(kind)) return "two_approvers";
-        if (!def.Destructive && p.AutoApprove.Contains(kind)) return "auto";
+        if (!def.Destructive && !Catalog.NeverAuto.Contains(kind) && p.AutoApprove.Contains(kind)) return "auto";
         // confirm_target wins: a person has to type the target, so an instruction in chat isn't enough.
         return p.ActOnInstruction.Contains(kind) && !p.ConfirmsTarget(kind) ? "on_instruction" : "approval";
     }
@@ -68,6 +68,8 @@ public sealed record PolicyReport(
         var w = new List<string>();
         foreach (var k in p.AutoApprove.Where(k => Catalog.All.TryGetValue(k, out var d) && d.Destructive))
             w.Add($"{k} is in auto_approve but is destructive, so it is ignored: it always needs a human approver");
+        foreach (var k in p.AutoApprove.Where(Catalog.NeverAuto.Contains))
+            w.Add($"{k} is in auto_approve but always needs a human approver, so it is ignored");
         foreach (var k in p.AutoApprove.Where(p.RequireTwoApprovers.Contains))
             w.Add($"{k} is in both auto_approve and require_two_approvers: it needs two approvers");
         foreach (var k in p.ActOnInstruction.Where(p.ConfirmTarget.Contains))
