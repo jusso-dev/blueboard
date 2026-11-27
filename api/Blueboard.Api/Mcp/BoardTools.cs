@@ -21,7 +21,7 @@ namespace Blueboard.Api.Mcp;
 /// Every call authenticates the bearer token from the transport headers and re-reads the caller's roles from Entra;
 /// there is no shared key. Board content is untrusted data.
 /// </summary>
-public sealed class BoardTools(Authenticator auth, BoardService board, Search search, IncidentQueries incidents, Broker broker, Enrichment enrich, Ingest ingest, WebhookService hooks, Policy policy, PlaybookRunner playbooks, PlaybookSet playbookSet, IntelService intel, Participants participants, GifService gifs, MemoryService memory, ILogger<BoardTools> log)
+public sealed class BoardTools(Authenticator auth, BoardService board, Search search, IncidentQueries incidents, Broker broker, Enrichment enrich, Ingest ingest, WebhookService hooks, Policy policy, PlaybookRunner playbooks, PlaybookSet playbookSet, IntelService intel, Participants participants, GifService gifs, MemoryService memory, ILogger<BoardTools> log, PolicyStore? policyStore = null)
 {
     /// <summary>Authenticate, require the tool's role, read its input record, run, and return JSON text or an error string.</summary>
     private async Task<string> Call<TIn>(ToolInvocationContext ctx, Func<Principal, TIn, Task<object?>> fn) where TIn : class
@@ -260,7 +260,7 @@ public sealed class BoardTools(Authenticator auth, BoardService board, Search se
 
     [Function(nameof(ListActions))]
     public Task<string> ListActions([McpToolTrigger(Tools.ListActions, Tools.ListActionsDoc)] ToolInvocationContext ctx) =>
-        Call<ActionsQuery>(ctx, async (_, q) => q.Catalog ? Broker.CatalogInfo(policy) : await broker.ListAsync(q.Status, q.Incident));
+        Call<ActionsQuery>(ctx, async (_, q) => q.Catalog ? Broker.CatalogInfo(policyStore is null ? policy : await policyStore.CurrentAsync()) : await broker.ListAsync(q.Status, q.Incident));
 
     [Function(nameof(RequestAction))]
     public Task<string> RequestAction([McpToolTrigger(Tools.RequestAction, Tools.RequestActionDoc)] ToolInvocationContext ctx) =>

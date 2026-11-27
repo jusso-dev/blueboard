@@ -16,7 +16,7 @@ namespace Blueboard.Api.Jobs;
 /// Background work. Timer triggers run on one instance at a time (singleton lock in host storage);
 /// a Postgres advisory lock makes that hold even across deployment slots.
 /// </summary>
-public sealed class Timers(Db db, Ingest ingest, Broker broker, WebhookService hooks, Notifier notifier, AuditExporter auditExport, PlaybookRunner playbooks, IntelService intel, Retention retention, Participants participants, Settings settings, ILogger<Timers> log)
+public sealed class Timers(Db db, Ingest ingest, Broker broker, WebhookService hooks, Notifier notifier, AuditExporter auditExport, PlaybookRunner playbooks, IntelService intel, Retention retention, Participants participants, Settings settings, ILogger<Timers> log, PolicyStore? policyStore = null)
 {
     private const long LockKey = 7_340_001;
     /// <summary>The webhook loop has its own lock so a slow ingest never delays an agent's wake-up.</summary>
@@ -59,6 +59,11 @@ public sealed class Timers(Db db, Ingest ingest, Broker broker, WebhookService h
             if (resumed + interrupted > 0) log.LogWarning("action recovery: resumed {Resumed}, interrupted {Interrupted}", resumed, interrupted);
             var expired = await broker.ExpireDueAsync(ct);
             if (expired > 0) log.LogInformation("expired {Expired} actions that were not decided in time", expired);
+            // Scheduled automatic reverts (revert_after_minutes) and loosening changes nobody approved in time.
+            var reverted = await broker.RevertDueAsync(ct);
+            if (reverted > 0) log.LogInformation("filed {Count} automatic revert(s)", reverted);
+            if (policyStore is not null && await policyStore.ExpireChangesAsync(ct) is var lapsed and > 0)
+                log.LogInformation("expired {Count} pending policy change(s)", lapsed);
         }, ct);
     }
 

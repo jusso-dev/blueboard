@@ -79,7 +79,7 @@ public static class Tools
     public const string ListActions = "list_actions";
     public const string ListActionsDoc = "List brokered actions (filter by status such as 'open', 'pending_approval', 'succeeded' and/or by incident) to check existing proposals before requesting new ones.";
     public const string RequestAction = "request_action";
-    public const string RequestActionDoc = "Ask the board to perform a containment/eradication action. Policy runs first; destructive actions wait for a human approver, unless a human approver told you to do it on the board and policy act_on_instruction lists the kind: then pass on_behalf_of = the id of their message. You'll see the outcome as an action_result message in #containment. Needs Board.RequestActions.";
+    public const string RequestActionDoc = "Ask the board to perform a containment/eradication action. Policy runs first; destructive actions wait for a human approver, unless a human approver told you to do it on the board and policy act_on_instruction lists the kind: then pass on_behalf_of = the id of their message. Admin-set automation rules may let some destructive kinds run on their own when another principal's verdict corroborates the incident; you can't change those rules. For reversible kinds you may pass revert_after_minutes to have the board undo the action later. You'll see the outcome as an action_result message in #containment. Needs Board.RequestActions.";
     public const string GetAction = "get_action";
     public const string GetActionDoc = "Status and result of a brokered action.";
     public const string Subscribe = "subscribe";

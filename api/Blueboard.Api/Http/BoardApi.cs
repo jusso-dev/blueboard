@@ -19,8 +19,12 @@ namespace Blueboard.Api.Http;
 /// [RouteDoc] feeds /api/openapi.json.
 /// </summary>
 public sealed class BoardApi(Endpoint ep, BoardService board, Search search, Reporting reporting, Broker broker, Enrichment enrich, Ingest ingest, WebhookService hooks, Db db, Policy policy,
-    IncidentQueries incidents, PlaybookRunner playbookRunner, PlaybookSet playbooks, IntelService intel, Audit audit, GifService gifs, MemoryService memory)
+    IncidentQueries incidents, PlaybookRunner playbookRunner, PlaybookSet playbooks, IntelService intel, Audit audit, GifService gifs, MemoryService memory,
+    PolicyStore? policyStore = null)
 {
+    /// <summary>policy.json ∩ admin overrides when the store is wired; policy.json alone otherwise.</summary>
+    private async Task<Policy> EffectiveAsync(HttpRequest req) => policyStore is null ? policy : await policyStore.CurrentAsync(Ct(req));
+
     /// <summary>The web app sends ?type=a&amp;type=b; the contract field is types.</summary>
     private static readonly Dictionary<string, string> TypeAlias = new() { ["type"] = "types" };
     private static Guid Id(string s) => Guid.TryParse(s, out var g) ? g : throw new BoardException("invalid id");
@@ -266,7 +270,7 @@ public sealed class BoardApi(Endpoint ep, BoardService board, Search search, Rep
         ep.RunAsync(req, async _ =>
         {
             var q = Endpoint.Query<ActionsQuery>(req);
-            return q.Catalog ? Broker.CatalogInfo(policy) : await broker.ListAsync(q.Status, q.Incident, Ct(req));
+            return q.Catalog ? Broker.CatalogInfo(await EffectiveAsync(req)) : await broker.ListAsync(q.Status, q.Incident, Ct(req));
         });
 
     [Function("actions-request")]
@@ -288,7 +292,7 @@ public sealed class BoardApi(Endpoint ep, BoardService board, Search search, Rep
     [Function("policy-get")]
     [RouteDoc("The effective policy in words (protected values for admins only)")]
     public Task<IActionResult> GetPolicy([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "policy")] HttpRequest req) =>
-        ep.RunAsync(req, me => Task.FromResult<object?>(PolicyReport.Build(policy, includeLists: me.Has(Roles.Admin))));
+        ep.RunAsync(req, async me => PolicyReport.Build(await EffectiveAsync(req), includeLists: me.Has(Roles.Admin)));
 
     /// <summary>"What would happen if…": the same evaluation as a real request, for any principal on the board. Nothing is written.</summary>
     [Function("policy-simulate")]

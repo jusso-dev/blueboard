@@ -42,6 +42,11 @@
   "confirm_target": [],
   "expiry_hours": 4,
   "expiry_hours_by_kind": {},
+  "automation": {
+    "conditional_auto_allowed": [],
+    "irreversible_auto_allowed": [],
+    "rules": {}
+  },
   "limits": {
     "pending_actions_per_incident": 5,
     "agent": {

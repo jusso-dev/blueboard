@@ -167,6 +167,13 @@ public sealed partial class Notifier(HttpClient http, Db db, Audit audit, MsClie
               union all
               select id, 'expired' from actions
                where status = 'expired' and updated_at > now() - interval '1 day'
+              union all
+              -- Destructive actions that ran with no person, under an admin automation rule: approvers hear about each one.
+              select id, 'auto_executed' from actions
+               where auto_rule is not null and status in ('approved', 'running', 'succeeded', 'failed') and created_at > now() - interval '1 day'
+              union all
+              select id, 'revert_failed' from actions
+               where revert_state = 'failed' and updated_at > now() - interval '1 day'
             )
             select e.id, e.event from events e
             where (select count(*) from notifications n where n.action_id = e.id and n.event = e.event) < @sinks
@@ -227,6 +234,8 @@ public sealed partial class Notifier(HttpClient http, Db db, Audit audit, MsClie
             "second_approval" => "action.second_approval_needed",
             "expired" => "action.expired",
             "interrupted" => "action.interrupted",
+            "auto_executed" => "action.auto_executed",
+            "revert_failed" => "action.revert_failed",
             _ => "action.failed",
         };
         return new Notice(name, id, def?.Title ?? r.GetString(0), target, r.GetString(4), r.Get<string>("graph_id"), r.Get<string>("display_name"),
@@ -502,6 +511,8 @@ public sealed partial class Notifier(HttpClient http, Db db, Audit audit, MsClie
         "action.expired" => "Approval request expired",
         "action.interrupted" => "Action interrupted: outcome unknown, check Defender",
         "action.failed" => "Action failed: check Defender",
+        "action.auto_executed" => "Ran automatically under an automation rule",
+        "action.revert_failed" => "Automatic revert failed: still in place, check Defender/Entra",
         _ => "Test notification",
     };
 
@@ -687,7 +698,8 @@ public sealed partial class Notifier(HttpClient http, Db db, Audit audit, MsClie
         var (priority, tags) = n.Event switch
         {
             "action.pending_approval" or "action.second_approval_needed" or "action.reminder" => (4, new[] { "lock" }),
-            "action.failed" or "action.interrupted" => (5, new[] { "x" }),
+            "action.failed" or "action.interrupted" or "action.revert_failed" => (5, new[] { "x" }),
+            "action.auto_executed" => (4, new[] { "robot" }),
             "action.expired" => (3, new[] { "lock" }),
             _ => (3, Array.Empty<string>()),
         };

@@ -14,12 +14,16 @@ namespace Blueboard.Api.Board;
 /// incident thread (payload.checklist). A step with `after` is posted only once every prerequisite step is done.
 /// Claiming and completing steps is the ordinary claim flow; this class never runs or requests an action.
 /// </summary>
-public sealed class PlaybookRunner(Db db, BoardService board, SystemPrincipal system, PlaybookSet playbooks)
+public sealed class PlaybookRunner(Db db, BoardService board, SystemPrincipal system, PlaybookSet playbooks, PolicyStore? triggers = null)
 {
-    /// <summary>Called by ingest when an incident is first seen. Returns the attached playbook id, or null.</summary>
+    /// <summary>
+    /// Called by ingest when an incident is first seen. Returns the attached playbook id, or null. With the policy store
+    /// wired, the admin-editable trigger rules decide (file triggers from each playbook's match, plus custom ones).
+    /// </summary>
     public async Task<string?> AttachAsync(Guid incidentId, JsonElement incident, Guid? rootMessageId, CancellationToken ct = default)
     {
-        if (playbooks.Match(incident) is not { } pb) return null;
+        var pb = triggers is null ? playbooks.Match(incident) : await triggers.MatchPlaybookAsync(incident, ct) is { } id ? playbooks.Get(id) : null;
+        if (pb is null) return null;
         await using (var cmd = db.Command("""
             insert into incident_playbooks (incident_id, playbook_id, root_message_id) values (@i, @p, @r)
             on conflict (incident_id) do nothing returning incident_id

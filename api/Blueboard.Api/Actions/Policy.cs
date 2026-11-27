@@ -38,6 +38,28 @@ public sealed record Policy
     public double ExpiryHours { get; init; } = 4;
     public Dictionary<string, double> ExpiryHoursByKind { get; init; } = [];
     public Limits Limits { get; init; } = new();
+    /// <summary>Ceiling for conditional automation of destructive kinds (docs/POLICY.md). Empty by default: nothing destructive runs on its own.</summary>
+    public AutomationPolicy Automation { get; init; } = new();
+
+    private readonly IReadOnlyDictionary<string, ActiveRule>? _rules;
+    /// <summary>
+    /// Conditional rules in force, by kind. For a policy read from a file: the file's rules that fit its ceiling
+    /// (computed on each read, so a <c>with</c> copy never carries a stale set). For the effective policy
+    /// (<see cref="AutomationRules.Merge"/>): file ∩ admin overrides, set explicitly. Not a policy key.
+    /// </summary>
+    [JsonIgnore]
+    public IReadOnlyDictionary<string, ActiveRule> ActiveRules
+    {
+        get => _rules ?? (Automation.Rules.Count == 0 ? NoRules : Catalog.All.Keys
+            .Select(k => (k, r: AutomationRules.Effective(k, this, null).Rule))
+            .Where(x => x.r is not null).ToDictionary(x => x.k, x => new ActiveRule($"{x.k}@file", x.r!)));
+        init => _rules = value;
+    }
+    private static readonly IReadOnlyDictionary<string, ActiveRule> NoRules = new Dictionary<string, ActiveRule>();
+    /// <summary>Set while an admin has paused automation: every automatic decision becomes a request for approval. Not a policy key.</summary>
+    [JsonIgnore] public AutomationPause? Pause { get; init; }
+    /// <summary>The policy.json this effective policy was built from (the ceiling for overrides). Not a policy key.</summary>
+    [JsonIgnore] public Policy? FileCeiling { get; init; }
 
     public TimeSpan ExpiryFor(string kind) => TimeSpan.FromHours(ExpiryHoursByKind.TryGetValue(kind, out var h) ? h : ExpiryHours);
     public int ApprovalsFor(string kind) => RequireTwoApprovers.Contains(kind) ? 2 : 1;
@@ -97,6 +119,7 @@ public sealed record Policy
         foreach (var (k, h) in ExpiryHoursByKind.Append(new("default", ExpiryHours)))
             if (h is not (> 0 and <= 720)) errors.Add($"expiry hours for {k} must be more than 0 and at most 720");
         errors.AddRange(Limits.Validate());
+        errors.AddRange(Automation.Validate(this));
         return errors;
     }
 }
@@ -166,7 +189,8 @@ public sealed record Limits
 }
 
 public enum Outcome { Reject, NeedsApproval, Auto }
-public sealed record PolicyDecision(Outcome Outcome, IReadOnlyList<string> Notes);
+/// <param name="AutoRule">Set when a destructive kind runs on its own under a conditional automation rule (its id).</param>
+public sealed record PolicyDecision(Outcome Outcome, IReadOnlyList<string> Notes, string? AutoRule = null);
 /// <param name="MaliciousIocs">"kind:value" (normalised) of every indicator marked malicious in an ioc message on the incident.</param>
 public sealed record IncidentContext(string GraphId, JsonElement Data, IReadOnlySet<string>? MaliciousIocs = null);
 
@@ -175,25 +199,46 @@ public sealed record IncidentContext(string GraphId, JsonElement Data, IReadOnly
 /// endpoint and the policy simulator all build this the same way (<see cref="PolicyEngine.Assess"/>).
 /// </summary>
 public sealed record Assessment(string Kind, string Title, bool Destructive, Outcome Outcome, string Status, int ApprovalsRequired,
-    bool ConfirmTarget, double ExpiresInHours, IReadOnlyList<string> Notes, string Summary, string Describe);
+    bool ConfirmTarget, double ExpiresInHours, IReadOnlyList<string> Notes, string Summary, string Describe,
+    string? AutoRule = null, int? RevertAfterMinutes = null);
 
 public static class PolicyEngine
 {
     /// <summary>Policy decision plus everything that follows from it (status, approvals, expiry). One code path for request, preview and simulate.</summary>
-    public static Assessment Assess(ActionDef def, JsonObject p, IncidentContext? incident, Policy policy)
+    /// <param name="facts">Verdicts and auto-run counts for conditional rules; null when the kind has no rule in force.</param>
+    /// <param name="revertAfterMinutes">The request's own revert_after_minutes, if any.</param>
+    public static Assessment Assess(ActionDef def, JsonObject p, IncidentContext? incident, Policy policy, AutomationFacts? facts = null, int? revertAfterMinutes = null)
     {
-        var d = Evaluate(def, p, incident, policy);
+        var d = Evaluate(def, p, incident, policy, facts);
         var status = d.Outcome switch { Outcome.Reject => "rejected", Outcome.Auto => "approved", _ => "pending_approval" };
         var approvals = d.Outcome == Outcome.NeedsApproval ? policy.ApprovalsFor(def.Kind) : 0;
         var summary = d.Outcome switch
         {
             Outcome.Reject => $"Will be rejected: {d.Notes[0]}",
+            Outcome.Auto when d.AutoRule is not null => $"Runs automatically under rule {d.AutoRule}",
             Outcome.Auto => "Runs automatically",
             _ when approvals == 2 => "Needs two approvals",
             _ => "Needs approval",
         };
         return new Assessment(def.Kind, def.Title, def.Destructive, d.Outcome, status, approvals,
-            d.Outcome == Outcome.NeedsApproval && policy.ConfirmsTarget(def.Kind), policy.ExpiryFor(def.Kind).TotalHours, d.Notes, summary, def.Describe(p));
+            d.Outcome == Outcome.NeedsApproval && policy.ConfirmsTarget(def.Kind), policy.ExpiryFor(def.Kind).TotalHours, d.Notes, summary, def.Describe(p),
+            d.AutoRule, d.Outcome == Outcome.Reject ? null : RevertAfter(def.Kind, policy, d.AutoRule, revertAfterMinutes));
+    }
+
+    /// <summary>
+    /// Minutes after success at which the board undoes the action: the request's own value, capped by the rule's when it
+    /// ran under one (an automatic run always reverts). Null when nothing is scheduled.
+    /// </summary>
+    public static int? RevertAfter(string kind, Policy policy, string? autoRule, int? requested)
+    {
+        if (!Reversal.IsReversible(kind)) return null;
+        var rule = autoRule is not null && policy.ActiveRules.TryGetValue(kind, out var r) ? r.Spec.RevertAfterMinutes : null;
+        return (rule, requested) switch
+        {
+            ({ } a, { } b) => Math.Min(a, b),
+            ({ } a, null) => a,
+            (null, var b) => b,
+        };
     }
 
     /// <summary>
@@ -217,7 +262,7 @@ public static class PolicyEngine
         return names.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
     }
 
-    public static PolicyDecision Evaluate(ActionDef def, JsonObject p, IncidentContext? incident, Policy policy)
+    public static PolicyDecision Evaluate(ActionDef def, JsonObject p, IncidentContext? incident, Policy policy, AutomationFacts? facts = null)
     {
         var notes = new List<string>();
         if (policy.Disabled.Contains(def.Kind)) return new(Outcome.Reject, [$"{def.Kind} is disabled by policy"]);
@@ -280,8 +325,25 @@ public static class PolicyEngine
 
         // Destructive kinds always wait for a person, whatever auto_approve says; two-approver kinds never run on their own.
         var auto = !def.Destructive && policy.AutoApprove.Contains(def.Kind) && !policy.RequireTwoApprovers.Contains(def.Kind) && notes.Count == 0;
-        return new(auto ? Outcome.Auto : Outcome.NeedsApproval, notes);
+        if (auto && policy.Pause is { Paused: true } pause)
+            return new(Outcome.NeedsApproval, [PausedNote(pause)]);
+        if (auto) return new(Outcome.Auto, notes);
+
+        // Conditional automation: a destructive kind may run on its own only under a rule in force (within the
+        // policy.json ceiling) and only when every condition holds. Anything short of that is the normal approval path.
+        if (def.Destructive && policy.ActiveRules.TryGetValue(def.Kind, out var rule) && !policy.RequireTwoApprovers.Contains(def.Kind) && !policy.Disabled.Contains(def.Kind))
+        {
+            if (policy.Pause is { Paused: true } paused) return new(Outcome.NeedsApproval, [.. notes, PausedNote(paused)]);
+            var unmet = AutomationRules.Unmet(def, p, incident, rule.Spec, facts);
+            if (notes.Count > 0) unmet.Insert(0, "the policy notes above need a person to look");
+            if (unmet.Count == 0) return new(Outcome.Auto, notes, rule.Id);
+            return new(Outcome.NeedsApproval, [.. notes, .. unmet.Select(u => $"automation rule {rule.Id} not applied: {u}")]);
+        }
+        return new(Outcome.NeedsApproval, notes);
     }
+
+    private static string PausedNote(AutomationPause p) =>
+        $"automation is paused{(p.By is null ? "" : $" by @{p.By}")}, so this waits for a person{(p.Reason is { Length: > 0 } r ? $" ({r})" : "")}";
 
     private static HashSet<string> Lower(IEnumerable<string> xs) => xs.Select(x => x.ToLowerInvariant().TrimEnd('.')).ToHashSet();
 
