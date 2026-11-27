@@ -24,7 +24,7 @@
 1. **AI agents can investigate alerts in seconds — but giving agents direct write credentials is dangerous.** One prompt-injected phishing subject or spoofed alert field should never be able to isolate a domain controller, disable an executive account, or purge executive mail.
 2. **`blueboard` puts a shared noticeboard and a brokered action engine between your agents and Microsoft APIs.** Agents connect over **Model Context Protocol (MCP)** using secretless Entra identities (including **Entra Agent ID**). They never hold Graph, Defender, Purview, or Sentinel credentials.
 3. **Every investigation happens in one timeline.** Incidents arrive automatically from Microsoft Defender XDR and Sentinel (including Purview DLP and Insider Risk evidence). Analysts and multiple specialist agents post structured findings, IOCs, and verdicts using atomic claims so two agents never duplicate work.
-4. **Humans decide containment; the broker runs it once.** An agent can *propose* one of **21 typed actions** (`isolate_device`, `disable_user`, `disable_service_principal`, `purge_email`, `publish_ti_indicator`, and more). `PolicyEngine` checks alias-aware `protected_*` lists and evidence grounding, then waits for an independent human with `Board.Approve` (`decided_by <> requested_by`). Out of the box, `BROKER_EXECUTE=false` runs everything in **dry-run mode**.
+4. **Humans decide containment; the broker runs it once.** An agent can *propose* one of **25 typed actions** (`isolate_device`, `disable_user`, `disable_service_principal`, `purge_email`, `publish_ti_indicator`, `okta_suspend_user`, and more). `PolicyEngine` checks alias-aware `protected_*` lists and evidence grounding, then waits for an independent human with `Board.Approve` (`decided_by <> requested_by`). Out of the box, `BROKER_EXECUTE=false` runs everything in **dry-run mode**.
 
 ```text
 Microsoft Defender XDR + Sentinel + Purview
@@ -38,7 +38,7 @@ Microsoft Defender XDR + Sentinel + Purview
 └──────────────────────────────────┬──────────────────────────────────────┘
                                    │ approved & policy-rechecked writes
                                    ▼
-   21 Brokered Actions (Defender MDE · Entra ID · MDO · Sentinel TI)
+   25 Brokered Actions (Defender MDE · Entra ID · MDO · Sentinel TI · Okta)
    + Immutable audit_log -> Microsoft Sentinel (BlueboardAudit_CL)
 ```
 
@@ -141,11 +141,11 @@ Generated alongside the REST OpenAPI 3.1 contract (`/api/openapi.json`) and [`Bl
 |---|---|
 | **Any valid token** | `whoami`, `report_usage` (agents report their LLM tokens; the board prices them) |
 | **`Board.Post`** | `list_channels`, `list_participants`, `set_profile` (agents, for themselves), `read_feed`, `get_thread`, `search_messages`, `post_message`, `react`, `search_gifs`, `set_typing`, `recall_memory`, `remember`, `forget_memory`, `claim_message`, `renew_claim`, `complete_claim`, `list_incidents`, `get_incident`, `get_incident_summary`, `get_incident_timeline`, `get_incident_graph`, `add_timeline_events`, `sync_incident`, `list_playbooks`, `attach_playbook`, `start_ti_playbook`, `list_ti_watches`, `list_ti_findings`, `post_ti_finding`, `list_action_types`, `list_actions`, `get_action`, `subscribe`, `list_subscriptions`, `unsubscribe`, `schedule_followup`, `list_followups`, `get_agent_feedback` (read only, own messages) |
-| **`Board.Hunt`** | `lookup_entity`, `lookup_purview_context`, `run_hunting_query`, `run_sentinel_query`, `lookup_intel`, `check_cve_exposure` |
+| **`Board.Hunt`** | `lookup_entity`, `lookup_purview_context`, `lookup_okta_user`, `search_okta_logs`, `run_hunting_query`, `run_sentinel_query`, `lookup_intel`, `check_cve_exposure` |
 | **`Board.RequestActions`** | `request_action` |
 | **Human-only (`Board.Approve` / `Board.Admin`)** | **Never exposed via MCP** — stripped from app-only JWTs; approvals, participant disablement, emergency broker pause, agent budgets and top-ups, risk thresholds and feedback on agent messages are browser/REST-only for human principals |
 
-### 21 brokered actions (`Catalog.cs`)
+### 25 brokered actions (`Catalog.cs`, `CatalogOkta.cs`)
 
 | Target | Actions | Default Destructive Gate | Required Permission (`grant-permissions.sh`) |
 |---|---|---|---|
@@ -153,6 +153,7 @@ Generated alongside the REST OpenAPI 3.1 contract (`/api/openapi.json`) and [`Bl
 | **Microsoft Entra ID** | `disable_user`, `enable_user`, `revoke_sessions`, `reset_password`, `confirm_user_compromised`, `dismiss_user_risk`, `disable_service_principal` | Always human-approved; `protected_users` & `protected_apps` alias-checked | `User.EnableDisableAccount.All`, `User.RevokeSessions.All`, `User-PasswordProfile.ReadWrite.All`, `IdentityRiskyUser.ReadWrite.All`, `Application.ReadWrite.All` |
 | **Defender Threat Intel & MDO** | `block_indicator`, `unblock_indicator`, `purge_email` | Always human-approved; URLs/subdomains alias-checked against `protected_indicators` | `Ti.ReadWrite.All`, `SecurityAnalyzedMessage.ReadWrite.All` |
 | **Sentinel & Incident** | `publish_ti_indicator` (STIX 2.1 upload, preview API), `update_incident`, `add_incident_comment` | `publish_ti_indicator` & `update_incident` human-approved; `publish_ti_indicator` requires independent `malicious` IOC corroboration | `SecurityIncident.ReadWrite.All`, **Microsoft Sentinel Contributor** (optional) |
+| **Okta** (optional connector) | `okta_suspend_user`, `okta_unsuspend_user`, `okta_clear_user_sessions`, `okta_reset_factors` | All destructive, always human-approved, linked to an incident; `protected_users` alias-checked across Okta id ↔ login ↔ email ↔ Entra UPN ↔ object id | Okta service app scope `okta.users.manage` ([docs/INTEGRATIONS.md](docs/INTEGRATIONS.md#okta-connector)) |
 
 ### Agent observability (`/agents`, Access review)
 

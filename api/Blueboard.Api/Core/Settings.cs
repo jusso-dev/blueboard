@@ -105,6 +105,8 @@ public sealed record Settings
     /// USD per call (board-side metering). Merged over the built-in Claude prices. See Agents/PriceTable.cs.
     /// </summary>
     public string? AgentPriceTableJson { get; init; }
+    /// <summary>Third-party connectors: Okta, ServiceNow and Jira (all off unless configured). See docs/INTEGRATIONS.md.</summary>
+    public ConnectorSettings Connectors { get; init; } = new();
 
     public static Settings FromEnvironment() => FromEnvironment(k => Environment.GetEnvironmentVariable(k));
 
@@ -170,6 +172,7 @@ public sealed record Settings
             TenorApiKey = Env("TENOR_API_KEY"),
             AgentPriceTableJson = Env("AGENT_PRICE_TABLE"),
         };
+        s = s with { Connectors = ConnectorSettings.From(Env, List, s.DemoMode && s.DevAuth) };
         // WEBSITE_INSTANCE_ID / WEBSITE_SITE_NAME are set on every Azure Functions host, and AZURE_TENANT_ID means a
         // real tenant is configured: never allow dev auth or the demo in either case.
         var inAzure = Env("WEBSITE_INSTANCE_ID") is not null || Env("WEBSITE_SITE_NAME") is not null || s.TenantId is not null;

@@ -28,7 +28,9 @@ public sealed record ActionDef(
     Func<MsClient, JsonObject, string, CancellationToken, Task<object?>> Run,
     // Builds the exact outbound request from params plus broker context. When set, the dry run shows it in full and
     // Run receives it instead of the params (publish_ti_indicator).
-    Func<JsonObject, ActionContext, JsonObject>? Prepare = null);
+    Func<JsonObject, ActionContext, JsonObject>? Prepare = null,
+    // Third-party connector writes (Okta): run with the connector clients instead of MsClient. Run is unused for these.
+    Func<Connectors.ConnectorHub, JsonObject, string, CancellationToken, Task<object?>>? RunConnector = null);
 
 /// <summary>
 /// Every write the board can make in Defender, Entra and Sentinel. Agents only request these; the broker
@@ -402,13 +404,13 @@ public static partial class Catalog
             p => $"Add a comment to incident {S(p, "incident_id")}",
             (ms, p, _, ct) => Send(ms, MsApi.Graph, $"/v1.0/security/incidents/{Enc(S(p, "incident_id"))}/comments", HttpMethod.Post,
                 new Dictionary<string, string> { ["@odata.type"] = "microsoft.graph.security.alertComment", ["comment"] = S(p, "comment") }, ct)),
-    }.ToDictionary(a => a.Kind);
+    }.Concat(OktaActions()).ToDictionary(a => a.Kind);
 
     /// <summary>Incident-scoped kinds must be linked to, and aimed at, that same incident.</summary>
     public static readonly HashSet<string> IncidentScoped = ["update_incident", "add_incident_comment"];
 
     /// <summary>What a kind acts on: device, user, app, indicator, email or incident. The UI filters its action picker by this.</summary>
-    public static string TargetType(string kind) => kind switch
+    public static string TargetType(string kind) => OktaKinds.Contains(kind) ? "user" : kind switch
     {
         "isolate_device" or "release_device" or "run_av_scan" or "collect_investigation_package"
             or "restrict_app_execution" or "unrestrict_app_execution" or "stop_and_quarantine_file" or "tag_device" => "device",

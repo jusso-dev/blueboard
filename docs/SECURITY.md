@@ -117,6 +117,7 @@ The trusted computing base is the Function App's code, its managed identity (`bl
 | `DEV_AUTH` and `DEMO_MODE` refused in Azure (`WEBSITE_INSTANCE_ID` present); Microsoft base-URL override only in demo mode | `Settings.FromEnvironment` in `Core/Settings.cs`, `MsOrigins` in `Graph/MsClient.cs` |
 | One input schema per request (MCP inputSchema, OpenAPI and validation generated from the same record) | `api/Blueboard.Contracts`, `Mcp/McpSchemas.cs`, `Http/OpenApi.cs` |
 | Webhook & notifier egress guard (allowlist, strict public IPv4/IPv6 addresses only, re-checked at connect) and HMAC-SHA256 signatures | `Webhooks/OutboundGuard.cs`, `Webhooks/WebhookService.cs`, `Ops/Notifier.cs`, `Blueboard.Contracts/WebhookSignature.cs` |
+| Third-party connectors (Okta, ServiceNow, Jira): one pinned origin per connector through OutboundGuard; Okta `private_key_jwt` signed by a non-exportable Key Vault key; credentials never returned or shown to agents; Okta id ↔ login ↔ email ↔ UPN ↔ object id aliases in `protected_users`; inbound ticket webhooks HMAC-verified (constant time, ±5 min, single-use nonce) and unable to approve or run actions | `Connectors/`, `Core/ConnectorSettings.cs`, `Actions/CatalogOkta.cs`, `Http/ConnectorsApi.cs`, [INTEGRATIONS.md § 6](INTEGRATIONS.md#6-third-party-connectors-okta-servicenow-and-jira) |
 | Untrusted-content handling in the agent prompt | `agents/Blueboard.EnrichmentAgent/ClaudeAgent.cs`, `skills/blueboard/SKILL.md` |
 
 Regression tests: `api/Blueboard.Api.Tests` (305 tests covering policy, aliases, `protected_apps`, KQL lexical guard, Purview/secret leak guards, parameter validation, token guard, role mapping, scope check, forged-header refusal, CSV, percentile), `agents/Blueboard.Agent.Sdk.Tests` (14 tests), and `web/src/__tests__` (42 tests covering actions, auth, keys, live, markdown, queue). CI runs them on every push.
@@ -148,6 +149,18 @@ Regression tests: `api/Blueboard.Api.Tests` (305 tests covering policy, aliases,
 | Microsoft Graph | `InformationProtectionPolicy.Read.All` (only with `PURVIEW_LABELS=1`) | Tenant sensitivity labels (`lookup_purview_context`) | read |
 | Microsoft Graph | `Content.Process.All` (only with `PURVIEW_GUARD=1`) | Optional Microsoft Purview `processContent` DLP check (`PURVIEW_CONTENT_GUARD`) | read / evaluate |
 | Azure RBAC on the Sentinel workspace | **Microsoft Sentinel Contributor** (only with `assignSentinelContributor`) | `publish_ti_indicator` (Sentinel upload API, **preview**) | **write** |
+
+**Connector credentials (optional, outside Microsoft).** These are not Microsoft permissions and are never granted by `grant-permissions.sh`:
+
+| System | Credential | Scope / role | Used by |
+|---|---|---|---|
+| Okta (preferred) | OAuth 2.0 service app, `private_key_jwt`; RSA key in Key Vault (board identity: **Key Vault Crypto User**) | `okta.users.read`, `okta.logs.read`, `okta.roles.read` (optional), `okta.users.manage`; plus a least-privileged Okta admin role | `lookup_okta_user`, `search_okta_logs`, `okta_*` actions |
+| Okta (fallback, less preferred) | SSWS API token (Key Vault secret) | Inherits its creator's admin role: use a dedicated, least-privileged Okta admin | same |
+| ServiceNow | OAuth 2.0 client credentials (Key Vault secret) | An OAuth application user with only the role needed for `SERVICENOW_TABLE` | ticket create, work notes, resolve |
+| Jira Cloud | Integration account API token (Key Vault secret) | Create issues, add comments, transition in one project | ticket create, comments, resolve |
+| Inbound (ServiceNow, Jira) | Shared HMAC secret per system (Key Vault secret, 32+ characters) | Can only post an untrusted comment or attach a playbook | `POST /api/connectors/{system}/inbound` |
+
+Rotation: [admin SOP-15](admin/admin-sops.md#15-sop-15-rotate-connector-credentials-okta-servicenow-jira).
 
 Sentinel TI and Defender exposure checks use `ThreatHunting.Read.All`, already in the table. The optional MDE vulnerabilities API path (`TI_EXPOSURE_SOURCE=api`, `Vulnerability.Read.All`) is reserved and not granted.
 

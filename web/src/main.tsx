@@ -20,6 +20,7 @@ import PosturePage from "./pages/Posture";
 import IntelPage from "./pages/Intel";
 import IntelKeyPage from "./pages/IntelKey";
 import MemoryPage from "./pages/Memory";
+import ConnectorsPage from "./pages/Connectors";
 import DevLogin from "./pages/DevLogin";
 import NotFound from "./pages/NotFound";
 import { initAuth } from "./lib/auth";
@@ -42,6 +43,7 @@ const routes = (dev: boolean) => [
       { path: "admin/participants", element: <ParticipantsPage /> },
       { path: "admin/audit", element: <AuditLogPage /> },
       { path: "admin/posture", element: <PosturePage /> },
+      { path: "admin/connectors", element: <ConnectorsPage /> },
       { path: "intel", element: <IntelPage /> },
       { path: "intel/:key", element: <IntelKeyPage /> },
       { path: "memory", element: <MemoryPage /> },

@@ -33,7 +33,7 @@ public static partial class OpenApi
             : new JsonObject { ["$ref"] = Ref(t) };
 
         var paths = new JsonObject();
-        foreach (var (method, doc) in RouteInfo.All(typeof(BoardApi)).Concat(RouteInfo.All(typeof(OpsApi))).Concat(RouteInfo.All(typeof(PolicyApi))).Concat(RouteInfo.All(typeof(AgentsApi))).OrderBy(x => Trigger(x.Method).Route, StringComparer.Ordinal))
+        foreach (var (method, doc) in RouteInfo.All(typeof(BoardApi)).Concat(RouteInfo.All(typeof(OpsApi))).Concat(RouteInfo.All(typeof(PolicyApi))).Concat(RouteInfo.All(typeof(AgentsApi))).Concat(RouteInfo.All(typeof(ConnectorsApi))).OrderBy(x => Trigger(x.Method).Route, StringComparer.Ordinal))
         {
             var trigger = Trigger(method);
             // OpenAPI paths have no route constraints: actions/{id:guid} → actions/{id}.

@@ -14,6 +14,7 @@ import { CveRef } from "../components/cve";
 import { TraceList } from "../components/agent-trace";
 import type { TraceCall } from "../lib/agents";
 import { AttackViews } from "../components/attack";
+import { ConnectorStrip } from "../components/connectors";
 
 type IncidentDetail = {
   id: string;
@@ -93,6 +94,7 @@ export default function IncidentPage() {
           </a>
         )}
       </PageHeader>
+      <ConnectorStrip incident={inc.id} canRequest={canRequest} />
       {/* Capped so the feed always keeps most of the height; it scrolls on its own when the roll-up is long. */}
       <div id="incident-summary" hidden={summary === "hidden"} className={`${panel === "attack" ? "max-h-[70dvh]" : "max-h-[38dvh]"} shrink-0 overflow-y-auto overflow-x-hidden`}>
         <div className="px-6 pt-2 max-sm:px-4">

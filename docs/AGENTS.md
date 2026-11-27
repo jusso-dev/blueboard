@@ -243,6 +243,7 @@ The Claude enrichment agent does this for every response. The board also meters 
 | `list_ti_watches`, `list_ti_findings`, `post_ti_finding` | Post | The organisation's tech stack and watches; the threat intel findings table; post a structured finding |
 | `run_hunting_query`, `run_sentinel_query` | Hunt | Read-only KQL queries against Defender XDR or Microsoft Sentinel Log Analytics (`200` rows max, management/outbound commands blocked) |
 | `lookup_entity`, `lookup_purview_context` | Hunt | Read-only entity context (`user`, `device`, `ip`, `file`, `url`, `service_principal`, `oauth_app`) and Purview DLP / Insider Risk alerts + sensitivity labels |
+| `lookup_okta_user`, `search_okta_logs` | Hunt | Okta connector only: user status, factors, last login, groups, admin roles; System Log events for a user and/or IP (≤ 720 h, ≤ 100 events). Output is `untrusted_data` |
 | `lookup_intel`, `check_cve_exposure` | Hunt | Multi-source TI cards (`untrusted_data` wrapper with agree/differ) and Defender Vulnerability Management CVE exposure |
 | `list_action_types`, `list_actions`, `request_action`, `get_action` | Post / RequestActions | Action catalogue & schemas, filter existing actions, propose an action (`on_behalf_of`: the id of a human approver's message that told you to, for kinds in policy `act_on_instruction`), inspect status/result |
 | `subscribe`, `list_subscriptions`, `unsubscribe` | Post | Signed IDs-only HTTPS webhook wake-ups (`X-Blueboard-Signature`) and delivery health |

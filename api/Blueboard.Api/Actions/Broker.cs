@@ -22,7 +22,8 @@ public sealed record BrokerPause(bool Paused, string? By = null, DateTimeOffset?
 /// Request → policy → (human approval) → execute exactly once → post the result. Every step is audited.
 /// Destructive actions never run without a decision from a human approver who isn't the requester.
 /// </summary>
-public sealed class Broker(Db db, Audit audit, BoardService board, MsClient ms, Settings settings, Policy policy, SystemPrincipal system, RateLimiter? limiter = null, PolicyStore? store = null, Agents.AgentFeedback? feedback = null)
+public sealed class Broker(Db db, Audit audit, BoardService board, MsClient ms, Settings settings, Policy policy, SystemPrincipal system, RateLimiter? limiter = null,
+    PolicyStore? store = null, Agents.AgentFeedback? feedback = null, Connectors.ConnectorHub? connectors = null)
 {
     private readonly KvState _kv = new(db);
 
@@ -116,7 +117,10 @@ public sealed class Broker(Db db, Audit audit, BoardService board, MsClient ms, 
     {
         var inc = await LoadIncidentRowAsync(id, ct);
         // publish_ti_indicator: policy needs the values marked malicious on this incident by someone else (issue #20).
-        return inc is null ? null : inc with { MaliciousIocs = await MaliciousIocsAsync(id, requester, ct) };
+        if (inc is null) return null;
+        inc = inc with { MaliciousIocs = await MaliciousIocsAsync(id, requester, ct) };
+        // Okta identities linked to this incident's users: cross-IdP protected-user aliases (ConnectorHub, WS5).
+        return connectors is null ? inc : inc with { IdentityLinks = await connectors.LinksForIncidentAsync(inc, ct) };
     }
 
     private async Task<IncidentContext?> LoadIncidentRowAsync(Guid id, CancellationToken ct)
@@ -132,6 +136,11 @@ public sealed class Broker(Db db, Audit audit, BoardService board, MsClient ms, 
     {
         var def = Catalog.Get(kind);
         var prms = def.Validate(rawParams);
+        if (def.RunConnector is not null)
+        {
+            if (connectors is null) throw new BoardException($"{kind} needs a connector that is not configured on this board", 409);
+            await connectors.PrepareTargetAsync(def, prms, ct); // refreshes the Okta identity link before policy runs
+        }
         var incidentId = await board.ResolveIncidentAsync(incidentRef, ct);
         if (incidentId is null && parentId is { } parent) incidentId = (await board.GetAsync(parent, ct))?.IncidentId;
         return (def, prms, incidentId, incidentId is { } iid ? await LoadIncidentAsync(iid, requester, ct) : null);
@@ -624,9 +633,11 @@ public sealed class Broker(Db db, Audit audit, BoardService board, MsClient ms, 
                 return;
             }
             prepared = def.Prepare?.Invoke(prms, new ActionContext(id, a.IncidentGraphId, a.IncidentId, a.RequestedBy, a.DecidedBy, a.Justification, settings.Ti, DateTimeOffset.UtcNow));
-            result = settings.BrokerExecute
-                ? await def.Run(ms, prepared ?? prms, comment, ct)
-                : new { dry_run = true, would = def.Describe(prms), request = prepared };
+            result = !settings.BrokerExecute
+                ? new { dry_run = true, would = def.Describe(prms), request = prepared }
+                : def.RunConnector is { } runConnector
+                    ? await runConnector(connectors ?? throw new BoardException($"{def.Kind} needs a connector that is not configured on this board"), prms, comment, ct)
+                    : await def.Run(ms, prepared ?? prms, comment, ct);
             status = "succeeded";
         }
         catch (Exception ex) when (ex is not OperationCanceledException)

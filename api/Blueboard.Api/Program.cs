@@ -1,6 +1,7 @@
 using Blueboard.Api.Actions;
 using Blueboard.Api.Auth;
 using Blueboard.Api.Board;
+using Blueboard.Api.Connectors;
 using Blueboard.Api.Core;
 using Blueboard.Api.Data;
 using Blueboard.Api.Graph;
@@ -36,7 +37,15 @@ builder.Services.AddSingleton<MemoryService>();
 builder.Services.AddSingleton<SystemPrincipal>();
 // Admin overrides within policy.json (db/migrations/015): the effective policy is read from PostgreSQL with a short cache.
 builder.Services.AddSingleton<PolicyStore>();
-builder.Services.AddSingleton<Broker>();
+// Built explicitly so every optional collaborator is required in production: the policy override store (WS1), agent
+// feedback for overturn tracking (WS3) and the third-party connectors (WS5).
+builder.Services.AddSingleton<Broker>(sp => new Broker(sp.GetRequiredService<Db>(), sp.GetRequiredService<Audit>(), sp.GetRequiredService<BoardService>(),
+    sp.GetRequiredService<MsClient>(), settings, sp.GetRequiredService<Policy>(), sp.GetRequiredService<SystemPrincipal>(), sp.GetRequiredService<RateLimiter>(),
+    sp.GetRequiredService<PolicyStore>(), sp.GetRequiredService<Blueboard.Api.Agents.AgentFeedback>(), sp.GetRequiredService<ConnectorHub>()));
+// Okta, ServiceNow and Jira (all off unless configured). Each client calls only its configured origin through OutboundGuard.
+builder.Services.AddSingleton(sp => ConnectorHub.Create(sp.GetRequiredService<Db>(), sp.GetRequiredService<Audit>(), sp.GetRequiredService<BoardService>(),
+    sp.GetRequiredService<SystemPrincipal>(), settings, sp.GetRequiredService<Policy>(), sp.GetRequiredService<PlaybookRunner>(),
+    sp.GetRequiredService<RateLimiter>(), sp.GetRequiredService<ILoggerFactory>().CreateLogger("Blueboard.Connectors")));
 builder.Services.AddSingleton<Search>();
 builder.Services.AddSingleton<Reporting>();
 builder.Services.AddSingleton<Enrichment>();

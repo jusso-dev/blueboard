@@ -65,6 +65,10 @@ services:
       BROKER_EXECUTE: "false"
       BLUEBOARD_POLICY_FILE: /home/site/policy.json
       CORS_ORIGIN: http://localhost:3417
+      # Okta + ServiceNow connectors against the mock (docs/INTEGRATIONS.md). Demo mode sends no credential to them.
+      OKTA_ORG_URL: http://mock-msapi:8080
+      SERVICENOW_INSTANCE_URL: http://mock-msapi:8080
+      TICKET_MIN_SEVERITY: high
       # Webhooks are off in the demo (no allowlisted hosts). See docs/AGENTS.md to try them.
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost/api/healthz || exit 1"]
