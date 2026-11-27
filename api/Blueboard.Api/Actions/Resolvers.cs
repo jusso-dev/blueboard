@@ -86,6 +86,10 @@ public static class Resolvers
         var managedId = p["managed_device_id"]?.GetValue<string>();
         string? aad = null, name = null, mdeName = null;
         var notes = new List<string>();
+        // Fail closed: a device is fully resolved only when both sides (Intune and MDE) answered and agreed on the Entra
+        // device id. Anything less (a lookup that threw, or found nothing on one side) leaves names unknown, so the device
+        // is reported unresolved: the protected list is checked by id only, the approver is told, and it never auto-runs.
+        var partial = false;
         try
         {
             if (machineId is not null)
@@ -98,26 +102,33 @@ public static class Resolvers
                     var list = await Get(c.Ms, MsApi.Graph, $"/v1.0/deviceManagement/managedDevices?$filter={Uri.EscapeDataString($"azureADDeviceId eq '{aadId}'")}&$select=id,deviceName,azureADDeviceId,operatingSystem", ct);
                     if (First(list) is { } md) { managedId = Str(md, "id"); name = Str(md, "deviceName"); }
                 }
+                else partial = true;
             }
             else if (managedId is not null)
             {
                 var md = await Get(c.Ms, MsApi.Graph, $"/v1.0/deviceManagement/managedDevices/{managedId}?$select=id,deviceName,azureADDeviceId,operatingSystem", ct);
+                if (md is null) managedId = null;
                 name = Str(md, "deviceName");
                 aad = Str(md, "azureADDeviceId");
                 if (aad is not null && Guid.TryParse(aad, out var aadId))
                 {
                     var list = await Get(c.Ms, MsApi.Defender, $"/api/machines?$filter={Uri.EscapeDataString($"aadDeviceId eq {aadId}")}", ct);
                     if (First(list) is { } m) { machineId = Str(m, "id"); mdeName = Str(m, "computerDnsName"); }
+                    else partial = true;
                 }
+                else partial = true;
             }
         }
-        catch (BoardException ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            notes.Add($"device lookup failed ({ex.Message})");
+            notes.Add($"device lookup failed ({(ex is BoardException ? ex.Message : ex.GetType().Name)})");
+            partial = true;
         }
 
         if (managedId is null || !Guid.TryParse(managedId, out _))
             return new(UnresolvedDevices: [target], Notes: [.. notes, $"{target} could not be matched to an Intune managed device, so Intune can't act on it and its other names are unknown"]);
+        if (partial)
+            notes.Add($"{target} was only partly resolved (the Intune or Defender side of the lookup failed or found nothing), so some of its names are unknown");
 
         var aliases = new[] { managedId, aad, machineId, name, name?.Split('.')[0], mdeName, mdeName?.Split('.')[0] }
             .OfType<string>().Where(x => x.Length > 0).Select(x => x.ToLowerInvariant()).Distinct().ToArray();
@@ -142,7 +153,8 @@ public static class Resolvers
             }
         }
         if (aad is null && update) notes.Add($"{target} has no Entra device id in Intune, so an expedited update can't target it");
-        return new(DeviceAliases: new Dictionary<string, string[]> { [target.ToLowerInvariant()] = aliases }, Notes: notes, Data: data);
+        return new(DeviceAliases: new Dictionary<string, string[]> { [target.ToLowerInvariant()] = aliases },
+            UnresolvedDevices: partial ? [target] : null, Notes: notes, Data: data);
     }
 
     private static async Task<JsonElement?> Get(MsClient ms, MsApi api, string path, CancellationToken ct)

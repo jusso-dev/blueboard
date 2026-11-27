@@ -376,6 +376,46 @@ public class DetectionsExposureTests
         Assert.Null(facts.Data);
     }
 
+    [Fact]
+    public async Task Resolver_fails_closed_when_the_defender_side_finds_nothing_or_fails()
+    {
+        // The Intune side resolves the managed id, but Defender has no machine for it: the device's MDE names are
+        // unknown, so it is reported unresolved (checked by id only, never automatic) even though Intune can act on it.
+        var handler = new Scripted(("GET", $"/v1.0/deviceManagement/managedDevices/{Managed}", $$"""{"id":"{{Managed}}","deviceName":"dc01","azureADDeviceId":"{{Aad}}"}"""));
+        var ms = new MsClient(new HttpClient(handler), new FakeCredential());
+        var def = Catalog.Get("intune_sync_device");
+        var p = def.Validate(El(new { managed_device_id = Managed }));
+        var facts = await def.Resolve!(new ResolveContext(null!, ms, new Settings(), Now), p, TestContext.Current.CancellationToken);
+        Assert.Equal([Managed], facts.UnresolvedDevices);
+        Assert.Equal(Managed, facts.Data!["managed_device_id"]!.GetValue<string>());
+        Assert.Contains(facts.Notes!, n => n.Contains("only partly resolved"));
+        var policy = new Policy { AutoApprove = ["intune_sync_device"], ProtectedDevices = ["dc01.contoso.local"] };
+        // Still a host-label match where the name is known, so dc01 is refused...
+        Assert.Equal(Outcome.Reject, PolicyEngine.Evaluate(def, p, Incident, policy, actionFacts: facts).Outcome);
+        // ...and a device whose names are partly unknown never runs on its own.
+        var other = new ActionFacts(DeviceAliases: new Dictionary<string, string[]> { [Managed] = [Managed, Aad, "ws-9"] }, UnresolvedDevices: [Managed]);
+        var d = PolicyEngine.Evaluate(def, p, Incident, policy, actionFacts: other);
+        Assert.Equal(Outcome.NeedsApproval, d.Outcome);
+        Assert.Contains(d.Notes, n => n.Contains("checked by id only"));
+    }
+
+    [Fact]
+    public async Task Resolver_fails_closed_when_a_lookup_throws()
+    {
+        // Defender answers 403 (a missing permission): the lookup throws, and the device is unresolved, not "clean".
+        var ms = new MsClient(new HttpClient(new Status(HttpStatusCode.Forbidden)), new FakeCredential());
+        var def = Catalog.Get("intune_sync_device");
+        var facts = await def.Resolve!(new ResolveContext(null!, ms, new Settings(), Now), def.Validate(El(new { machine_id = Mde })), TestContext.Current.CancellationToken);
+        Assert.Equal([Mde], facts.UnresolvedDevices);
+        Assert.Contains(facts.Notes!, n => n.Contains("device lookup failed"));
+    }
+
+    private sealed class Status(HttpStatusCode code) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct) =>
+            Task.FromResult(new HttpResponseMessage(code) { Content = new StringContent("""{"error":{"message":"denied"}}""", Encoding.UTF8, "application/json") });
+    }
+
     // ── exposure scoring ───────────────────────────────────────────────────────────────────────
 
     [Fact]
