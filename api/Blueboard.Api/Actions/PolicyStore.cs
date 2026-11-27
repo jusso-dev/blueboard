@@ -144,7 +144,7 @@ public sealed partial class PolicyStore(Db db, Audit audit, BoardService board, 
         {
             overrides.TryGetValue(d.Kind, out var o);
             var eff = AutomationRules.Effective(d.Kind, file, o.Setting);
-            var allowsRule = d.Destructive && file.Automation.ConditionalAutoAllowed.Contains(d.Kind)
+            var allowsRule = d.Destructive && !Catalog.NeverAuto.Contains(d.Kind) && file.Automation.ConditionalAutoAllowed.Contains(d.Kind)
                              && (Reversal.IsReversible(d.Kind) || file.Automation.IrreversibleAutoAllowed.Contains(d.Kind));
             return new KindView(d.Kind, d.Title, d.Destructive, Reversal.IsReversible(d.Kind), Reversal.ReverseKind.GetValueOrDefault(d.Kind), allowsRule,
                 AutomationRules.FileSetting(d.Kind, file), o.Setting, o.Setting is null ? null : o.Version, eff,

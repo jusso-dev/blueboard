@@ -27,7 +27,9 @@ public sealed record AutoRuleSpec(
     [Description("Reversible kinds: undo automatically this many minutes after it ran (5-10080). Required for reversible kinds, not allowed for irreversible ones")]
     [Range(5, 10080)] int? RevertAfterMinutes = null,
     [Description("Only a person's verdict counts as corroboration (agents' verdicts are ignored)")]
-    bool RequireHumanVerdict = false);
+    bool RequireHumanVerdict = false,
+    [Description("Optional: the requester's agent risk score (0-100) must be at or below this. An unknown score (a person, or an agent not scored yet) fails the condition")]
+    [Range(0, 100)] int? MaxRequesterRisk = null);
 
 /// <summary>
 /// The whole desired setting for one action kind, within the policy.json ceiling. Reset drops the override, going back

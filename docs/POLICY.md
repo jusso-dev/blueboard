@@ -20,7 +20,7 @@ Errors (the board won't start):
 - an unknown action kind in any list
 - `version` other than `1`
 - expiry hours outside 0–720, or a rate limit outside its range
-- `automation`: an unknown kind, a non-destructive kind in `conditional_auto_allowed`, a kind with no automatic revert that isn't also in `irreversible_auto_allowed`, a kind that is also in `require_two_approvers`, or a rule that exceeds the ceiling (confidence below `min_confidence_floor`, caps above `max_per_hour` / `max_per_incident`, a reversible kind without `revert_after_minutes`)
+- `automation`: an unknown kind, a kind that can never run on its own (`create_detection_rule`) or a non-destructive kind in `conditional_auto_allowed`, a kind with no automatic revert that isn't also in `irreversible_auto_allowed`, a kind that is also in `require_two_approvers`, or a rule that exceeds the ceiling (confidence below `min_confidence_floor`, caps above `max_per_hour` / `max_per_incident`, a reversible kind without `revert_after_minutes`, `max_requester_risk` outside 0–100)
 
 Warnings (allowed, but probably not what you meant):
 
@@ -110,7 +110,7 @@ Some destructive actions are safe to run without waiting for a person when the e
 
 | Key | Default | Meaning |
 |---|---|---|
-| `conditional_auto_allowed` | none | Destructive kinds that may **ever** run on their own under a rule. Not non-destructive kinds (use `auto_approve`), not kinds in `require_two_approvers`. |
+| `conditional_auto_allowed` | none | Destructive kinds that may **ever** run on their own under a rule. Not non-destructive kinds (use `auto_approve`), not kinds in `require_two_approvers`, and never `create_detection_rule` (`Catalog.NeverAuto`: `policy-check` fails if it is listed). |
 | `irreversible_auto_allowed` | none | Explicit opt-in for kinds the board can't undo (`purge_email`, `reset_password`, `revoke_sessions`, `stop_and_quarantine_file`, `disable_service_principal`, `confirm_user_compromised`, …). A kind in `conditional_auto_allowed` with no automatic revert is an error unless it is listed here too. |
 | `min_confidence_floor` | `0.8` | No rule (file or admin) may accept a corroborating verdict below this. 0.5–1. |
 | `max_per_hour`, `max_per_incident` | `10`, `3` | Highest caps any rule may set. |
@@ -129,6 +129,7 @@ A kind with a rule in force runs on its own only when **all** of these hold. Oth
 - **Severity** is one of `severities`.
 - **Source** (optional): an alert's `serviceSource`, `detectionSource` or `productName` is one of `sources`.
 - **Requester** (optional): the requester's handle is in `requesters`.
+- **Requester risk** (optional): with `max_requester_risk` (0–100), the requester's agent risk score (see [AGENTS.md](AGENTS.md#usage-budgets-feedback-and-traces), recomputed every 10 minutes) must be known and at or below it. A person, or an agent with no score yet, has no score: the condition fails and the request waits for a person. Unknown is never treated as low. Raising or removing it is loosening.
 - **Every target is in the incident evidence**, whatever `require_target_in_incident` says, and no other policy note was raised.
 - **Caps.** The kind ran on its own fewer than `max_per_hour` times in the last hour (tenant-wide) and fewer than `max_per_incident` times on this incident. The broker re-counts under a per-kind database lock while filing, so concurrent requests can't both slip under. Over a cap, the request waits for a person; it is not rejected.
 - **Protected lists always win.** A protected target is rejected before any rule is looked at. There is no override.
@@ -167,8 +168,10 @@ Any request for a reversible kind may carry `revert_after_minutes` (5 to `max_re
 | `restrict_app_execution` | `unrestrict_app_execution` |
 | `disable_user` | `enable_user` |
 | `block_indicator` | `unblock_indicator` (needs the Defender indicator id from a live run) |
+| `okta_suspend_user` | `okta_unsuspend_user` (Okta connector) |
+| `create_detection_rule` | `disable_detection_rule` (the rule is kept but stops raising alerts; `create_detection_rule` itself never runs automatically, so this applies to `revert_after_minutes` on a request) |
 
-Everything else is irreversible, including `disable_service_principal` (the catalogue has no enable action for it).
+Everything else is irreversible, including `disable_service_principal` (the catalogue has no enable action for it), `okta_clear_user_sessions`, `okta_reset_factors`, `purge_email` and `intune_expedite_quality_update`.
 
 When the action succeeds, `revert_at` is set. The recovery timer (every minute) files the reverse action as the board's system principal, in the original's thread with an @mention of the requester, re-checks policy (a protected or disabled reverse kind fails the revert), runs it and audits `action.revert_filed` and `action.reverted`. Approvers can choose **Keep** (cancel the revert, `action.revert_kept`) or **Revert now** (the reverse runs as approved by them) from `/approvals`. If the revert can't be filed or doesn't succeed, the original is marked `revert failed`, the requester is @mentioned and approvers get `action.revert_failed`. One revert per action is enforced by a unique index.
 

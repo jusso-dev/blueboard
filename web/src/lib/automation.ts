@@ -9,6 +9,8 @@ export type AutoRule = {
   requesters: string[] | null;
   revert_after_minutes: number | null;
   require_human_verdict: boolean;
+  /** Requester's agent risk score must be known and at or below this (0–100); null: no risk condition. */
+  max_requester_risk?: number | null;
 };
 
 export type KindSetting = { mode: string; confirm_target: boolean; rule: AutoRule | null };
@@ -90,6 +92,7 @@ export function defaultRule(k: KindView, c: Ceiling): AutoRule {
     requesters: null,
     revert_after_minutes: k.reversible ? Math.min(60, c.max_revert_after_minutes) : null,
     require_human_verdict: false,
+    max_requester_risk: null,
   };
 }
 
@@ -104,6 +107,8 @@ export function ruleProblems(k: KindView, r: AutoRule, c: Ceiling): string[] {
   if (k.reversible && (r.revert_after_minutes == null || r.revert_after_minutes < 5 || r.revert_after_minutes > c.max_revert_after_minutes))
     out.push(`revert after must be 5–${c.max_revert_after_minutes} minutes`);
   if (!k.reversible && r.revert_after_minutes != null) out.push(`${k.kind} can't be reverted automatically`);
+  if (r.max_requester_risk != null && (!Number.isInteger(r.max_requester_risk) || r.max_requester_risk < 0 || r.max_requester_risk > 100))
+    out.push("max requester risk must be a whole number 0–100");
   return out;
 }
 
@@ -135,4 +140,10 @@ export function revertWords(state: string | null | undefined, at: string | null 
     default:
       return null;
   }
+}
+
+/** "" → null (no risk condition); otherwise the number as typed (validated by ruleProblems). */
+export function parseRisk(s: string): number | null {
+  const t = s.trim();
+  return t === "" ? null : Number(t);
 }

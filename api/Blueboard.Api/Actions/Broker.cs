@@ -23,7 +23,7 @@ public sealed record BrokerPause(bool Paused, string? By = null, DateTimeOffset?
 /// Destructive actions never run without a decision from a human approver who isn't the requester.
 /// </summary>
 public sealed class Broker(Db db, Audit audit, BoardService board, MsClient ms, Settings settings, Policy policy, SystemPrincipal system, RateLimiter? limiter = null,
-    PolicyStore? store = null, Agents.AgentFeedback? feedback = null, Connectors.ConnectorHub? connectors = null)
+    PolicyStore? store = null, Agents.AgentFeedback? feedback = null, Connectors.ConnectorHub? connectors = null, Agents.IAgentRiskSource? risk = null)
 {
     private readonly KvState _kv = new(db);
 
@@ -173,11 +173,12 @@ public sealed class Broker(Db db, Audit audit, BoardService board, MsClient ms, 
 
     /// <summary>
     /// What a conditional rule needs from the database: the newest verdict per author on the incident (people and
-    /// agents, never the board) and how often the kind already ran on its own. Null when the kind has no rule in force.
+    /// agents, never the board), how often the kind already ran on its own, and (only when the rule sets
+    /// max_requester_risk) the requester's agent risk score. Null when the kind has no rule in force.
     /// </summary>
     private async Task<AutomationFacts?> AutomationFactsAsync(string kind, Guid? incidentId, string requester, Guid? exclude, Policy policy, CancellationToken ct)
     {
-        if (!policy.ActiveRules.ContainsKey(kind)) return null;
+        if (!policy.ActiveRules.TryGetValue(kind, out var rule)) return null;
         var verdicts = new List<VerdictFact>();
         if (incidentId is { } iid)
         {
@@ -192,7 +193,16 @@ public sealed class Broker(Db db, Audit audit, BoardService board, MsClient ms, 
                 if (!vr.IsDBNull(2)) verdicts.Add(new VerdictFact(vr.GetString(0), vr.GetString(1), vr.GetString(2), vr.GetDouble(3)));
         }
         var (hour, onIncident) = await AutoRunCountsAsync(db.Command(""), kind, incidentId, exclude, ct);
-        return new AutomationFacts(requester, verdicts, hour, onIncident);
+        var requesterRisk = rule.Spec.MaxRequesterRisk is null ? null : await RequesterRiskAsync(requester, ct);
+        return new AutomationFacts(requester, verdicts, hour, onIncident, requesterRisk);
+    }
+
+    /// <summary>The requester's stored agent risk score, or null when unknown (no risk source, a person, or not scored yet).</summary>
+    private async Task<int?> RequesterRiskAsync(string handle, CancellationToken ct)
+    {
+        if (risk is null) return null;
+        await using var cmd = db.Command("select id from principals where handle = @h").With("h", handle);
+        return await cmd.ExecuteScalarAsync(ct) is Guid id && await risk.GetScoreAsync(id, ct) is { } score ? score.Score : null;
     }
 
     private static async Task<(int Hour, int Incident)> AutoRunCountsAsync(NpgsqlCommand cmd, string kind, Guid? incidentId, Guid? exclude, CancellationToken ct)
@@ -784,7 +794,7 @@ public sealed class Broker(Db db, Audit audit, BoardService board, MsClient ms, 
             if (await claim.ExecuteScalarAsync(ct) is null) return false;
         var a = (await GetAsync(id, ct))!;
         var sys = await system.GetAsync(ct);
-        var (kind, prms, why) = Reversal.Build(a.Kind, Catalog.Get(a.Kind).Validate(a.Params), a.Result);
+        var (kind, prms, why) = Reversal.Build(a.Kind, Catalog.Get(a.Kind).Validate(a.Params), a.Result, a.Id);
         if (kind is null)
         {
             await SettleRevertAsync(id, null, "failed", why, ct);

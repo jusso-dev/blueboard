@@ -11,6 +11,7 @@ import {
   defaultRule,
   ruleProblems,
   SEVERITIES,
+  parseRisk,
   splitList,
   targetLabel,
   type AutoRule,
@@ -244,9 +245,10 @@ function KindEditor({ k, v }: { k: KindView; v: AutomationView }) {
   const [rule, setRule] = useState<AutoRule>(start.rule ?? defaultRule(k, v.ceiling));
   const [sources, setSources] = useState((start.rule?.sources ?? []).join(", "));
   const [requesters, setRequesters] = useState((start.rule?.requesters ?? []).join(", "));
+  const [maxRisk, setMaxRisk] = useState(start.rule?.max_requester_risk == null ? "" : String(start.rule.max_requester_risk));
   const [reason, setReason] = useState("");
   const { busy, err, run } = useAction();
-  const fullRule: AutoRule = { ...rule, sources: splitList(sources), requesters: splitList(requesters) };
+  const fullRule: AutoRule = { ...rule, sources: splitList(sources), requesters: splitList(requesters), max_requester_risk: parseRisk(maxRisk) };
   const problems = useRule ? ruleProblems(k, fullRule, v.ceiling) : [];
   const ruleModes = mode === "approval" || mode === "on_instruction";
   const submit = (reset: boolean) =>
@@ -326,6 +328,7 @@ function KindEditor({ k, v }: { k: KindView; v: AutomationView }) {
           </label>
           <Text id={`${id}-src`} label="Only alerts from (service sources, comma-separated, optional)" value={sources} onChange={setSources} placeholder="microsoftDefenderForEndpoint" />
           <Text id={`${id}-req`} label="Only these requesters (handles, optional)" value={requesters} onChange={setRequesters} placeholder="triage-bot" />
+          <Text id={`${id}-risk`} label="Requester's agent risk score at most (0–100, optional; unscored requesters wait for a person)" value={maxRisk} onChange={setMaxRisk} placeholder="40" />
           <p className="text-xs text-muted sm:col-span-2">
             Always also required: every target in the incident evidence, a truePositive verdict from someone other than the requester, no dissenting verdict and no protected-list match.
           </p>

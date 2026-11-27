@@ -35,6 +35,9 @@ public static class IncidentTimeline
         ["enable_user"] = "disable_user",
         ["unblock_indicator"] = "block_indicator",
         ["dismiss_user_risk"] = "confirm_user_compromised",
+        ["okta_unsuspend_user"] = "okta_suspend_user",
+        // Matched by the rule_action_id it names, not by target (detection rules have no entity target).
+        ["disable_detection_rule"] = "create_detection_rule",
     };
 
     private sealed class Acc
@@ -218,8 +221,12 @@ public static class IncidentTimeline
                     : $"Failed: {describe}{(a.Error is { Length: > 0 } err ? $" ({Excerpt(err)})" : "")}"));
                 if (a.Status == "succeeded")
                 {
+                    var undoneId = a.Kind == "disable_detection_rule" && a.Params.ValueKind == JsonValueKind.Object
+                        && a.Params.TryGetProperty("rule_action_id", out var rid) && rid.ValueKind == JsonValueKind.String ? rid.GetString() : null;
                     if (Reverts.TryGetValue(a.Kind, out var undoes)
-                        && executed.LastOrDefault(x => x.Action.Kind == undoes && x.Targets.Intersect(targets, StringComparer.OrdinalIgnoreCase).Any()) is { Action: not null } prior)
+                        && executed.LastOrDefault(x => x.Action.Kind == undoes && (undoneId is not null
+                            ? string.Equals(x.Action.Id.ToString(), undoneId, StringComparison.OrdinalIgnoreCase)
+                            : x.Targets.Intersect(targets, StringComparer.OrdinalIgnoreCase).Any())) is { Action: not null } prior)
                     {
                         var undone = Catalog.All.GetValueOrDefault(undoes)?.Title ?? undoes;
                         var revert = Act(fin, $"Reverted{(a.DryRun ? " (dry run)" : "")}: {undone}");

@@ -43,7 +43,9 @@ public sealed record AutomationPolicy
                 yield return $"automation.{key}: unknown action kind {k}";
         foreach (var k in ConditionalAutoAllowed.Where(Catalog.All.ContainsKey))
         {
-            if (!Catalog.All[k].Destructive)
+            if (Catalog.NeverAuto.Contains(k))
+                yield return $"automation.conditional_auto_allowed: {k} always needs a human approver and can never run on its own";
+            else if (!Catalog.All[k].Destructive)
                 yield return $"automation.conditional_auto_allowed: {k} is not destructive; use auto_approve for it";
             else if (!Reversal.IsReversible(k) && !IrreversibleAutoAllowed.Contains(k))
                 yield return $"automation.conditional_auto_allowed: {k} has no automatic revert, so it must also be listed in automation.irreversible_auto_allowed";
@@ -68,7 +70,12 @@ public sealed record VerdictFact(string Author, string AuthorKind, string Classi
 /// What a conditional rule needs besides the request and the incident: who is asking, the verdicts on the incident and
 /// how many times the kind already ran on its own. The broker loads these from the database; tests build them by hand.
 /// </summary>
-public sealed record AutomationFacts(string Requester, IReadOnlyList<VerdictFact> Verdicts, int RunsLastHour, int RunsOnIncident);
+/// <param name="RequesterRisk">
+/// The requester's agent risk score (0-100) from <c>IAgentRiskSource</c>, loaded only when the rule sets
+/// max_requester_risk. Null means unknown (a person, an agent not scored yet, or no risk source), which fails that
+/// condition: an unscored requester never counts as low risk.
+/// </param>
+public sealed record AutomationFacts(string Requester, IReadOnlyList<VerdictFact> Verdicts, int RunsLastHour, int RunsOnIncident, int? RequesterRisk = null);
 
 /// <summary>Everything an admin can set for one action kind. Mode is one of <see cref="PolicyModes.Order"/>.</summary>
 public sealed record KindSetting(string Mode, bool ConfirmTarget, AutoRuleSpec? Rule);
@@ -76,25 +83,39 @@ public sealed record KindSetting(string Mode, bool ConfirmTarget, AutoRuleSpec? 
 /// <summary>
 /// The automatic undo for reversible kinds. A kind with no entry (or whose reverse kind is not in the catalogue) is
 /// irreversible: it may only run on its own when policy.json lists it in automation.irreversible_auto_allowed.
-/// disable_service_principal is irreversible here because the catalogue has no enable_service_principal.
+/// disable_service_principal is irreversible here because the catalogue has no enable_service_principal; so are
+/// okta_clear_user_sessions, okta_reset_factors, purge_email and intune_expedite_quality_update (nothing undoes them).
+/// Only the containing direction is listed: undoing a recovery (release → isolate again) is never automatic.
 /// </summary>
 public static class Reversal
 {
-    public static readonly IReadOnlyDictionary<string, string> ReverseKind = new Dictionary<string, string>
+    public static readonly IReadOnlyDictionary<string, string> ReverseKind = BuildMap();
+
+    private static Dictionary<string, string> BuildMap()
     {
-        ["isolate_device"] = "release_device",
-        ["restrict_app_execution"] = "unrestrict_app_execution",
-        ["disable_user"] = "enable_user",
-        ["block_indicator"] = "unblock_indicator",
-    };
+        var map = new Dictionary<string, string>
+        {
+            ["isolate_device"] = "release_device",
+            ["restrict_app_execution"] = "unrestrict_app_execution",
+            ["disable_user"] = "enable_user",
+            ["block_indicator"] = "unblock_indicator",
+            // A board-created detection rule is undone by disabling it (the rule is kept, it stops raising alerts).
+            ["create_detection_rule"] = "disable_detection_rule",
+        };
+        // Connector inverses (okta_suspend_user → okta_unsuspend_user), without the recovery direction.
+        foreach (var (k, v) in Catalog.ConnectorReverseKinds)
+            if (Catalog.All.TryGetValue(k, out var def) && def.Stage != "recover") map.TryAdd(k, v);
+        return map;
+    }
 
     public static bool IsReversible(string kind) => ReverseKind.TryGetValue(kind, out var r) && Catalog.All.ContainsKey(r);
 
     /// <summary>
-    /// Params for the reverse action, from the original's params and (for block_indicator) its result, or why it can't
-    /// be built. A block that only ran as a dry run has no Defender indicator id to remove.
+    /// Params for the reverse action, from the original's params, its result (block_indicator) or its id
+    /// (create_detection_rule), or why it can't be built. A block that only ran as a dry run has no Defender indicator
+    /// id to remove.
     /// </summary>
-    public static (string? Kind, JsonObject? Params, string? Why) Build(string kind, JsonObject p, JsonElement? result)
+    public static (string? Kind, JsonObject? Params, string? Why) Build(string kind, JsonObject p, JsonElement? result, Guid? actionId = null)
     {
         if (!IsReversible(kind)) return (null, null, $"{kind} has no automatic revert");
         var reverse = ReverseKind[kind];
@@ -104,6 +125,7 @@ public static class Reversal
             case "restrict_app_execution":
                 return (reverse, new JsonObject { ["machine_id"] = p["machine_id"]!.GetValue<string>() }, null);
             case "disable_user":
+            case "okta_suspend_user":
                 return (reverse, new JsonObject { ["user"] = p["user"]!.GetValue<string>() }, null);
             case "block_indicator":
                 if (result is { ValueKind: JsonValueKind.Object } r && r.TryGetProperty("id", out var id)
@@ -111,6 +133,11 @@ public static class Reversal
                     && v.Length is > 0 and <= 20 && v.All(char.IsAsciiDigit))
                     return (reverse, new JsonObject { ["indicator_id"] = v }, null);
                 return (null, null, "the block's Defender indicator id is unknown (it ran as a dry run, or Defender didn't return one), so there is nothing to remove");
+            case "create_detection_rule":
+                // The rule's id is derived from the creating action's id (Catalog.RuleId), so the action id is enough.
+                return actionId is { } aid
+                    ? (reverse, new JsonObject { ["rule_action_id"] = aid.ToString() }, null)
+                    : (null, null, "the creating action's id is needed to find the rule to disable");
             default:
                 return (null, null, $"{kind} has no automatic revert");
         }
@@ -137,6 +164,7 @@ public static partial class AutomationRules
         var c = file.Automation;
         var def = Catalog.All.GetValueOrDefault(kind);
         if (def is null) { yield return $"unknown action kind {kind}"; yield break; }
+        if (Catalog.NeverAuto.Contains(kind)) { yield return $"{kind} always needs a human approver and can never run on its own"; yield break; }
         if (!def.Destructive) yield return $"{kind} is not destructive; use auto_approve for it";
         if (!c.ConditionalAutoAllowed.Contains(kind)) yield return $"{kind} is not in automation.conditional_auto_allowed in policy.json";
         if (!Reversal.IsReversible(kind) && !c.IrreversibleAutoAllowed.Contains(kind))
@@ -153,6 +181,7 @@ public static partial class AutomationRules
         if (r.MaxPerIncident < 1 || r.MaxPerIncident > c.MaxPerIncident) yield return $"max_per_incident must be 1–{c.MaxPerIncident} (automation.max_per_incident)";
         if (r.Requesters is { } req && (req.Length > 50 || req.Any(h => h is null || !Handle().IsMatch(h))))
             yield return "requesters: up to 50 board handles";
+        if (r.MaxRequesterRisk is < 0 or > 100) yield return "max_requester_risk must be 0–100";
         if (Reversal.IsReversible(kind))
         {
             if (r.RevertAfterMinutes is not { } m) yield return $"revert_after_minutes is required: {kind} is reversible, so an automatic run must undo itself";
@@ -198,6 +227,14 @@ public static partial class AutomationRules
         else if (!counted.Any(v => v.Classification == "truePositive" && v.Confidence >= rule.MinConfidence))
             why.Add($"no truePositive verdict with confidence ≥ {rule.MinConfidence:0.##} from {(rule.RequireHumanVerdict ? "a person" : "a principal")} other than @{facts.Requester}");
 
+        if (rule.MaxRequesterRisk is { } maxRisk)
+        {
+            if (facts.RequesterRisk is not { } risk)
+                why.Add($"@{facts.Requester} has no agent risk score (unknown is never treated as low; the rule needs ≤ {maxRisk})");
+            else if (risk > maxRisk)
+                why.Add($"@{facts.Requester}'s agent risk score is {risk}, above the rule's max_requester_risk {maxRisk}");
+        }
+
         if (facts.RunsLastHour >= rule.MaxPerHour)
             why.Add($"cap reached: {def.Kind} already ran on its own {facts.RunsLastHour} time(s) in the last hour (max {rule.MaxPerHour})");
         if (facts.RunsOnIncident >= rule.MaxPerIncident)
@@ -211,6 +248,7 @@ public static partial class AutomationRules
         + $"severity is {string.Join("/", r.Severities ?? [])}"
         + (r.Sources is { Length: > 0 } s ? $", an alert came from {string.Join("/", s)}" : "")
         + (r.Requesters is { Length: > 0 } q ? $", the requester is @{string.Join("/@", q)}" : "")
+        + (r.MaxRequesterRisk is { } mr ? $", the requester's agent risk score is known and ≤ {mr}" : "")
         + $", every target is in the evidence, and it ran on its own fewer than {r.MaxPerHour} times this hour and {r.MaxPerIncident} on the incident"
         + (r.RevertAfterMinutes is { } m ? $"; undone automatically after {m} min" : "; irreversible");
 
@@ -248,7 +286,8 @@ public static partial class AutomationRules
                || b.MaxPerHour > a.MaxPerHour
                || b.MaxPerIncident > a.MaxPerIncident
                || (b.RevertAfterMinutes ?? 0) > (a.RevertAfterMinutes ?? 0)
-               || (a.RequireHumanVerdict && !b.RequireHumanVerdict);
+               || (a.RequireHumanVerdict && !b.RequireHumanVerdict)
+               || (a.MaxRequesterRisk is { } ar && (b.MaxRequesterRisk is not { } br || br > ar));
     }
 
     public static bool Same(KindSetting a, KindSetting b) =>
