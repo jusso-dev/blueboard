@@ -100,9 +100,8 @@ agent adds it to the real incident with `add_timeline_events`.
 `emerging-threat-detection.md` is the bundled intel playbook: ingest the advisory or finding, extract TTPs, IOCs and CVEs
 (`lookup_intel`, `post_ti_finding`), check exposure (`check_cve_exposure`, `list_exposure_recommendations`,
 `get_attack_paths`), hunt (`run_hunting_query`, `run_sentinel_query`), draft and `backtest_detection`, propose the rule
-(`request_action` kind `create_detection_rule`), then a person reviews and closes the finding. The exposure, backtest
-and detection-rule tools come from a separate workstream; until `create_detection_rule` is in the catalogue the
-proposal step has no `suggested_action`.
+(`request_action` kind `create_detection_rule`, the step's `suggested_action`), then a person reviews and closes the
+finding. `create_detection_rule` always waits for a human approver, whatever `auto_approve` or an automation rule says.
 
 ## Starter playbooks
 

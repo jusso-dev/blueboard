@@ -32,6 +32,7 @@ steps:
     title: Propose the detection rule for human review
     detail: File request_action kind create_detection_rule with the backtested query, severity, MITRE techniques and the backtest result in the justification. A person approves it; the playbook never creates it.
     after: [backtest-detection]
+    suggested_action: create_detection_rule
   - id: human-review
     stage: record
     title: Review the outcome and close the finding
@@ -44,8 +45,7 @@ Threat intel (or `start_ti_playbook`) posts these steps as claimable questions i
 intel`, it never attaches to incidents automatically and `attach_playbook` refuses it.
 
 The chain follows Microsoft Perception's "detect emerging threats" pattern (threat intelligence, then exposure, then
-detection authoring) with a person approving the result. `list_exposure_recommendations`, `get_attack_paths`,
-`backtest_detection` and the `create_detection_rule` action kind come from the detection-rules workstream. Until that
-kind is in the action catalogue, `propose-detection` has no `suggested_action` (the loader refuses unknown kinds); add
-`suggested_action: create_detection_rule` to it when the kind ships (`PlaybookTests` fails until you do). Without those
-tools, do the steps with `check_cve_exposure`, `run_hunting_query` and a question to a person.
+detection authoring) with a person approving the result. `propose-detection` suggests `create_detection_rule`, which
+always waits for a human approver (`Catalog.NeverAuto`) and must cite a `backtest_detection` result. Without the
+exposure and detection tools (`list_exposure_recommendations`, `get_attack_paths`, `backtest_detection`), do the steps
+with `check_cve_exposure`, `run_hunting_query` and a question to a person.

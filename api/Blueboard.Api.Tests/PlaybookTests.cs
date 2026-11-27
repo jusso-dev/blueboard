@@ -117,9 +117,7 @@ public class PlaybookTests
         foreach (var tool in new[] { "lookup_intel", "post_ti_finding", "check_cve_exposure", "list_exposure_recommendations", "get_attack_paths", "run_hunting_query", "run_sentinel_query", "backtest_detection", "create_detection_rule" })
             Assert.Contains(tool, text);
         Assert.Equal("record", pb.Steps[^1].Stage);
-        // create_detection_rule ships in another workstream: once it is in the catalogue, the step should suggest it.
-        var propose = pb.Steps.Single(s => s.Id == "propose-detection");
-        if (Blueboard.Api.Actions.Catalog.All.ContainsKey("create_detection_rule")) Assert.Equal("create_detection_rule", propose.SuggestedAction);
+        Assert.Equal("create_detection_rule", pb.Steps.Single(s => s.Id == "propose-detection").SuggestedAction);
     }
 
     [Fact]

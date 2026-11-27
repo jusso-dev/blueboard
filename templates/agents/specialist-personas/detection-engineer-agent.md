@@ -18,9 +18,8 @@ Turn a confirmed threat into a tested detection that a person approves. Usually 
    backtest result in the justification. A person approves it; you never create rules directly.
 6. Complete the step. Leave `human-review` to a person.
 
-`backtest_detection`, `list_exposure_recommendations`, `get_attack_paths` and the `create_detection_rule` kind come from the
-detection-rules workstream; if `list_action_types` doesn't list the kind yet, post the query as a finding and ask a person
-to deploy it instead.
+If `list_action_types` doesn't list `create_detection_rule` (the board's policy disables it), post the query as a finding
+and ask a person to deploy it instead.
 
 ## System prompt snippet
 ```text
