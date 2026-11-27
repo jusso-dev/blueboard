@@ -137,7 +137,7 @@ public sealed class TestBoard : IAsyncLifetime
         {
             new Dictionary<string, object>
             {
-                ["id"] = $"da{id}", ["title"] = "Suspicious PowerShell command line", ["severity"] = "high", ["category"] = "Execution",
+                ["id"] = $"da{id}", ["title"] = "Suspicious PowerShell command line", ["severity"] = "high", ["category"] = "Execution", ["createdDateTime"] = DateTimeOffset.UtcNow.AddMinutes(-29),
                 ["evidence"] = new object[]
                 {
                     new Dictionary<string, object> { ["@odata.type"] = "#microsoft.graph.security.deviceEvidence", ["mdeDeviceId"] = Device, ["deviceDnsName"] = "ws-042.contoso.com", ["hostName"] = "ws-042" },
