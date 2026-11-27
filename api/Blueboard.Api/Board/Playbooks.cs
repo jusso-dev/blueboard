@@ -10,7 +10,8 @@ namespace Blueboard.Api.Board;
 
 public sealed record PlaybookStep(string Id, string Stage, string Title, string? Detail, string[] After, string? SuggestedAction);
 public sealed record PlaybookMatch(string[] Categories, string[] Titles, string[] Techniques, string[]? ServiceSources = null, string[]? Severities = null);
-public sealed record Playbook(string Id, string Title, string File, PlaybookMatch Match, IReadOnlyList<PlaybookStep> Steps, string Notes, int Priority = 0);
+/// <param name="Scope">incident (default): attaches to matching incidents. intel: runs from a threat intel finding (never auto-attaches).</param>
+public sealed record Playbook(string Id, string Title, string File, PlaybookMatch Match, IReadOnlyList<PlaybookStep> Steps, string Notes, int Priority = 0, string Scope = "incident");
 public sealed record PlaybookProblem(string File, string Error);
 
 /// <summary>The playbooks loaded at startup, plus the files that were skipped and why.</summary>
@@ -20,9 +21,9 @@ public sealed record PlaybookSet(IReadOnlyList<Playbook> All, IReadOnlyList<Play
 
     public Playbook? Get(string id) => All.FirstOrDefault(p => p.Id == id);
 
-    /// <summary>The highest-priority (ties broken by file name order) playbook that matches the incident, or null.</summary>
+    /// <summary>The highest-priority (ties broken by file name order) incident playbook that matches the incident, or null. Intel-scoped playbooks never auto-attach.</summary>
     public Playbook? Match(JsonElement incident) =>
-        All.OrderByDescending(p => p.Priority).FirstOrDefault(p => Playbooks.Matches(p.Match, incident));
+        All.Where(p => p.Scope == Playbooks.IncidentScope).OrderByDescending(p => p.Priority).FirstOrDefault(p => Playbooks.Matches(p.Match, incident));
 }
 
 /// <summary>
@@ -33,6 +34,10 @@ public sealed record PlaybookSet(IReadOnlyList<Playbook> All, IReadOnlyList<Play
 public static partial class Playbooks
 {
     public static readonly string[] Stages = ["triage", "investigate", "contain", "eradicate", "recover", "record"];
+    public const string IncidentScope = "incident";
+    /// <summary>Runs from a threat intel finding (Intel page, start_ti_playbook), not from an incident.</summary>
+    public const string IntelScope = "intel";
+    public static readonly string[] Scopes = [IncidentScope, IntelScope];
     private const int MaxSteps = 20;
 
     [GeneratedRegex("^[a-z0-9][a-z0-9-]{0,40}$")] private static partial Regex Slug();
@@ -82,13 +87,14 @@ public static partial class Playbooks
         if (error is not null) return (null, error);
 
         var steps = fm.Steps!.Select(s => new PlaybookStep(s.Id!, s.Stage!, s.Title!.Trim(), s.Detail?.Trim(), [.. s.After ?? []], s.SuggestedAction)).ToList();
+        var m = fm.Match ?? new MatchDoc();
         var match = new PlaybookMatch(
-            [.. fm.Match!.Categories ?? []],
-            [.. fm.Match.Titles ?? []],
-            [.. fm.Match.Techniques ?? []],
-            [.. fm.Match.ServiceSources ?? []],
-            [.. fm.Match.Severities ?? []]);
-        return (new Playbook(fm.Id!, fm.Title!.Trim(), file, match, steps, notes, fm.Priority ?? 0), null);
+            [.. m.Categories ?? []],
+            [.. m.Titles ?? []],
+            [.. m.Techniques ?? []],
+            [.. m.ServiceSources ?? []],
+            [.. m.Severities ?? []]);
+        return (new Playbook(fm.Id!, fm.Title!.Trim(), file, match, steps, notes, fm.Priority ?? 0, fm.Scope ?? IncidentScope), null);
     }
 
     private static string? Validate(FrontMatter fm, string notes)
@@ -97,8 +103,10 @@ public static partial class Playbooks
         if (fm.Title is not { Length: > 0 and <= 120 }) return "title is required (up to 120 characters)";
         if (fm.Priority is < -100 or > 1000) return "priority must be between -100 and 1000";
         if (notes.Length > 4000) return "notes after the front matter must be under 4000 characters";
-        var m = fm.Match;
-        if (m is null || (m.Categories ?? []).Count + (m.Titles ?? []).Count + (m.Techniques ?? []).Count + (m.ServiceSources ?? []).Count == 0)
+        if (fm.Scope is { } scope && !Scopes.Contains(scope)) return $"scope must be one of {string.Join(", ", Scopes)}";
+        var intel = fm.Scope == IntelScope;
+        var m = fm.Match ?? (intel ? new MatchDoc() : null);
+        if (m is null || (!intel && (m.Categories ?? []).Count + (m.Titles ?? []).Count + (m.Techniques ?? []).Count + (m.ServiceSources ?? []).Count == 0))
             return "match needs at least one of categories, titles, techniques or service_sources";
         if ((m.Categories ?? []).Concat(m.Titles ?? []).Concat(m.ServiceSources ?? []).Concat(m.Severities ?? []).Any(s => s is not { Length: > 0 and <= 200 }))
             return "match entries must be 1-200 characters";
@@ -179,6 +187,7 @@ public static partial class Playbooks
         public string? Id { get; set; }
         public string? Title { get; set; }
         public int? Priority { get; set; }
+        public string? Scope { get; set; }
         public MatchDoc? Match { get; set; }
         public List<StepDoc>? Steps { get; set; }
     }
