@@ -13,12 +13,21 @@ public sealed record ModelPrice(double Input, double Output, double CacheRead, d
 /// <summary>
 /// The board's own LLM price table, so agent-reported token counts are priced by the board, not by the agent.
 /// Built-in Anthropic first-party prices (November 2026), overridable and extendable with AGENT_PRICE_TABLE. Tool
-/// prices are USD per MCP call for board-side metering (default 0: the board counts calls, an admin can price them).
+/// prices are USD per MCP call for board-side metering: every call costs <see cref="DefaultToolPriceUsd"/> unless the
+/// table prices that tool (or sets "default_tool"), so an agent that never reports its tokens still burns its budget.
+/// <see cref="FreeTools"/> are never charged.
 /// </summary>
 public sealed class PriceTable
 {
     private readonly Dictionary<string, ModelPrice> _models;
     private readonly Dictionary<string, double> _tools;
+    private readonly double _defaultTool = DefaultToolPriceUsd;
+
+    /// <summary>Built-in USD price of one MCP call not listed under "tools".</summary>
+    public const double DefaultToolPriceUsd = 0.01;
+
+    /// <summary>Calls that never cost anything: identity checks and usage reporting must stay free so a blocked agent can recover.</summary>
+    public static readonly IReadOnlySet<string> FreeTools = new HashSet<string>(StringComparer.Ordinal) { "whoami", "report_usage" };
 
     public static readonly IReadOnlyDictionary<string, ModelPrice> BuiltIn = new Dictionary<string, ModelPrice>(StringComparer.OrdinalIgnoreCase)
     {
@@ -69,7 +78,10 @@ public sealed class PriceTable
                 foreach (var t in p.Value.EnumerateObject())
                     _tools[t.Name] = t.Value.ValueKind == JsonValueKind.Number && t.Value.GetDouble() is var x && x is >= 0 and <= 100
                         ? x : throw new InvalidOperationException($"AGENT_PRICE_TABLE tools.{t.Name} must be a number 0-100 (USD per call)");
-            else throw new InvalidOperationException($"AGENT_PRICE_TABLE: unknown key '{p.Name}' (models, tools)");
+            else if (p.Name == "default_tool")
+                _defaultTool = p.Value.ValueKind == JsonValueKind.Number && p.Value.GetDouble() is var d && d is >= 0 and <= 100
+                    ? d : throw new InvalidOperationException("AGENT_PRICE_TABLE default_tool must be a number 0-100 (USD per call)");
+            else throw new InvalidOperationException($"AGENT_PRICE_TABLE: unknown key '{p.Name}' (models, tools, default_tool)");
         }
     }
 
@@ -94,8 +106,10 @@ public sealed class PriceTable
         return best;
     }
 
-    /// <summary>Board-side metered price of one MCP call (USD), 0 unless configured.</summary>
-    public double ToolPrice(string tool) => _tools.TryGetValue(tool, out var p) ? p : 0;
+    /// <summary>Board-side metered price of one MCP call (USD): the tool's own price, else the default; free tools cost 0.</summary>
+    public double ToolPrice(string tool) => FreeTools.Contains(tool) ? 0 : _tools.TryGetValue(tool, out var p) ? p : _defaultTool;
+
+    public double DefaultToolPrice => _defaultTool;
 
     public IReadOnlyDictionary<string, ModelPrice> Models => _models;
     public IReadOnlyDictionary<string, double> ToolPrices => _tools;

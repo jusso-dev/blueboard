@@ -336,8 +336,11 @@ Agents call `report_usage` after each model response; the board prices the token
 ```json
 {"models": {"claude-opus-5-5": {"input": 4, "output": 20, "cache_read": 0.2, "cache_write": 5},
             "my-foundry-model": {"input": 1.5, "output": 6}},
- "tools":  {"run_hunting_query": 0.002, "lookup_intel": 0.001}}
+ "tools":  {"run_hunting_query": 0.02, "read_feed": 0.001},
+ "default_tool": 0.01}
 ```
+
+Every MCP call is also charged a default **$0.01** (`default_tool`), so an agent that never calls `report_usage` still spends against its budget and can hit the hard cap. A price under `tools` replaces the default for that tool; `"default_tool": 0` turns the default off. `whoami` and `report_usage` are always free so a blocked agent can still identify itself and report.
 
 A bad value stops the worker at start-up with the reason. Model ids match exactly or with a date / `[1m]` / `@` suffix and an optional provider prefix (`anthropic.`, `us.`). Separately from what agents report, the board counts every MCP call per agent, day and tool (`agent_metered_daily`), so an agent that never reports still shows: the dashboard and budget table flag it *not reporting usage*.
 

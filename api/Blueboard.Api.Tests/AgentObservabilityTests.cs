@@ -32,7 +32,14 @@ public class AgentObservabilityTests
         var p = new PriceTable("""{"models":{"my-model":{"input":1,"output":2}},"tools":{"run_hunting_query":0.01}}""");
         Assert.Equal(3.0, p.For("my-model")!.Cost(1_000_000, 1_000_000, 0, 0), 6);
         Assert.Equal(0.01, p.ToolPrice("run_hunting_query"));
-        Assert.Equal(0, p.ToolPrice("read_feed"));
+        Assert.Equal(PriceTable.DefaultToolPriceUsd, p.ToolPrice("read_feed"));
+        Assert.Equal(0, p.ToolPrice("whoami"));
+        Assert.Equal(0, p.ToolPrice("report_usage"));
+        var free = new PriceTable("""{"default_tool":0,"tools":{"report_usage":5}}""");
+        Assert.Equal(0, free.ToolPrice("read_feed"));
+        Assert.Equal(0, free.ToolPrice("report_usage"));
+        Assert.Throws<InvalidOperationException>(() => new PriceTable("""{"default_tool":-1}"""));
+        Assert.Throws<InvalidOperationException>(() => new PriceTable("""{"default_tool":"x"}"""));
         Assert.Throws<InvalidOperationException>(() => new PriceTable("""{"models":{"x":{"input":-1,"output":2}}}"""));
         Assert.Throws<InvalidOperationException>(() => new PriceTable("""{"other":{}}"""));
         Assert.Throws<InvalidOperationException>(() => new PriceTable("not json"));
