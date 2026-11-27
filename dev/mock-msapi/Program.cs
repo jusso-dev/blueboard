@@ -185,11 +185,38 @@ static class Fixtures
             o["incidentWebUrl"] = $"https://security.microsoft.com/incidents/{o["id"]}";
             foreach (var a in o["alerts"]!.AsArray())
             {
-                a!["firstActivityDateTime"] = created.ToString("O");
-                a["lastActivityDateTime"] = created.AddMinutes(2).ToString("O");
+                // Optional per-alert activity window (_firstMinutesAgo/_lastMinutesAgo), else the incident's creation time.
+                var first = a!["_firstMinutesAgo"] is { } fa ? started.AddMinutes(-fa.GetValue<int>()) : created;
+                var last = a["_lastMinutesAgo"] is { } la ? started.AddMinutes(-la.GetValue<int>()) : first.AddMinutes(2);
+                a.AsObject().Remove("_firstMinutesAgo");
+                a.AsObject().Remove("_lastMinutesAgo");
+                a["firstActivityDateTime"] = first.ToString("O");
+                a["lastActivityDateTime"] = last.ToString("O");
+                a["createdDateTime"] = last.AddMinutes(1).ToString("O");
             }
+            Relative(o, started);
             return o;
         }).ToList();
+    }
+
+    /// <summary>Evidence timestamps written as "@minutesAgo:N" in a fixture become real times relative to start, so the attack timeline renders.</summary>
+    private static void Relative(JsonNode? n, DateTimeOffset started)
+    {
+        switch (n)
+        {
+            case JsonObject o:
+                foreach (var (k, v) in o.ToList())
+                {
+                    if (v is JsonValue jv && jv.TryGetValue<string>(out var s) && s.StartsWith("@minutesAgo:", StringComparison.Ordinal)
+                        && int.TryParse(s["@minutesAgo:".Length..], out var m))
+                        o[k] = started.AddMinutes(-m).ToString("O");
+                    else Relative(v, started);
+                }
+                break;
+            case JsonArray a:
+                foreach (var x in a) Relative(x, started);
+                break;
+        }
     }
 
     /// <summary>Fixed for the process lifetime, so incidents don't look "updated" on every poll.</summary>
