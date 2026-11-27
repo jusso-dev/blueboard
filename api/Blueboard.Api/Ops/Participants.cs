@@ -100,7 +100,7 @@ public sealed class Participants(Db db, Audit audit, BoardService board, SystemP
         await using (var cmd = db.Command("""
             with disabled as (
               update principals set enabled = false, disabled_reason = @r, disabled_by = @by, disabled_at = now()
-              where enabled and kind <> 'system' and id <> @by
+              where enabled and kind not in ('system', 'integration') and id <> @by
                 and coalesce(last_seen_at, created_at) < now() - make_interval(days => @d)
               returning id, handle
             ), released as (

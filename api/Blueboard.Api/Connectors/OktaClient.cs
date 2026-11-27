@@ -82,7 +82,8 @@ public sealed partial class OktaClient
     {
         if (!IsUserRef(userRef)) throw new BoardException("user must be an Okta user id (00u…) or a login / email");
         var (json, status) = await TryGetAsync($"/api/v1/users/{Uri.EscapeDataString(userRef)}", ct);
-        if (json is not null || status != 404 || OktaId().IsMatch(userRef)) return status == 403 ? throw new BoardException("Okta refused the user read (okta.users.read scope missing?)", 502) : json;
+        if (status is 401 or 403) throw new BoardException($"Okta refused the user read ({status}): check the credential and the okta.users.read scope", 502) { UpstreamStatus = status };
+        if (json is not null || OktaId().IsMatch(userRef)) return json;
         // A login that differs from the email: search the profile (exact match on email).
         var (list, _) = await TryGetAsync($"/api/v1/users?search={Uri.EscapeDataString($"profile.email eq \"{userRef}\"")}&limit=2", ct);
         return list is { ValueKind: JsonValueKind.Array } arr && arr.GetArrayLength() == 1 ? arr[0].Clone() : null;

@@ -55,7 +55,9 @@ public sealed partial class ConnectorHttp(HttpClient http, string origin, string
             req.Headers.UserAgent.ParseAdd("blueboard-connector/1.0");
             if (auth is not null) req.Headers.Authorization = auth;
             using var res = await http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
-            if ((res.StatusCode == HttpStatusCode.TooManyRequests || (int)res.StatusCode >= 500) && attempt < 2)
+            // 429 means the request wasn't processed, so any method may retry; a 5xx may have half-applied a write
+            // (a ticket created, then the response lost), so only reads retry on 5xx.
+            if ((res.StatusCode == HttpStatusCode.TooManyRequests || ((int)res.StatusCode >= 500 && method == HttpMethod.Get)) && attempt < 2)
             {
                 var wait = res.Headers.RetryAfter?.Delta ?? TimeSpan.FromSeconds(1 + attempt * 2);
                 await Task.Delay(TimeSpan.FromSeconds(Math.Min(wait.TotalSeconds, 10)), ct);

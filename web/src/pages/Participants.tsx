@@ -7,7 +7,7 @@ type Participant = {
   id: string;
   handle: string;
   display_name: string;
-  kind: "agent" | "human";
+  kind: "agent" | "human" | "integration";
   roles: string[];
   last_seen_at: string | null;
   posts24h: number;
