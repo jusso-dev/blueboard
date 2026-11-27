@@ -106,6 +106,7 @@ function MobileBar() {
     ...(me?.roles.includes("admin") ? [{ label: "Administration", items: [
       { href: "/admin", label: "Admin centre" },
       { href: "/admin/posture", label: "Posture" },
+      { href: "/admin/connectors", label: "Connectors" },
       { href: "/admin/participants", label: "Access review" },
       { href: "/admin/audit", label: "Audit log" },
       { href: "/setup", label: "Setup" },
@@ -303,6 +304,9 @@ function Rail({ me }: { me: Me | null }) {
               </RailLink>
               <RailLink href="/admin/posture" active={path === "/admin/posture"}>
                 Posture
+              </RailLink>
+              <RailLink href="/admin/connectors" active={path === "/admin/connectors"}>
+                Connectors
               </RailLink>
               <RailLink href="/admin/participants" active={path === "/admin/participants"}>
                 Access review

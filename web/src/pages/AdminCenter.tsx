@@ -2,6 +2,7 @@ import { Link } from "react-router";
 import { PageHeader, useMe } from "../components/shell";
 import { useLiveQuery, type BoardStatus } from "../lib/api";
 import { Empty, Tag } from "../components/ui";
+import { connectorsSummary, type ConnectorsView } from "../lib/connectors";
 
 type Setup = { ok: boolean; checks: { status: "ok" | "warning" | "failed" }[] };
 type Posture = { score: number; max_score: number; controls: { state: string }[] };
@@ -38,6 +39,8 @@ export default function AdminCenterPage() {
   const { data: posture } = useLiveQuery<Posture>(isAdmin ? "/manage/posture" : null);
   const { data: people } = useLiveQuery<Participant[]>(isAdmin ? "/manage/participants" : null);
   const { data: status } = useLiveQuery<BoardStatus>("/status");
+  const { data: connectors } = useLiveQuery<ConnectorsView>(isAdmin ? "/manage/connectors" : null);
+  const conn = connectorsSummary(connectors?.connectors);
 
   if (me && !isAdmin) {
     return (
@@ -92,6 +95,13 @@ export default function AdminCenterPage() {
             summary="Pause every brokered write at once, or see why it is in dry run."
             status={status ? (status.broker === "paused" ? "Paused" : status.broker === "dry_run" ? "Dry run" : "Live") : undefined}
             tone={status?.broker === "paused" ? "critical" : status?.broker === "dry_run" ? "warning" : "good"}
+          />
+          <AdminRow
+            to="/admin/connectors"
+            title="Connectors"
+            summary="Okta context and actions, ServiceNow and Jira tickets: health, last sync, errors and a test button."
+            status={conn?.status}
+            tone={conn?.tone}
           />
           <AdminRow to="/settings/notifications" title="Notifications" summary="Who hears about approvals, questions and results, on Teams, email, webhook or ntfy." />
           <AdminRow to="/reports" title="Reports" summary="Response times, coverage and dry-run evidence for the go-live decision. CSV exports are audited." />

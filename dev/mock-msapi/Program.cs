@@ -155,6 +155,93 @@ foreach (var (method, pattern) in new[]
     });
 }
 
+// ── Okta, ServiceNow and Jira (WS5 connectors) ─────────────────────────────────────────────────
+// The board's connectors point here in the demo (OKTA_ORG_URL, SERVICENOW_INSTANCE_URL, JIRA_BASE_URL). No credential is
+// ever sent in demo mode; these answer the exact paths the connectors call. Users mirror the fixture incidents' UPNs.
+var oktaUsers = new Dictionary<string, JsonObject>(StringComparer.OrdinalIgnoreCase);
+foreach (var (id, login, first, last, status, lastLogin) in new[]
+{
+    ("00udemoana00000000001", "ana.lopez@contoso.com", "Ana", "Lopez", "ACTIVE", -35),
+    ("00udemosam00000000002", "sam.patel@contoso.com", "Sam", "Patel", "ACTIVE", -240),
+    ("00udemojch00000000003", "j.chen@contoso.com", "Jun", "Chen", "ACTIVE", -12),
+})
+{
+    var u = new JsonObject
+    {
+        ["id"] = id, ["status"] = status, ["created"] = "2024-02-01T00:00:00.000Z",
+        ["lastLogin"] = DateTimeOffset.UtcNow.AddMinutes(lastLogin).ToString("O"),
+        ["passwordChanged"] = "2026-09-12T03:14:00.000Z",
+        ["profile"] = new JsonObject { ["login"] = login, ["email"] = login, ["firstName"] = first, ["lastName"] = last },
+    };
+    oktaUsers[id] = u;
+    oktaUsers[login] = u;
+}
+IResult OktaUser(string id) => oktaUsers.TryGetValue(id, out var u) ? Results.Json(u.DeepClone()) : Results.Json(new { errorCode = "E0000007", errorSummary = $"Not found: Resource not found: {id} (User)" }, statusCode: 404);
+app.MapPost("/oauth2/v1/token", () => Results.Json(new { access_token = "mock-not-a-token", token_type = "Bearer", expires_in = 3600 }));
+app.MapGet("/api/v1/users", (HttpRequest req) => Results.Json(oktaUsers.Values.Distinct().Take(1).Select(u => u.DeepClone())));
+app.MapGet("/api/v1/users/{id}", (string id) => OktaUser(id));
+app.MapGet("/api/v1/users/{id}/factors", (string id) => Results.Json(id.Contains("jch")
+    ? new object[] { new { factorType = "sms", provider = "OKTA", status = "ACTIVE", created = "2026-11-27T00:40:00.000Z" } }
+    : new object[] { new { factorType = "push", provider = "OKTA", status = "ACTIVE", created = "2024-02-01T00:00:00.000Z" }, new { factorType = "webauthn", provider = "FIDO", status = "ACTIVE", created = "2025-03-10T00:00:00.000Z" } }));
+app.MapGet("/api/v1/users/{id}/groups", (string id) => Results.Json(new[] { new { profile = new { name = "Everyone" } }, new { profile = new { name = id.Contains("sam") ? "Engineering" : "Finance" } } }));
+app.MapGet("/api/v1/users/{id}/roles", (string id) => Results.Json(id.Contains("sam") ? new[] { new { type = "APP_ADMIN", label = "Application Administrator" } } : Array.Empty<object>()));
+app.MapGet("/api/v1/logs", () => Results.Json(new object[]
+{
+    new
+    {
+        published = DateTimeOffset.UtcNow.AddMinutes(-14).ToString("O"), eventType = "user.authentication.auth_via_mfa", displayMessage = "Authentication of user via MFA",
+        severity = "INFO", outcome = new { result = "SUCCESS" }, actor = new { alternateId = "j.chen@contoso.com" },
+        client = new { ipAddress = "185.220.101.4", userAgent = new { rawUserAgent = "Mozilla/5.0" }, geographicalContext = new { city = "Frankfurt", country = "Germany" } },
+    },
+    new
+    {
+        published = DateTimeOffset.UtcNow.AddMinutes(-15).ToString("O"), eventType = "system.mfa.factor.activate", displayMessage = "Activate factor or authenticator (new SMS factor)",
+        severity = "INFO", outcome = new { result = "SUCCESS" }, actor = new { alternateId = "j.chen@contoso.com" },
+        client = new { ipAddress = "185.220.101.4", userAgent = new { rawUserAgent = "Mozilla/5.0" }, geographicalContext = new { city = "Frankfurt", country = "Germany" } },
+    },
+}));
+
+var tickets = new ConcurrentDictionary<string, JsonObject>();
+var ticketSeq = 10000;
+app.MapPost("/oauth_token.do", () => Results.Json(new { access_token = "mock-not-a-token", token_type = "Bearer", expires_in = 1800 }));
+app.MapGet("/api/now/table/{table}", (string table) => Results.Json(new { result = tickets.Values.Take(1).Select(t => t.DeepClone()) }));
+app.MapPost("/api/now/table/{table}", async (string table, HttpRequest req) =>
+{
+    var body = (await JsonNode.ParseAsync(req.Body))?.AsObject() ?? new JsonObject();
+    var sysId = Guid.NewGuid().ToString("N");
+    var number = $"INC{Interlocked.Increment(ref ticketSeq):0000000}";
+    body["sys_id"] = sysId;
+    body["number"] = number;
+    tickets[sysId] = body;
+    writes.Enqueue(new { at = DateTimeOffset.UtcNow, method = "POST", path = req.Path.Value, body = body.DeepClone() });
+    return Results.Json(new { result = new { sys_id = sysId, number } }, statusCode: 201);
+});
+app.MapMethods("/api/now/table/{table}/{sysId}", ["PATCH"], async (string table, string sysId, HttpRequest req) =>
+{
+    var body = await JsonNode.ParseAsync(req.Body);
+    writes.Enqueue(new { at = DateTimeOffset.UtcNow, method = "PATCH", path = req.Path.Value, body });
+    return tickets.ContainsKey(sysId) ? Results.Json(new { result = new { sys_id = sysId } }) : NotFound();
+});
+var jiraSeq = 0;
+app.MapGet("/rest/api/3/project/{key}", (string key) => Results.Json(new { id = "10000", key, name = "Security Operations" }));
+app.MapPost("/rest/api/3/issue", async (HttpRequest req) =>
+{
+    var body = await JsonNode.ParseAsync(req.Body);
+    var n = Interlocked.Increment(ref jiraSeq);
+    writes.Enqueue(new { at = DateTimeOffset.UtcNow, method = "POST", path = req.Path.Value, body });
+    return Results.Json(new { id = (10000 + n).ToString(), key = $"SOC-{n}", self = $"/rest/api/3/issue/{10000 + n}" }, statusCode: 201);
+});
+app.MapPost("/rest/api/3/issue/{id}/comment", async (string id, HttpRequest req) =>
+{
+    writes.Enqueue(new { at = DateTimeOffset.UtcNow, method = "POST", path = req.Path.Value, body = await JsonNode.ParseAsync(req.Body) });
+    return Results.Json(new { id = Guid.NewGuid().ToString("N")[..8] }, statusCode: 201);
+});
+app.MapPost("/rest/api/3/issue/{id}/transitions", () => Results.NoContent());
+// Okta brokered writes (reached only if BROKER_EXECUTE is turned on in the demo).
+foreach (var pattern in new[] { "/api/v1/users/{id}/lifecycle/suspend", "/api/v1/users/{id}/lifecycle/unsuspend", "/api/v1/users/{id}/lifecycle/reset_factors" })
+    app.MapPost(pattern, (HttpRequest req) => { writes.Enqueue(new { at = DateTimeOffset.UtcNow, method = "POST", path = req.Path.Value }); return Results.Ok(); });
+app.MapDelete("/api/v1/users/{id}/sessions", (HttpRequest req) => { writes.Enqueue(new { at = DateTimeOffset.UtcNow, method = "DELETE", path = req.Path.Value }); return Results.NoContent(); });
+
 app.MapFallback((HttpRequest req) => Results.Json(new { error = new { code = "NotFound", message = $"mock-msapi has no route for {req.Method} {req.Path}" } }, statusCode: 404));
 app.Run();
 return 0;

@@ -11,6 +11,7 @@ import { RequestActionButton, useCanRequest } from "../components/request-action
 import { safeHref } from "../lib/gifs";
 import { Button, Empty, Severity, useStoredState } from "../components/ui";
 import { CveRef } from "../components/cve";
+import { ConnectorStrip } from "../components/connectors";
 
 type IncidentDetail = {
   id: string;
@@ -89,6 +90,7 @@ export default function IncidentPage() {
           </a>
         )}
       </PageHeader>
+      <ConnectorStrip incident={inc.id} canRequest={canRequest} />
       {/* Capped so the feed always keeps most of the height; it scrolls on its own when the roll-up is long. */}
       <div id="incident-summary" hidden={summary === "hidden"} className="max-h-[38dvh] shrink-0 overflow-y-auto overflow-x-hidden">
         <SummaryPanel
