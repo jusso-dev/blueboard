@@ -7,7 +7,21 @@
     "DEV_AUTH": "true",
     "INGEST_ENABLED": "false",
     "BROKER_EXECUTE": "false",
-    "BLUEBOARD_POLICY_FILE": "../../policy.example.json"
+    "BLUEBOARD_POLICY_FILE": "../../policy.example.json",
+    "OKTA_ORG_URL": "",
+    "OKTA_AUTH_MODE": "private_key_jwt",
+    "OKTA_CLIENT_ID": "",
+    "OKTA_SIGNING_KEY_URL": "",
+    "SERVICENOW_INSTANCE_URL": "",
+    "SERVICENOW_CLIENT_ID": "",
+    "SERVICENOW_CLIENT_SECRET": "",
+    "SERVICENOW_WEBHOOK_SECRET": "",
+    "JIRA_BASE_URL": "",
+    "JIRA_EMAIL": "",
+    "JIRA_API_TOKEN": "",
+    "JIRA_PROJECT_KEY": "",
+    "JIRA_WEBHOOK_SECRET": "",
+    "TICKET_MIN_SEVERITY": "high"
   },
   "Host": {
     "CORS": "http://localhost:5173",

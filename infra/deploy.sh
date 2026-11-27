@@ -26,6 +26,12 @@
 #   parameters, never written to state or printed:
 #   NOTIFY_TEAMS_WEBHOOK_URL, NOTIFY_WEBHOOK_URL, NOTIFY_WEBHOOK_SECRET, NOTIFY_ALLOWED_HOSTS,
 #   NOTIFY_MAIL_FROM, NOTIFY_MAIL_TO, NOTIFY_REMIND_MINUTES (default 15), BOARD_WEB_URL (custom domain)
+#   Connectors (docs/INTEGRATIONS.md), all optional and off unless the URL is set. Secrets are secure parameters
+#   (Key Vault secrets in production), never written to state or printed:
+#   OKTA_ORG_URL, OKTA_CUSTOM_DOMAIN, OKTA_AUTH_MODE (private_key_jwt | ssws), OKTA_CLIENT_ID, OKTA_SIGNING_KEY_URL,
+#   OKTA_JWK_KID, OKTA_API_TOKEN (ssws only); SERVICENOW_INSTANCE_URL, SERVICENOW_CLIENT_ID, SERVICENOW_CLIENT_SECRET,
+#   SERVICENOW_TABLE, SERVICENOW_ASSIGNMENT_GROUP, SERVICENOW_WEBHOOK_SECRET; JIRA_BASE_URL, JIRA_EMAIL, JIRA_API_TOKEN,
+#   JIRA_PROJECT_KEY, JIRA_WEBHOOK_SECRET; TICKET_MIN_SEVERITY (high), TICKET_ON_PLAYBOOK, TICKET_ON_ACTION_APPROVED
 #   ALERT_EMAILS=…          operational alert recipients, space or comma separated (infra/alerts.bicep; docs/OPERATIONS.md)
 #   FRONT_DOOR=false        Azure Front Door Premium + WAF in front of both apps; the apps then accept only Front Door
 #                           traffic and people and agents use the Front Door host names (infra/front-door.bicep)
@@ -180,10 +186,13 @@ secure_label() {
   case "$1" in
     NOTIFY_TEAMS_WEBHOOK_URL) echo teams ;; NOTIFY_WEBHOOK_URL) echo webhook ;; NOTIFY_WEBHOOK_SECRET) echo hmac ;;
     NVD_API_KEY) echo nvd ;; WEBHOOK_SIGNING_KEY) echo signing ;;
+    OKTA_API_TOKEN) echo okta ;; SERVICENOW_CLIENT_SECRET) echo snow ;; SERVICENOW_WEBHOOK_SECRET) echo snowhook ;;
+    JIRA_API_TOKEN) echo jira ;; JIRA_WEBHOOK_SECRET) echo jirahook ;;
   esac
 }
 passed=""
-for v in NOTIFY_TEAMS_WEBHOOK_URL NOTIFY_WEBHOOK_URL NOTIFY_WEBHOOK_SECRET NVD_API_KEY WEBHOOK_SIGNING_KEY; do
+for v in NOTIFY_TEAMS_WEBHOOK_URL NOTIFY_WEBHOOK_URL NOTIFY_WEBHOOK_SECRET NVD_API_KEY WEBHOOK_SIGNING_KEY \
+  OKTA_API_TOKEN SERVICENOW_CLIENT_SECRET SERVICENOW_WEBHOOK_SECRET JIRA_API_TOKEN JIRA_WEBHOOK_SECRET; do
   if [[ -n "${!v:-}" ]]; then
     passed="$passed $(secure_label "$v")"
   elif [[ " ${SECURE_SETTINGS_PASSED:-} " == *" $(secure_label "$v") "* ]]; then
@@ -221,10 +230,14 @@ trap 'rm -f "$params"' EXIT
 chmod 600 "$params"
 jq -n --rawfile policy "$POLICY_FILE" \
   --arg teams "${NOTIFY_TEAMS_WEBHOOK_URL:-}" --arg hook "${NOTIFY_WEBHOOK_URL:-}" --arg hmac "${NOTIFY_WEBHOOK_SECRET:-}" \
-  --arg nvd "${NVD_API_KEY:-}" --arg signing "${WEBHOOK_SIGNING_KEY:-}" --argjson cors "$CORS_JSON" --argjson alerts "$ALERT_JSON" --argjson countries "$COUNTRIES_JSON" --argjson deployers "$DEPLOYER_JSON" \
+  --arg nvd "${NVD_API_KEY:-}" --arg signing "${WEBHOOK_SIGNING_KEY:-}" \
+  --arg okta "${OKTA_API_TOKEN:-}" --arg snow "${SERVICENOW_CLIENT_SECRET:-}" --arg snowhook "${SERVICENOW_WEBHOOK_SECRET:-}" \
+  --arg jira "${JIRA_API_TOKEN:-}" --arg jirahook "${JIRA_WEBHOOK_SECRET:-}" --argjson cors "$CORS_JSON" --argjson alerts "$ALERT_JSON" --argjson countries "$COUNTRIES_JSON" --argjson deployers "$DEPLOYER_JSON" \
   '{"$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#", contentVersion: "1.0.0.0",
     parameters: {policyJson: {value: $policy}, notifyTeamsWebhookUrl: {value: $teams}, notifyWebhookUrl: {value: $hook},
                  notifyWebhookSecret: {value: $hmac}, nvdApiKey: {value: $nvd}, webhookSigningKey: {value: $signing},
+                 oktaApiToken: {value: $okta}, serviceNowClientSecret: {value: $snow}, serviceNowWebhookSecret: {value: $snowhook},
+                 jiraApiToken: {value: $jira}, jiraWebhookSecret: {value: $jirahook},
                  extraCorsOrigins: {value: $cors}, alertEmails: {value: $alerts}, allowedCountries: {value: $countries}, deployerIpRanges: {value: $deployers}}}' >"$params"
 out="$(az deployment group create -g "$RESOURCE_GROUP" -n "blueboard-main" -f infra/main.bicep \
   -p @"$params" \
@@ -237,6 +250,12 @@ out="$(az deployment group create -g "$RESOURCE_GROUP" -n "blueboard-main" -f in
   notifyAllowedHosts="${NOTIFY_ALLOWED_HOSTS:-}" notifyMailFrom="${NOTIFY_MAIL_FROM:-}" notifyMailTo="${NOTIFY_MAIL_TO:-}" \
   notifyRemindMinutes="${NOTIFY_REMIND_MINUTES:-15}" webBaseUrl="${BOARD_WEB_URL:-}" \
   webhookAllowedHosts="${WEBHOOK_ALLOWED_HOSTS:-}" \
+  oktaOrgUrl="${OKTA_ORG_URL:-}" oktaCustomDomain="${OKTA_CUSTOM_DOMAIN:-}" oktaAuthMode="${OKTA_AUTH_MODE:-private_key_jwt}" \
+  oktaClientId="${OKTA_CLIENT_ID:-}" oktaSigningKeyUrl="${OKTA_SIGNING_KEY_URL:-}" oktaJwkKid="${OKTA_JWK_KID:-}" \
+  serviceNowInstanceUrl="${SERVICENOW_INSTANCE_URL:-}" serviceNowClientId="${SERVICENOW_CLIENT_ID:-}" \
+  serviceNowTable="${SERVICENOW_TABLE:-incident}" serviceNowAssignmentGroup="${SERVICENOW_ASSIGNMENT_GROUP:-}" \
+  jiraBaseUrl="${JIRA_BASE_URL:-}" jiraEmail="${JIRA_EMAIL:-}" jiraProjectKey="${JIRA_PROJECT_KEY:-}" \
+  ticketMinSeverity="${TICKET_MIN_SEVERITY:-high}" ticketOnPlaybook="${TICKET_ON_PLAYBOOK:-false}" ticketOnActionApproved="${TICKET_ON_ACTION_APPROVED:-false}" \
   "${TI_PARAMS[@]}" \
   --query properties.outputs -o json)"
 rm -f "$params"
