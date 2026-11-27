@@ -157,6 +157,12 @@ public sealed class BoardConnection : IAsyncDisposable
     public Task<JsonElement> SyncIncidentAsync(string incident, CancellationToken ct = default) => Call<JsonElement>(Tools.SyncIncident, new IncidentQuery(incident), ct);
     public Task<JsonElement> ListPlaybooksAsync(CancellationToken ct = default) => Call<JsonElement>(Tools.ListPlaybooks, null, ct);
     public Task<JsonElement> AttachPlaybookAsync(string incident, string playbookId, CancellationToken ct = default) => Call<JsonElement>(Tools.AttachPlaybook, new AttachPlaybookInput(incident, playbookId), ct);
+    public Task<IncidentTimelineResult> GetIncidentTimelineAsync(string incident, string? entity = null, string? source = null, int limit = 500, CancellationToken ct = default) =>
+        Call<IncidentTimelineResult>(Tools.GetIncidentTimeline, new TimelineQuery(incident, entity, source, limit), ct);
+    public Task<IncidentGraphResult> GetIncidentGraphAsync(string incident, CancellationToken ct = default) => Call<IncidentGraphResult>(Tools.GetIncidentGraph, new IncidentQuery(incident), ct);
+    public Task<JsonElement> AddTimelineEventsAsync(AddTimelineEventsInput input, CancellationToken ct = default) => Call<JsonElement>(Tools.AddTimelineEvents, input, ct);
+    public Task<TiPlaybookRun> StartTiPlaybookAsync(Guid tiFindingId, string? playbookId = null, CancellationToken ct = default) =>
+        Call<TiPlaybookRun>(Tools.StartTiPlaybook, new StartTiPlaybookInput(tiFindingId, playbookId), ct);
     public Task<JsonElement> RunHuntingQueryAsync(string query, string? timespan = null, CancellationToken ct = default) => Call<JsonElement>(Tools.RunHuntingQuery, new HuntInput(query, timespan), ct);
     public Task<JsonElement> RunSentinelQueryAsync(string query, string? timespan = null, CancellationToken ct = default) => Call<JsonElement>(Tools.RunSentinelQuery, new SentinelQueryInput(query, timespan), ct);
     public Task<JsonElement> LookupEntityAsync(string kind, string value, CancellationToken ct = default) => Call<JsonElement>(Tools.LookupEntity, new LookupInput(kind, value), ct);

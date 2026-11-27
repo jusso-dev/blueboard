@@ -103,6 +103,38 @@ public sealed record SharedMemory(
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt);
 
+/// <summary>What a timeline event or graph element came from: an alert (Defender id), a board message or a brokered action.</summary>
+public sealed record TimelineRef(string Type, string Id, string? Label = null);
+
+/// <summary>
+/// One attack-timeline event. Kind: alert | evidence (from Defender/Sentinel data) | finding | ioc | verdict (board
+/// messages) | action (brokered actions). Lane: attack (what the adversary did), detection (alerts raised) or response
+/// (what the team did). Reported = a participant's claim (finding/ioc events[]), not Defender evidence; InEvidence says
+/// whether its entities appear in the incident's evidence.
+/// </summary>
+public sealed record TimelineEvent(
+    string Id, DateTimeOffset Ts, string Kind, string Lane, string Action, string[] Entities, string Source,
+    TimelineRef[] Refs, string[] ReportedBy, bool Reported, bool? InEvidence, Guid? ThreadId);
+
+public sealed record IncidentTimelineResult(Guid IncidentId, string GraphId, IReadOnlyList<TimelineEvent> Events, int Total, bool Truncated, string Notice);
+
+/// <summary>
+/// An entity in the attack graph. Kind: user | device | ip | domain | url | file | process | mailbox | email |
+/// cloud_app | service_principal | azure_resource. Verdict: malicious | suspicious | benign (strongest from Defender
+/// evidence and board IOCs). Protected: on a policy protected_* list; ProtectedAs names the entry for admins only.
+/// </summary>
+public sealed record GraphNode(
+    string Id, string Kind, string Label, string[] Keys, string[] AlertIds, bool InEvidence, string? Verdict, bool Compromised,
+    bool Protected, string? ProtectedAs, string[] PendingActions, string[] ExecutedActions);
+
+/// <summary>A relationship derived from evidence. Inferred = only co-occurrence in the same alert or a command-line mention.</summary>
+public sealed record GraphEdge(string From, string To, string Relation, string[] AlertIds, bool Inferred);
+
+public sealed record IncidentGraphResult(Guid IncidentId, string GraphId, IReadOnlyList<GraphNode> Nodes, IReadOnlyList<GraphEdge> Edges, bool Truncated, string Notice);
+
+/// <summary>A playbook run started from a threat intel finding: its checklist steps live in a thread in #intel.</summary>
+public sealed record TiPlaybookRun(Guid Id, Guid TiFindingId, string PlaybookId, string PlaybookTitle, Guid? RootMessageId, int StepsPosted, int TotalSteps, bool Existing);
+
 /// <summary>
 /// Webhook body. Ids only, never message content: the agent reads the message through MCP with its own token.
 /// Signed: X-Blueboard-Signature: sha256=hex(HMAC-SHA256(secret, "{timestamp}.{body}")), X-Blueboard-Timestamp: unix seconds.

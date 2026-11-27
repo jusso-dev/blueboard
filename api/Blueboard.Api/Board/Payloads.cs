@@ -56,8 +56,54 @@ public static class Payloads
             if (Str(i, "source") is { Length: <= 200 } src) o["source"] = src;
             output.Add(o);
         }
-        return JsonSerializer.SerializeToElement(new JsonObject { ["indicators"] = output });
+        var result = new JsonObject { ["indicators"] = output };
+        if (TimelineEvents(p, "ioc") is { } events) result["events"] = events;
+        return JsonSerializer.SerializeToElement(result);
     }
+
+    public const int MaxTimelineEvents = 200;
+
+    /// <summary>
+    /// Optional attack-timeline events on a finding or ioc payload: [{ts, entity, action, source?, ref?}]. Returns the
+    /// normalised array (unknown keys dropped), null when absent, or throws. These are a participant's claims: the
+    /// timeline shows them as reported, never as Defender evidence.
+    /// </summary>
+    internal static JsonArray? TimelineEvents(JsonElement p, string type, DateTimeOffset? now = null)
+    {
+        if (!p.TryGetProperty("events", out var list) || list.ValueKind == JsonValueKind.Null) return null;
+        if (list.ValueKind != JsonValueKind.Array) throw new BoardException($"invalid {type} payload: events must be an array");
+        var n = list.GetArrayLength();
+        if (n is < 1 or > MaxTimelineEvents) throw new BoardException($"invalid {type} payload: 1–{MaxTimelineEvents} events");
+        var latest = (now ?? DateTimeOffset.UtcNow).AddMinutes(5);
+        var output = new JsonArray();
+        var i = 0;
+        foreach (var e in list.EnumerateArray())
+        {
+            i++;
+            if (e.ValueKind != JsonValueKind.Object) throw new BoardException($"invalid {type} payload: events[{i - 1}] must be an object");
+            var tsText = Str(e, "ts");
+            if (tsText is null || !DateTimeOffset.TryParse(tsText, System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.AssumeUniversal, out var ts))
+                throw new BoardException($"invalid {type} payload: events[{i - 1}].ts must be an ISO-8601 time");
+            if (ts > latest) throw new BoardException($"invalid {type} payload: events[{i - 1}].ts is in the future");
+            if (ts.Year < 2000) throw new BoardException($"invalid {type} payload: events[{i - 1}].ts is before 2000");
+            var entity = Clean(Str(e, "entity"));
+            var action = Clean(Str(e, "action"));
+            if (entity is not { Length: >= 1 and <= 512 }) throw new BoardException($"invalid {type} payload: events[{i - 1}].entity must be 1–512 characters");
+            if (action is not { Length: >= 1 and <= 300 }) throw new BoardException($"invalid {type} payload: events[{i - 1}].action must be 1–300 characters");
+            var o = new JsonObject { ["ts"] = ts.ToUniversalTime().ToString("O"), ["entity"] = entity, ["action"] = action };
+            if (Clean(Str(e, "source")) is { Length: > 0 } src)
+                o["source"] = src.Length <= 200 ? src : throw new BoardException($"invalid {type} payload: events[{i - 1}].source must be at most 200 characters");
+            if (Clean(Str(e, "ref")) is { Length: > 0 } r)
+                o["ref"] = r.Length <= 500 ? r : throw new BoardException($"invalid {type} payload: events[{i - 1}].ref must be at most 500 characters");
+            output.Add(o);
+        }
+        return output;
+    }
+
+    /// <summary>One line, trimmed, no control characters (timeline text is shown in tables and Markdown).</summary>
+    private static string? Clean(string? s) =>
+        s is null ? null : new string(s.Select(c => char.IsControl(c) ? ' ' : c).ToArray()).Trim();
 
     private static JsonElement Verdict(JsonElement p)
     {
@@ -74,7 +120,10 @@ public static class Payloads
     {
         if (p.TryGetProperty("confidence", out var conf) && (conf.ValueKind != JsonValueKind.Number || conf.GetDouble() is < 0 or > 1))
             throw new BoardException("invalid finding payload: confidence must be 0–1");
-        return p;
+        if (TimelineEvents(p, "finding") is not { } events) return p;
+        var node = JsonNode.Parse(p.GetRawText())!.AsObject();
+        node["events"] = events;
+        return JsonSerializer.SerializeToElement(node);
     }
 
     private static JsonElement Status(JsonElement p, bool system)

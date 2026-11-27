@@ -14,7 +14,7 @@ public sealed record PostInput(
     [StringLength(20000, MinimumLength = 1)] string Body,
     [Description("chat | finding | question | ioc | verdict | status (default chat)")]
     [AllowedValues("chat", "finding", "question", "ioc", "verdict", "status")] string? Type = null,
-    [Description("Typed payload. ioc {\"indicators\":[{\"kind\",\"value\",\"verdict\",\"source\"}]}, verdict {\"classification\",\"confidence\",\"determination\"}, finding {\"confidence\",\"entities\",\"evidence\"}, status {\"state\"}. Any message may also include gif: {\"url\",\"preview_url\",\"title\",\"provider\"} using an allowlisted URL from search_gifs.")]
+    [Description("Typed payload. ioc {\"indicators\":[{\"kind\",\"value\",\"verdict\",\"source\"}]}, verdict {\"classification\",\"confidence\",\"determination\"}, finding {\"confidence\",\"entities\",\"evidence\"}, status {\"state\"}. finding and ioc may add timeline events: \"events\":[{\"ts\",\"entity\",\"action\",\"source\",\"ref\"}] (1-200, ts ISO-8601). Any message may also include gif: {\"url\",\"preview_url\",\"title\",\"provider\"} using an allowlisted URL from search_gifs.")]
     JsonElement? Payload = null,
     [Description("Thread root message id, to reply in a thread")] Guid? ParentId = null,
     [Description("Board incident id or Defender incident id, to link the message")]
@@ -87,6 +87,43 @@ public sealed record PurviewLookupInput(
 public sealed record AttachPlaybookInput(
     [Description("Board incident id or Defender incident id")][StringLength(100, MinimumLength = 1)] string Incident,
     [Description("Playbook id from list_playbooks")][StringLength(41, MinimumLength = 1), RegularExpression("^[a-z0-9][a-z0-9-]{0,40}$")] string PlaybookId);
+
+/// <summary>
+/// One attack-timeline event an agent or analyst reports (finding/ioc payload events[], add_timeline_events).
+/// These are claims, not Defender evidence: the timeline shows who reported them and whether the entity is in evidence.
+/// </summary>
+public sealed record TimelineEventInput(
+    [Description("When it happened, ISO-8601 with an offset, e.g. 2026-11-20T09:14:03Z. Not in the future.")] DateTimeOffset Ts,
+    [Description("The entity it happened on: UPN, device name or MDE id, IP, domain, URL, file hash or name, mailbox, app id")]
+    [StringLength(512, MinimumLength = 1)] string Entity,
+    [Description("What happened, e.g. 'logged on', 'ran powershell.exe -enc ...', 'connected to 203.0.113.77'")]
+    [StringLength(300, MinimumLength = 1)] string Action,
+    [Description("Where you saw it, e.g. DeviceProcessEvents, SigninLogs, run_hunting_query")][StringLength(200)] string? Source = null,
+    [Description("Optional pointer: alert id, hunting query name, message id or https URL")][StringLength(500)] string? Ref = null);
+
+public sealed record TimelineQuery(
+    [Description("Board incident id or Defender incident id")][StringLength(100, MinimumLength = 1)] string Incident,
+    [Description("Only events that touch this entity (case-insensitive substring of an event entity)")][StringLength(512)] string? Entity = null,
+    [Description("alert | evidence | finding | ioc | verdict | action")][AllowedValues("alert", "evidence", "finding", "ioc", "verdict", "action")] string? Source = null,
+    [Description("1-1000, default 500 (oldest first)")][Range(1, 1000)] int Limit = 500);
+
+/// <summary>GET /api/incidents/{id}/timeline query string (the incident comes from the route).</summary>
+public sealed record TimelineFilter(
+    [Description("Only events that touch this entity (case-insensitive substring of an event entity)")][StringLength(512)] string? Entity = null,
+    [Description("alert | evidence | finding | ioc | verdict | action")][AllowedValues("alert", "evidence", "finding", "ioc", "verdict", "action")] string? Source = null,
+    [Description("1-1000, default 500 (oldest first)")][Range(1, 1000)] int Limit = 500);
+
+public sealed record AddTimelineEventsInput(
+    [Description("Board incident id or Defender incident id")][StringLength(100, MinimumLength = 1)] string Incident,
+    [Description("1-200 timeline events from your hunting results: [{ts, entity, action, source, ref}]")] TimelineEventInput[] Events,
+    [Description("What the hunt showed, in a sentence or two (the finding's body, 5-4000 characters)")][StringLength(4000, MinimumLength = 5)] string Summary,
+    [Description("The KQL you ran, for the record (optional)")][StringLength(10000)] string? Query = null,
+    [Description("Confidence 0-1 (optional)")][Range(0, 1)] double? Confidence = null,
+    [Description("Thread root to reply in (default: the incident's root message in #incidents)")] Guid? ParentId = null);
+
+public sealed record StartTiPlaybookInput(
+    [Description("Threat intel finding id from list_ti_findings")] Guid TiFindingId,
+    [Description("Playbook id (default emerging-threat-detection)")][StringLength(41, MinimumLength = 1), RegularExpression("^[a-z0-9][a-z0-9-]{0,40}$")] string? PlaybookId = null);
 
 public sealed record IntelLookupInput(
     [Description("e.g. CVE-2021-44228, GHSA-jfh8-c2jp-5v3q, 203.0.113.5, bad.example, a sha256")][StringLength(2048, MinimumLength = 3)] string Key);

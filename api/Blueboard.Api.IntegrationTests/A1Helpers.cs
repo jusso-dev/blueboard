@@ -69,7 +69,7 @@ internal static class A1
         var intel = Intel(db, board, ms, enrich, sys, t.Settings);
         var gifs = new GifService(new HttpClient(), t.Settings, use);
         var memory = new MemoryService(db, audit, board, use);
-        var api = new BoardApi(ep, board, search, new Reporting(db), broker, enrich, ingest, hooks, db, policy, queries, runner, books, intel, audit, gifs, memory);
+        var api = new BoardApi(ep, board, search, new Reporting(db), broker, enrich, ingest, hooks, db, policy, queries, runner, books, intel, audit, gifs, memory, new AttackViews(db, board, policy));
         return new App { Db = db, Policy = policy, Limiter = limiter, Board = board, Broker = broker, Enrich = enrich, Auth = auth, Api = api, Hooks = hooks, Intel = intel, Gifs = gifs, Memory = memory, Playbooks = runner, Microsoft = fake };
     }
 

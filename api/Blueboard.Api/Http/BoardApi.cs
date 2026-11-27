@@ -19,7 +19,7 @@ namespace Blueboard.Api.Http;
 /// [RouteDoc] feeds /api/openapi.json.
 /// </summary>
 public sealed class BoardApi(Endpoint ep, BoardService board, Search search, Reporting reporting, Broker broker, Enrichment enrich, Ingest ingest, WebhookService hooks, Db db, Policy policy,
-    IncidentQueries incidents, PlaybookRunner playbookRunner, PlaybookSet playbooks, IntelService intel, Audit audit, GifService gifs, MemoryService memory)
+    IncidentQueries incidents, PlaybookRunner playbookRunner, PlaybookSet playbooks, IntelService intel, Audit audit, GifService gifs, MemoryService memory, AttackViews attack)
 {
     /// <summary>The web app sends ?type=a&amp;type=b; the contract field is types.</summary>
     private static readonly Dictionary<string, string> TypeAlias = new() { ["type"] = "types" };
@@ -152,13 +152,29 @@ public sealed class BoardApi(Endpoint ep, BoardService board, Search search, Rep
             return inc;
         });
 
+    /// <summary>The incident's attack timeline: alerts, timestamped evidence, reported events, verdicts and actions, oldest first.</summary>
+    [Function("incident-timeline")]
+    [RouteDoc("Attack timeline: alerts, evidence, reported events, verdicts and actions, oldest first, each citing its source", Query = typeof(TimelineFilter), Response = typeof(IncidentTimelineResult))]
+    public Task<IActionResult> Timeline([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "incidents/{id}/timeline")] HttpRequest req, string id) =>
+        ep.RunAsync(req, async _ =>
+        {
+            var q = Endpoint.Query<TimelineFilter>(req);
+            return await attack.TimelineAsync(id, q.Entity, q.Source, q.Limit, Ct(req));
+        });
+
+    /// <summary>The incident's attack graph: entities and the relationships the evidence gives them. Protected entries are named for admins only.</summary>
+    [Function("incident-graph")]
+    [RouteDoc("Attack graph: entities, relationships, verdicts, protected flags and targeted actions", Response = typeof(IncidentGraphResult))]
+    public Task<IActionResult> AttackGraph([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "incidents/{id}/graph")] HttpRequest req, string id) =>
+        ep.RunAsync(req, async me => await attack.GraphAsync(me, id, Ct(req)));
+
     /// <summary>Loaded playbooks and the files skipped at startup (for a setup page).</summary>
     [Function("playbooks")]
     [RouteDoc("Loaded playbooks and the files skipped at startup")]
     public Task<IActionResult> PlaybookList([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "playbooks")] HttpRequest req) =>
         ep.RunAsync(req, _ => Task.FromResult<object?>(new
         {
-            playbooks = playbooks.All.Select(p => new { p.Id, p.Title, p.File, p.Priority, p.Match, steps = p.Steps.Count }),
+            playbooks = playbooks.All.Select(p => new { p.Id, p.Title, p.File, p.Priority, p.Scope, p.Match, steps = p.Steps.Count }),
             problems = playbooks.Problems,
         }));
 
@@ -259,6 +275,18 @@ public sealed class BoardApi(Endpoint ep, BoardService board, Search search, Rep
     [RouteDoc("Update triage status of a Threat Intel finding", Body = typeof(TiFindingStatusInput), Response = typeof(TiFinding))]
     public Task<IActionResult> IntelFindingStatus([HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "intel/findings/{id:guid}/status")] HttpRequest req, string id) =>
         ep.RunAsync(req, async me => await intel.UpdateFindingStatusAsync(me, Id(id), (await Endpoint.BodyAsync<TiFindingStatusInput>(req)).Status, Ct(req)));
+
+    public sealed record TiPlaybookBody(string? PlaybookId = null);
+
+    /// <summary>Run the emerging-threat playbook (or another intel playbook) for a threat intel finding: steps go in a #intel thread.</summary>
+    [Function("intel-finding-playbook")]
+    [RouteDoc("Run an intel playbook (default emerging-threat-detection) for a threat intel finding", Body = typeof(TiPlaybookBody), Response = typeof(TiPlaybookRun))]
+    public Task<IActionResult> IntelFindingPlaybook([HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "intel/findings/{id:guid}/playbook")] HttpRequest req, string id) =>
+        ep.RunAsync(req, async me =>
+        {
+            var b = req.ContentLength is > 0 ? await Endpoint.BodyAsync<TiPlaybookBody>(req) : new TiPlaybookBody();
+            return await playbookRunner.StartForTiFindingAsync(me, Id(id), b.PlaybookId, Ct(req));
+        });
 
     [Function("actions-list")]
     [RouteDoc("Brokered actions (or the catalogue with catalog=true)", Query = typeof(ActionsQuery), Response = typeof(ActionRow[]))]
