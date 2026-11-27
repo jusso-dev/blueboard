@@ -1,14 +1,7 @@
-using Blueboard.Api.Actions;
-using Blueboard.Api.Auth;
-using Blueboard.Api.Board;
-using Blueboard.Api.Connectors;
+using Blueboard.Api;
 using Blueboard.Api.Core;
-using Blueboard.Api.Data;
 using Blueboard.Api.Graph;
 using Blueboard.Api.Mcp;
-using Blueboard.Api.Webhooks;
-using Blueboard.Api.Ops;
-using Blueboard.Api.Intel;
 using Microsoft.Azure.Functions.Worker.Builder;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -21,81 +14,8 @@ McpSchemas.Register(builder);
 
 var settings = Settings.FromEnvironment();
 var origins = MsOrigins.For(settings);
-builder.Services.AddSingleton(settings);
-builder.Services.AddSingleton(origins);
-builder.Services.AddSingleton<Db>();
-builder.Services.AddSingleton<Audit>();
-builder.Services.AddSingleton<TokenValidator>();
-builder.Services.AddSingleton<Authenticator>();
-// Strict: an unknown key or kind in policy.json stops the worker here with the reason, rather than running on defaults.
-builder.Services.AddSingleton(Policy.Load(settings));
-builder.Services.AddSingleton<RateLimiter>();
-builder.Services.AddHttpClient<MsClient>();
-builder.Services.AddSingleton<PurviewContentGuard>();
-builder.Services.AddSingleton<BoardService>();
-builder.Services.AddSingleton<MemoryService>();
-builder.Services.AddSingleton<SystemPrincipal>();
-// Admin overrides within policy.json (db/migrations/015): the effective policy is read from PostgreSQL with a short cache.
-builder.Services.AddSingleton<PolicyStore>();
-// Built explicitly so every optional collaborator is required in production: the policy override store, agent
-// feedback for overturn tracking, the third-party connectors and the agent risk source (max_requester_risk).
-builder.Services.AddSingleton<Broker>(sp => new Broker(sp.GetRequiredService<Db>(), sp.GetRequiredService<Audit>(), sp.GetRequiredService<BoardService>(),
-    sp.GetRequiredService<MsClient>(), settings, sp.GetRequiredService<Policy>(), sp.GetRequiredService<SystemPrincipal>(), sp.GetRequiredService<RateLimiter>(),
-    sp.GetRequiredService<PolicyStore>(), sp.GetRequiredService<Blueboard.Api.Agents.AgentFeedback>(), sp.GetRequiredService<ConnectorHub>(),
-    sp.GetRequiredService<Blueboard.Api.Agents.IAgentRiskSource>()));
-// Okta, ServiceNow and Jira (all off unless configured). Each client calls only its configured origin through OutboundGuard.
-builder.Services.AddSingleton(sp => ConnectorHub.Create(sp.GetRequiredService<Db>(), sp.GetRequiredService<Audit>(), sp.GetRequiredService<BoardService>(),
-    sp.GetRequiredService<SystemPrincipal>(), settings, sp.GetRequiredService<Policy>(), sp.GetRequiredService<PlaybookRunner>(),
-    sp.GetRequiredService<RateLimiter>(), sp.GetRequiredService<ILoggerFactory>().CreateLogger("Blueboard.Connectors")));
-builder.Services.AddSingleton<Search>();
-builder.Services.AddSingleton<Reporting>();
-builder.Services.AddSingleton<Enrichment>();
-builder.Services.AddSingleton(Playbooks.Current = Playbooks.Load(settings.PlaybooksDir));
-builder.Services.AddHostedService<PlaybooksOnStart>();
-builder.Services.AddSingleton<PlaybookRunner>();
-builder.Services.AddSingleton<IncidentQueries>();
-builder.Services.AddSingleton<AttackViews>();
-builder.Services.AddSingleton<Ingest>();
-builder.Services.AddSingleton<WebhookService>(sp => new WebhookService(
-    sp.GetRequiredService<Db>(), sp.GetRequiredService<Audit>(), sp.GetRequiredService<BoardService>(),
-    sp.GetRequiredService<SystemPrincipal>(), settings, sp.GetRequiredService<ILogger<WebhookService>>(),
-    sp.GetRequiredService<RateLimiter>()));
-builder.Services.AddSingleton(sp => new Migrator(sp.GetRequiredService<Db>(), settings));
-// Outbound notifications and audit export: no redirects, short timeouts, no HttpClient request logging, and live
-// notification destinations are pinned through OutboundGuard's anti-DNS-rebinding handler. Only the ntfy URL's
-// single-label host (a Docker service name in NOTIFY_ALLOWED_HOSTS) may resolve to a private network address.
-static HttpMessageHandler NoRedirects() => new SocketsHttpHandler { AllowAutoRedirect = false, ConnectTimeout = TimeSpan.FromSeconds(10) };
-builder.Services.AddHttpClient<Notifier>()
-    .ConfigurePrimaryHttpMessageHandler(() => origins.Mocked ? NoRedirects() : OutboundGuard.Handler(host => Notifier.MayBePrivate(settings, host)))
-    .RemoveAllLoggers();
-builder.Services.AddHttpClient<AuditExporter>().ConfigurePrimaryHttpMessageHandler(NoRedirects).RemoveAllLoggers();
-builder.Services.AddHttpClient<GifService>().ConfigurePrimaryHttpMessageHandler(NoRedirects).RemoveAllLoggers();
-builder.Services.AddSingleton<Retention>();
-builder.Services.AddSingleton<AuditLog>();
-builder.Services.AddSingleton<Posture>();
-builder.Services.AddSingleton<Setup>();
-builder.Services.AddSingleton<Participants>();
-builder.Services.AddSingleton(settings.Ti);
-builder.Services.AddSingleton<IntelStore>();
-builder.Services.AddSingleton<IFetchCache, PgFetchCache>();
-builder.Services.AddSingleton(sp => new TiFetcher(sp.GetRequiredService<IFetchCache>(), settings.Ti));
-builder.Services.AddSingleton<MicrosoftIntel>();
-builder.Services.AddSingleton<IntelService>();
-builder.Services.AddSingleton<DetectionService>();
-builder.Services.AddSingleton<ExposureService>();
-builder.Services.AddHostedService<MigrateOnStart>();
-builder.Services.AddSingleton<Blueboard.Api.Http.Endpoint>();
-// Agent observability (WS3): usage and budgets, tool-call traces, feedback and overturns, risk. McpObserver is the one
-// hook around every MCP tool call (BoardTools.Call); IAgentRiskSource is the read-only risk API for other services.
-builder.Services.AddSingleton(new Blueboard.Api.Agents.PriceTable(settings));
-builder.Services.AddSingleton<Blueboard.Api.Agents.ObservabilitySettingsStore>();
-builder.Services.AddSingleton<Blueboard.Api.Agents.AgentBudgets>();
-builder.Services.AddSingleton<Blueboard.Api.Agents.AgentTrace>();
-builder.Services.AddSingleton<Blueboard.Api.Agents.AgentFeedback>();
-builder.Services.AddSingleton<Blueboard.Api.Agents.AgentRisk>();
-builder.Services.AddSingleton<Blueboard.Api.Agents.IAgentRiskSource>(sp => sp.GetRequiredService<Blueboard.Api.Agents.AgentRisk>());
-builder.Services.AddSingleton<Blueboard.Api.Agents.AgentReports>();
-builder.Services.AddSingleton<McpObserver>();
+// Every service (Broker, BoardTools collaborators, timers, connectors, observability) lives in ServiceRegistration.
+builder.Services.AddBlueboard(settings);
 
 var app = builder.Build();
 if (origins.Mocked)

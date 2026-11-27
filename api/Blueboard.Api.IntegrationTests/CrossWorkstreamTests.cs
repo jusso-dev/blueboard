@@ -83,4 +83,24 @@ public sealed class CrossWorkstreamTests(TestBoard t) : IClassFixture<TestBoard>
         Assert.Equal("pending_approval", held.Status);
         Assert.Contains(held.PolicyNotes, n => n.Contains("agent risk score is 80"));
     }
+
+    [DbFact]
+    public async Task New_tools_from_every_feature_are_traced_and_metered_by_the_observer()
+    {
+        var app = A1.Build(t, new Policy());
+        var tools = A1.Tools(app);
+        var handle = $"xws-{Guid.NewGuid():N}"[..20];
+        await Sql("insert into principals (handle, display_name, kind, roles) values (@h, @h, 'agent', @r)", ("h", handle), ("r", new[] { "poster", "hunter", "requester" }));
+        var agent = await t.As(handle);
+        // Timeline (incident views), Okta lookup (connectors: not configured here, still traced), back-test and
+        // exposure (detections: not wired in this helper, still traced). Each must reach the McpObserver hook.
+        await tools.GetIncidentTimeline(A1.Mcp("get_incident_timeline", handle, new() { ["incident"] = TestBoard.IncidentGraphId }));
+        await tools.GetIncidentGraph(A1.Mcp("get_incident_graph", handle, new() { ["incident"] = TestBoard.IncidentGraphId }));
+        await tools.LookupOktaUser(A1.Mcp("lookup_okta_user", handle, new() { ["user"] = "ana@contoso.com" }));
+        await tools.BacktestDetection(A1.Mcp("backtest_detection", handle, new() { ["query"] = "DeviceProcessEvents | take 10" }));
+        await tools.PrioritizeExposures(A1.Mcp("prioritize_exposures", handle));
+        foreach (var tool in new[] { "get_incident_timeline", "get_incident_graph", "lookup_okta_user", "backtest_detection", "prioritize_exposures" })
+            Assert.Equal(1, await t.ScalarAsync("select count(*) from agent_tool_calls where principal_id = @p and tool = @t", ("p", agent.Id), ("t", tool)));
+        Assert.Equal(5, await t.ScalarAsync("select coalesce(sum(calls), 0) from agent_metered_daily where principal_id = @p", ("p", agent.Id)));
+    }
 }
