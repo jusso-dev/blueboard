@@ -26,6 +26,9 @@ public sealed class ConnectorTests(TestBoard t) : IClassFixture<TestBoard>
     private sealed class FakeVendors : HttpMessageHandler
     {
         public int Writes;
+        /// <summary>Ana's Okta login: change it to simulate the login moving after the request.</summary>
+        public string Login = "ana.okta@corp.example";
+        public string Email = "ana@contoso.com";
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage req, CancellationToken ct)
         {
             var path = req.RequestUri!.AbsolutePath;
@@ -36,7 +39,7 @@ public sealed class ConnectorTests(TestBoard t) : IClassFixture<TestBoard>
                     """{"result":{"sys_id":"0123456789abcdef0123456789abcdef","number":"INC0010001"}}""",
                 _ when path.StartsWith("/api/now/table/incident", StringComparison.Ordinal) => """{"result":{}}""",
                 "/api/v1/users/ana%40contoso.com" or $"/api/v1/users/{OktaId}" =>
-                    $$$"""{"id":"{{{OktaId}}}","status":"ACTIVE","profile":{"login":"ana.okta@corp.example","email":"ana@contoso.com"}}""",
+                    $$$"""{"id":"{{{OktaId}}}","status":"ACTIVE","profile":{"login":"{{{Login}}}","email":"{{{Email}}}","secondEmail":"ceo@contoso.com"}}""",
                 _ when path.StartsWith($"/api/v1/users/{OktaId}/", StringComparison.Ordinal) => "[]",
                 _ => """{"errorSummary":"Not found"}""",
             };
@@ -45,7 +48,7 @@ public sealed class ConnectorTests(TestBoard t) : IClassFixture<TestBoard>
         }
     }
 
-    private (ConnectorHub Hub, Broker Broker, FakeVendors Fake) Build(Policy policy)
+    private (ConnectorHub Hub, Broker Broker, FakeVendors Fake) Build(Policy policy, bool execute = false)
     {
         var fake = new FakeVendors();
         var connectors = new ConnectorSettings
@@ -54,12 +57,12 @@ public sealed class ConnectorTests(TestBoard t) : IClassFixture<TestBoard>
             ServiceNow = new ServiceNowSettings { InstanceUrl = "http://sn.test", WebhookSecret = Secret },
             Mocked = true,
         };
-        var settings = t.Settings with { Connectors = connectors };
+        var settings = t.Settings with { Connectors = connectors, BrokerExecute = execute };
         var playbooks = new PlaybookRunner(t.Db, t.Board, t.System, t.Playbooks);
         var hub = new ConnectorHub(t.Db, t.Audit, t.Board, t.System, settings, policy, playbooks,
             new OktaClient(connectors.Okta, new HttpClient(fake), null, mocked: true),
             [new ServiceNowClient(connectors.ServiceNow, new HttpClient(fake), mocked: true)]);
-        var broker = new Broker(t.Db, t.Audit, t.Board, t.Ms, settings, policy, t.System, null, connectors: hub);
+        var broker = new Broker(t.Db, t.Audit, t.Board, t.Ms, settings, policy, t.System, new RateLimiter(t.Db, t.Audit, policy), connectors: hub);
         return (hub, broker, fake);
     }
 
@@ -174,5 +177,50 @@ public sealed class ConnectorTests(TestBoard t) : IClassFixture<TestBoard>
         Assert.Equal("succeeded", done.Status);
         Assert.True(done.Result!.Value.GetProperty("dry_run").GetBoolean());
         Assert.Equal(0, fake.Writes);
+    }
+    [DbFact]
+    public async Task Okta_second_email_is_never_stored_as_an_identity_link()
+    {
+        // Ana's secondEmail (user-editable in Okta) names the CEO, who is protected: the link must not make Ana protected.
+        var (hub, broker, _) = Build(new Policy { ProtectedUsers = ["ceo@contoso.com"] });
+        await hub.LookupOktaUserAsync(await t.As("analyst"), OktaId, Ct);
+        Assert.Equal(0, await t.ScalarAsync("select count(*) from identity_links where external_id = @id and second_email is not null", ("id", OktaId)));
+        var req = new ActionRequest("okta_clear_user_sessions", JsonSerializer.SerializeToElement(new { user = OktaId }),
+            "Token theft suspected for ana on ws-042; clear every Okta session.", TestBoard.IncidentGraphId);
+        Assert.Equal("pending_approval", (await broker.RequestAsync(await t.As("agent"), req, Ct)).Status);
+    }
+
+    [DbFact]
+    public async Task Okta_action_pins_the_user_id_and_refuses_if_the_login_moved()
+    {
+        var (_, broker, fake) = Build(new Policy(), execute: true);
+        // A requester can't choose the pin: whatever it sends is replaced by the id Okta returns.
+        var req = new ActionRequest("okta_suspend_user", JsonSerializer.SerializeToElement(new { user = "ana@contoso.com", okta_user_id = "00uattacker000000000" }),
+            "Okta session from an impossible-travel location; suspend while we investigate.", TestBoard.IncidentGraphId);
+        var a = await broker.RequestAsync(await t.As("agent"), req, Ct);
+        Assert.Equal(OktaId, a.Params.GetProperty("okta_user_id").GetString());
+
+        // Before approval the email moves to someone else: execution refuses rather than act on whoever has it now.
+        fake.Email = "someone.else@contoso.com";
+        var done = await broker.DecideAsync(await t.As("analyst"), a.Id, "approve", null, Ct);
+        Assert.Equal("failed", done.Status);
+        Assert.Contains("no longer ana@contoso.com", done.Error);
+        Assert.Equal(0, fake.Writes);
+    }
+
+    [DbFact]
+    public async Task Policy_simulate_does_not_write_identity_links_and_is_rate_limited_for_agents()
+    {
+        var (_, broker, _) = Build(new Policy());
+        await using (var c = t.Db.Command("delete from identity_links where external_id = @id").With("id", OktaId)) await c.ExecuteNonQueryAsync(Ct);
+        await using (var c = t.Db.Command("delete from rate_buckets")) await c.ExecuteNonQueryAsync(Ct);
+        var preview = new PreviewRequest("okta_suspend_user", JsonSerializer.SerializeToElement(new { user = OktaId }), TestBoard.IncidentGraphId);
+        var agent = await t.As("agent");
+        Assert.Equal("pending_approval", (await broker.AssessAsync(agent, preview, Ct)).Status);
+        Assert.Equal(0, await t.ScalarAsync("select count(*) from identity_links where external_id = @id", ("id", OktaId)));
+        // The agent's lookup bucket (30 a minute by default) runs out; a person's doesn't apply here.
+        var refused = await Assert.ThrowsAsync<BoardException>(async () => { for (var i = 0; i < 40; i++) await broker.AssessAsync(agent, preview, Ct); });
+        Assert.Equal(429, refused.Status);
+        Assert.Equal("pending_approval", (await broker.AssessAsync(await t.As("analyst"), preview, Ct)).Status);
     }
 }

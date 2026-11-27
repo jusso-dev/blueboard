@@ -60,6 +60,13 @@ public sealed record Policy
     [JsonIgnore] public AutomationPause? Pause { get; init; }
     /// <summary>The policy.json this effective policy was built from (the ceiling for overrides). Not a policy key.</summary>
     [JsonIgnore] public Policy? FileCeiling { get; init; }
+    /// <summary>
+    /// protected_users entries that are Entra object ids, resolved to their UPN through Graph (ProtectedUserResolver), so a
+    /// protected person listed by object id is matched on Okta kinds and outside the evidence too. Not a policy key.
+    /// </summary>
+    [JsonIgnore] public IReadOnlyDictionary<string, string> ResolvedProtectedUsers { get; init; } = new Dictionary<string, string>();
+    /// <summary>protected_users object ids the board could not resolve to a UPN just now. Not a policy key.</summary>
+    [JsonIgnore] public IReadOnlyList<string> UnresolvedProtectedUsers { get; init; } = [];
 
     public TimeSpan ExpiryFor(string kind) => TimeSpan.FromHours(ExpiryHoursByKind.TryGetValue(kind, out var h) ? h : ExpiryHours);
     public int ApprovalsFor(string kind) => RequireTwoApprovers.Contains(kind) ? 2 : 1;
@@ -255,7 +262,7 @@ public static class PolicyEngine
     public static IReadOnlyList<string> ConfirmNames(ActionDef def, JsonObject p, IncidentContext? incident, ActionFacts? actionFacts = null)
     {
         var targets = def.TargetsOf(p);
-        var (users, devices, apps) = Aliases(incident is null ? null : Entities.Extract(incident.Data), incident?.IdentityLinks, actionFacts);
+        var (users, devices, apps, _) = Aliases(incident is null ? null : Entities.Extract(incident.Data), incident?.IdentityLinks, actionFacts);
         var names = new List<string>();
         foreach (var d in targets.Devices)
         {
@@ -284,18 +291,26 @@ public static class PolicyEngine
         if (actionFacts?.Reject is { } refused) return new(Outcome.Reject, [refused]);
 
         var targets = def.TargetsOf(p);
-        var pu = Lower(policy.ProtectedUsers);
+        // A protected person listed by Entra object id also matches by the UPN the board resolved for it.
+        var pu = Lower(policy.ProtectedUsers.Concat(policy.ResolvedProtectedUsers.Values));
         var pd = Lower(policy.ProtectedDevices);
         var pa = Lower(policy.ProtectedApps);
         var pi = Lower(policy.ProtectedIndicators);
         var entities = incident is null ? null : Entities.Extract(incident.Data);
-        var (userAliases, deviceAliases, appAliases) = Aliases(entities, incident?.IdentityLinks, actionFacts);
+        var (userAliases, deviceAliases, appAliases, conflicts) = Aliases(entities, incident?.IdentityLinks, actionFacts, policy);
 
         foreach (var u in targets.Users)
         {
-            if (NamesFor(userAliases, u).Any(pu.Contains)) return new(Outcome.Reject, [$"{u} is a protected user"]);
+            var names = NamesFor(userAliases, u).ToHashSet();
+            if (names.Any(pu.Contains)) return new(Outcome.Reject, [$"{u} is a protected user"]);
             if (pu.Count > 0 && !userAliases.ContainsKey(u.ToLowerInvariant()) && !u.Contains('@'))
                 notes.Add($"{u} could not be matched to a UPN, so the protected-user list was checked by object id only");
+            // An outside identity that would join two different Entra people is never merged silently (it could make
+            // anyone "protected", or lend someone else's evidence): the approver sees it and decides.
+            foreach (var c in conflicts.Where(c => c.Names.Overlaps(names)))
+                notes.Add($"identity link conflict: Okta user {c.OktaId} is linked to {string.Join(" and ", c.Entra)}, which are different Entra users, so the link was not used; check who this is before approving");
+            foreach (var oid in policy.UnresolvedProtectedUsers.Where(o => !names.Contains(o.ToLowerInvariant())))
+                notes.Add($"protected user {oid} (an Entra object id) could not be resolved to a UPN just now, so {u} was not checked against it by name");
         }
         // Okta kinds (cross-IdP): the Okta identity links that resolve an Okta id to its login and emails (and so to a
         // protected UPN) are loaded with the incident, so these kinds must be linked to one (fail closed).
@@ -432,8 +447,11 @@ public static class PolicyEngine
     /// object id ↔ app id ↔ display name. Outside-IdP identities (Okta id ↔ login ↔ emails) are merged into the user
     /// groups transitively, so an Okta user whose login or email equals an Entra UPN shares that UPN's object id too.
     /// </summary>
-    private static (Dictionary<string, HashSet<string>> Users, Dictionary<string, HashSet<string>> Devices, Dictionary<string, HashSet<string>> Apps) Aliases(
-        IncidentEntities? e, IReadOnlyList<IReadOnlyList<string>>? identityLinks = null, ActionFacts? facts = null)
+    /// <summary>An outside identity that would have joined two different Entra users: not merged, shown to the approver.</summary>
+    private sealed record LinkConflict(string OktaId, IReadOnlyList<string> Entra, HashSet<string> Names);
+
+    private static (Dictionary<string, HashSet<string>> Users, Dictionary<string, HashSet<string>> Devices, Dictionary<string, HashSet<string>> Apps, List<LinkConflict> Conflicts) Aliases(
+        IncidentEntities? e, IReadOnlyList<IReadOnlyList<string>>? identityLinks = null, ActionFacts? facts = null, Policy? policy = null)
     {
         var users = new Dictionary<string, HashSet<string>>();
         var devices = new Dictionary<string, HashSet<string>>();
@@ -451,11 +469,11 @@ public static class PolicyEngine
         }
         // Outside identities merge with every group a name already belongs to, so links chain
         // (Okta id ↔ email = UPN ↔ Entra oid) and every member sees the whole group.
-        static void Merge(Dictionary<string, HashSet<string>> map, IEnumerable<string?> names)
+        static HashSet<string> Merged(Dictionary<string, HashSet<string>> map, IEnumerable<string?> names)
         {
             var merged = names.OfType<string>().Where(n => n.Length > 0).Select(n => n.ToLowerInvariant()).ToHashSet();
             foreach (var n in merged.ToList()) if (map.TryGetValue(n, out var existing)) merged.UnionWith(existing);
-            foreach (var n in merged) map[n] = merged;
+            return merged;
         }
         if (e is not null)
         {
@@ -468,13 +486,45 @@ public static class PolicyEngine
             foreach (var u in e.Users) Link(users, [u.AadUserId, u.Upn]);
             foreach (var a in e.CloudApps) Link(apps, [a.ObjectId, a.AppId, a.DisplayName]);
         }
-        foreach (var names in identityLinks ?? []) Merge(users, names);
-        return (users, devices, apps);
+        // Distinct Entra people the board knows of: each evidence user (object id ↔ UPN), and "protected" as one class
+        // (every protected_users name, the UPNs resolved for protected object ids, and any evidence user carrying one).
+        // An outside link may tie an Okta user to one of them, never two: that would make an ordinary user "protected"
+        // through someone else's name (a containment DoS), or lend them another person's evidence. Such a link is
+        // recorded as a conflict and not merged. Joining protected names to each other is harmless (protected either way).
+        const int Protected = 0;
+        var protectedNames = (policy?.ProtectedUsers ?? []).Concat(policy?.ResolvedProtectedUsers.Keys ?? []).Concat(policy?.ResolvedProtectedUsers.Values ?? [])
+            .Select(n => n.Trim().ToLowerInvariant().TrimEnd('.')).ToHashSet();
+        var anchors = new Dictionary<string, int>();
+        foreach (var n in protectedNames) anchors[n] = Protected;
+        foreach (var u in e?.Users ?? [])
+        {
+            var names = new[] { u.AadUserId, u.Upn }.OfType<string>().Where(n => n.Length > 0).Select(n => n.ToLowerInvariant()).ToList();
+            var id = names.Any(protectedNames.Contains) ? Protected
+                : names.Select(n => anchors.TryGetValue(n, out var a) ? a : -1).FirstOrDefault(a => a >= 0, anchors.Values.DefaultIfEmpty(0).Max() + 1);
+            foreach (var n in names) anchors[n] = id;
+        }
+
+        var conflicts = new List<LinkConflict>();
+        foreach (var link in identityLinks ?? [])
+        {
+            var merged = Merged(users, link);
+            var touched = merged.Where(anchors.ContainsKey).GroupBy(n => anchors[n]).ToList();
+            if (touched.Count > 1)
+            {
+                conflicts.Add(new LinkConflict(link[0],
+                    touched.Select(g => g.Key == Protected ? "a protected user" : g.OrderByDescending(n => n.Contains('@')).ThenBy(n => n, StringComparer.Ordinal).First())
+                        .Order(StringComparer.Ordinal).ToList(),
+                    link.Where(n => n.Length > 0).Select(n => n.ToLowerInvariant()).ToHashSet()));
+                continue;
+            }
+            foreach (var n in merged) users[n] = merged;
+        }
+        return (users, devices, apps, conflicts);
     }
 
     /// <summary>The user aliases (lower case) the policy check would use for <paramref name="target"/>. For tests and the preview.</summary>
-    internal static IReadOnlyCollection<string> UserAliases(string target, IncidentContext? incident) =>
-        NamesFor(Aliases(incident is null ? null : Entities.Extract(incident.Data), incident?.IdentityLinks).Users, target).ToHashSet();
+    internal static IReadOnlyCollection<string> UserAliases(string target, IncidentContext? incident, Policy? policy = null) =>
+        NamesFor(Aliases(incident is null ? null : Entities.Extract(incident.Data), incident?.IdentityLinks, null, policy).Users, target).ToHashSet();
 
     private static IEnumerable<string> NamesFor(Dictionary<string, HashSet<string>> map, string t) =>
         map.TryGetValue(t.ToLowerInvariant(), out var names) ? names : [t.ToLowerInvariant()];

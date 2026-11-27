@@ -23,7 +23,8 @@ public sealed record BrokerPause(bool Paused, string? By = null, DateTimeOffset?
 /// Destructive actions never run without a decision from a human approver who isn't the requester.
 /// </summary>
 public sealed class Broker(Db db, Audit audit, BoardService board, MsClient ms, Settings settings, Policy policy, SystemPrincipal system, RateLimiter? limiter = null,
-    PolicyStore? store = null, Agents.AgentFeedback? feedback = null, Connectors.ConnectorHub? connectors = null, Agents.IAgentRiskSource? risk = null)
+    PolicyStore? store = null, Agents.AgentFeedback? feedback = null, Connectors.ConnectorHub? connectors = null, Agents.IAgentRiskSource? risk = null,
+    ProtectedUserResolver? protectedUsers = null)
 {
     private readonly KvState _kv = new(db);
 
@@ -31,7 +32,12 @@ public sealed class Broker(Db db, Audit audit, BoardService board, MsClient ms, 
     /// The policy in force: policy.json ∩ admin overrides (read from the database with a short cache, so every instance
     /// agrees within seconds), or policy.json alone when no override store is wired (tests, tools).
     /// </summary>
-    private async Task<Policy> PolicyAsync(CancellationToken ct) => store is null ? policy : await store.CurrentAsync(ct);
+    /// <remarks>Protected users listed by Entra object id are resolved to UPNs here (cached), so every check sees them.</remarks>
+    private async Task<Policy> PolicyAsync(CancellationToken ct)
+    {
+        var p = store is null ? policy : await store.CurrentAsync(ct);
+        return protectedUsers is null ? p : await protectedUsers.ApplyAsync(p, ct);
+    }
     private const string Select = """
         select a.id, a.kind, a.params::text as params, a.incident_id, i.graph_id as incident_graph_id, a.request_message_id,
                rp.handle as requested_by, a.justification, a.status, a.requires_approval, a.policy_notes,
@@ -143,19 +149,28 @@ public sealed class Broker(Db db, Audit audit, BoardService board, MsClient ms, 
     }
 
     /// <summary>Validate params and resolve the linked incident: the shared first half of request, preview and simulate.</summary>
+    /// <param name="readOnly">Preview and simulate: look the Okta target up without storing its identity link.</param>
     private async Task<(ActionDef Def, JsonObject Params, Guid? IncidentId, IncidentContext? Incident, ActionFacts? Facts)> PrepareAsync(
-        string kind, JsonElement rawParams, string? incidentRef, Guid? parentId, string requester, CancellationToken ct)
+        string kind, JsonElement rawParams, string? incidentRef, Guid? parentId, string requester, CancellationToken ct, bool readOnly = false)
     {
         var def = Catalog.Get(kind);
         var prms = def.Validate(rawParams);
+        // okta_user_id is the board's pin, never the requester's: drop anything sent, PrepareTargetAsync sets it.
+        prms.Remove("okta_user_id");
+        IReadOnlyList<string>? previewLink = null;
         if (def.RunConnector is not null)
         {
             if (connectors is null) throw new BoardException($"{kind} needs a connector that is not configured on this board", 409);
-            await connectors.PrepareTargetAsync(def, prms, ct); // refreshes the Okta identity link before policy runs
+            // A request refreshes the stored Okta identity link before policy runs; a preview only reads it.
+            previewLink = readOnly ? await connectors.PreviewTargetAsync(def, prms, ct) : null;
+            if (!readOnly) await connectors.PrepareTargetAsync(def, prms, ct);
         }
         var incidentId = await board.ResolveIncidentAsync(incidentRef, ct);
         if (incidentId is null && parentId is { } parent) incidentId = (await board.GetAsync(parent, ct))?.IncidentId;
-        return (def, prms, incidentId, incidentId is { } iid ? await LoadIncidentAsync(iid, requester, ct) : null, await ActionFactsAsync(def, prms, DateTimeOffset.UtcNow, ct));
+        var incident = incidentId is { } iid ? await LoadIncidentAsync(iid, requester, ct) : null;
+        if (previewLink is not null && incident is not null)
+            incident = incident with { IdentityLinks = [.. (incident.IdentityLinks ?? []).Where(l => !l[0].Equals(previewLink[0], StringComparison.Ordinal)), previewLink] };
+        return (def, prms, incidentId, incident, await ActionFactsAsync(def, prms, DateTimeOffset.UtcNow, ct));
     }
 
     /// <summary>
@@ -165,7 +180,9 @@ public sealed class Broker(Db db, Audit audit, BoardService board, MsClient ms, 
     /// </summary>
     public async Task<Assessment> AssessAsync(Principal p, PreviewRequest req, CancellationToken ct = default)
     {
-        var (def, prms, incidentId, incident, actionFacts) = await PrepareAsync(req.Kind, req.Params, req.Incident, null, p.Handle, ct);
+        // Agents can call this in a loop and it reaches Okta and Graph: it spends from their lookup bucket.
+        if (limiter is not null && !p.IsHuman) await limiter.TakeAsync(p, "lookup", ct);
+        var (def, prms, incidentId, incident, actionFacts) = await PrepareAsync(req.Kind, req.Params, req.Incident, null, p.Handle, ct, readOnly: true);
         var policy = await PolicyAsync(ct);
         var automationFacts = await AutomationFactsAsync(def.Kind, incidentId, p.Handle, null, policy, ct);
         return PolicyEngine.Assess(def, prms, incident, policy, automationFacts, actionFacts: actionFacts);

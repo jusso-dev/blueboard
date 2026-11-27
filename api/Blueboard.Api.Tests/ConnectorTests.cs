@@ -58,11 +58,110 @@ public class ConnectorTests
     }
 
     [Fact]
-    public void Okta_secondary_email_counts_as_an_alias()
+    public void Okta_primary_email_counts_as_an_alias()
     {
         var policy = new Policy { ProtectedUsers = ["ceo@contoso.com"] };
-        var inc = WithLinks([OktaId, "ceo.login@corp.example", "ceo.login@corp.example", "ceo@contoso.com"]);
+        var inc = WithLinks([OktaId, "ceo.login@corp.example", "ceo@contoso.com"]);
         Assert.Equal(Outcome.Reject, Eval("okta_reset_factors", "ceo.login@corp.example", inc, policy).Outcome);
+    }
+
+    [Fact]
+    public void Okta_link_joining_an_evidence_user_to_a_protected_user_is_a_conflict_not_a_merge()
+    {
+        // An Okta user whose login is J.Doe's UPN and whose email is the CEO's: never silently protected (containment
+        // DoS), never silently rejected; the approver is told, and automation can't run it.
+        var policy = new Policy { ProtectedUsers = ["ceo@contoso.com"] };
+        var inc = WithLinks([OktaId, "j.doe@contoso.com", "ceo@contoso.com"]);
+        var d = Eval("okta_suspend_user", OktaId, inc, policy);
+        Assert.Equal(Outcome.NeedsApproval, d.Outcome);
+        Assert.Contains(d.Notes, n => n.StartsWith("identity link conflict") && n.Contains("a protected user") && n.Contains("j.doe@contoso.com"));
+        // The Entra user the link touched sees the conflict too, and isn't made protected by it.
+        var entra = PolicyEngine.Evaluate(Catalog.Get("disable_user"), Catalog.Get("disable_user").Validate(JsonSerializer.SerializeToElement(new { user = "j.doe@contoso.com" })), inc, policy);
+        Assert.Equal(Outcome.NeedsApproval, entra.Outcome);
+        Assert.Contains(entra.Notes, n => n.StartsWith("identity link conflict"));
+        Assert.DoesNotContain("ceo@contoso.com", PolicyEngine.UserAliases("j.doe@contoso.com", inc, policy));
+    }
+
+    [Fact]
+    public void Okta_link_joining_two_entra_users_is_a_conflict()
+    {
+        var two = new IncidentContext("42", JsonDocument.Parse("""
+            { "alerts": [ { "evidence": [
+              { "@odata.type": "#microsoft.graph.security.userEvidence", "userAccount": { "userPrincipalName": "a@contoso.com", "azureAdUserId": "11111111-1111-1111-1111-111111111111" } },
+              { "@odata.type": "#microsoft.graph.security.userEvidence", "userAccount": { "userPrincipalName": "b@contoso.com", "azureAdUserId": "22222222-2222-2222-2222-222222222222" } }
+            ] } ] }
+            """).RootElement, IdentityLinks: [[OktaId, "a@contoso.com", "b@contoso.com"]]);
+        var d = Eval("okta_suspend_user", OktaId, two, new Policy { AutoApprove = [] });
+        Assert.Contains(d.Notes, n => n.Contains("a@contoso.com and b@contoso.com, which are different Entra users"));
+        Assert.DoesNotContain("b@contoso.com", PolicyEngine.UserAliases("a@contoso.com", two));
+        // A link to one Entra user only is an ordinary alias.
+        var one = two with { IdentityLinks = [[OktaId, "okta.a@corp.example", "a@contoso.com"]] };
+        Assert.DoesNotContain(Eval("okta_suspend_user", OktaId, one, new Policy()).Notes, n => n.Contains("identity link conflict"));
+        Assert.Contains("11111111-1111-1111-1111-111111111111", PolicyEngine.UserAliases(OktaId, one));
+    }
+
+    [Fact]
+    public void Protected_object_id_resolved_through_graph_protects_an_okta_user_outside_the_evidence()
+    {
+        var noEvidence = new IncidentContext("42", JsonDocument.Parse("""{ "alerts": [] }""").RootElement, IdentityLinks: [[OktaId, "boss@contoso.com", "boss@contoso.com"]]);
+        const string Oid = "33333333-3333-3333-3333-333333333333";
+        var unresolvedPolicy = new Policy { ProtectedUsers = [Oid], UnresolvedProtectedUsers = [Oid] };
+        var unknown = Eval("okta_suspend_user", OktaId, noEvidence, unresolvedPolicy);
+        Assert.Equal(Outcome.NeedsApproval, unknown.Outcome);
+        Assert.Contains(unknown.Notes, n => n.Contains($"protected user {Oid}") && n.Contains("could not be resolved"));
+        var resolved = new Policy { ProtectedUsers = [Oid], ResolvedProtectedUsers = new Dictionary<string, string> { [Oid] = "boss@contoso.com" } };
+        Assert.Equal(Outcome.Reject, Eval("okta_suspend_user", OktaId, noEvidence, resolved).Outcome);
+    }
+
+    /// <summary>Graph answered in process: one user resolves, anything else is a 404, and calls are counted.</summary>
+    private sealed class FakeGraph : HttpMessageHandler
+    {
+        public int Calls;
+        public bool Down;
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage req, CancellationToken ct)
+        {
+            Interlocked.Increment(ref Calls);
+            if (Down) return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.BadRequest));
+            var ok = req.RequestUri!.AbsolutePath == "/v1.0/users/33333333-3333-3333-3333-333333333333";
+            return Task.FromResult(new HttpResponseMessage(ok ? System.Net.HttpStatusCode.OK : System.Net.HttpStatusCode.NotFound)
+            {
+                Content = new StringContent(ok ? """{"id":"33333333-3333-3333-3333-333333333333","userPrincipalName":"Boss@Contoso.com"}""" : """{"error":{"message":"not found"}}""",
+                    System.Text.Encoding.UTF8, "application/json"),
+            });
+        }
+    }
+
+    [Fact]
+    public async Task Protected_user_resolver_caches_and_tolerates_failures()
+    {
+        var graph = new FakeGraph();
+        var now = DateTimeOffset.UtcNow;
+        var ms = new Graph.MsClient(new HttpClient(graph), null, new Graph.MsOrigins("http://graph.test", "http://defender.test", true));
+        var r = new ProtectedUserResolver(ms, () => now);
+        var list = new[] { "33333333-3333-3333-3333-333333333333", "44444444-4444-4444-4444-444444444444", "ceo@contoso.com" };
+        var (ok, missing) = await r.ResolveAsync(list, TestContext.Current.CancellationToken);
+        Assert.Equal("boss@contoso.com", ok["33333333-3333-3333-3333-333333333333"]);
+        Assert.Equal(["44444444-4444-4444-4444-444444444444"], missing);
+        Assert.Equal(2, graph.Calls); // UPNs on the list are never looked up
+
+        // Cached: no new calls within the TTL, even while Graph is down.
+        graph.Down = true;
+        await r.ResolveAsync(list, TestContext.Current.CancellationToken);
+        Assert.Equal(2, graph.Calls);
+        // After the TTL a failure is reported as unresolved, never as "not protected".
+        now += ProtectedUserResolver.Ttl + TimeSpan.FromSeconds(1);
+        var (_, after) = await r.ResolveAsync(list, TestContext.Current.CancellationToken);
+        Assert.Contains("33333333-3333-3333-3333-333333333333", after);
+        var applied = await r.ApplyAsync(new Policy { ProtectedUsers = list }, TestContext.Current.CancellationToken);
+        Assert.Contains("33333333-3333-3333-3333-333333333333", applied.UnresolvedProtectedUsers);
+    }
+
+    [Fact]
+    public void Okta_pinned_id_must_be_an_okta_id()
+    {
+        var def = Catalog.Get("okta_suspend_user");
+        Assert.Equal(OktaId, def.Validate(JsonSerializer.SerializeToElement(new { user = "j.doe@contoso.com", okta_user_id = OktaId }))["okta_user_id"]!.GetValue<string>());
+        Assert.Throws<BoardException>(() => def.Validate(JsonSerializer.SerializeToElement(new { user = "j.doe@contoso.com", okta_user_id = "../x" })));
     }
 
     [Fact]

@@ -45,11 +45,13 @@ public static class ServiceRegistration
         services.AddSingleton<Broker>(sp => new Broker(sp.GetRequiredService<Db>(), sp.GetRequiredService<Audit>(), sp.GetRequiredService<BoardService>(),
             sp.GetRequiredService<MsClient>(), settings, sp.GetRequiredService<Policy>(), sp.GetRequiredService<SystemPrincipal>(), sp.GetRequiredService<RateLimiter>(),
             sp.GetRequiredService<PolicyStore>(), sp.GetRequiredService<Blueboard.Api.Agents.AgentFeedback>(), sp.GetRequiredService<ConnectorHub>(),
-            sp.GetRequiredService<Blueboard.Api.Agents.IAgentRiskSource>()));
+            sp.GetRequiredService<Blueboard.Api.Agents.IAgentRiskSource>(), sp.GetRequiredService<ProtectedUserResolver>()));
+        // protected_users listed by Entra object id, resolved to UPNs through Graph with a short cache (Okta kinds, TM-55).
+        services.AddSingleton<ProtectedUserResolver>();
         // Okta, ServiceNow and Jira (all off unless configured). Each client calls only its configured origin through OutboundGuard.
         services.AddSingleton(sp => ConnectorHub.Create(sp.GetRequiredService<Db>(), sp.GetRequiredService<Audit>(), sp.GetRequiredService<BoardService>(),
             sp.GetRequiredService<SystemPrincipal>(), settings, sp.GetRequiredService<Policy>(), sp.GetRequiredService<PlaybookRunner>(),
-            sp.GetRequiredService<RateLimiter>(), sp.GetRequiredService<ILoggerFactory>().CreateLogger("Blueboard.Connectors")));
+            sp.GetRequiredService<RateLimiter>(), sp.GetRequiredService<ILoggerFactory>().CreateLogger("Blueboard.Connectors"), sp.GetRequiredService<ProtectedUserResolver>()));
         services.AddSingleton<Search>();
         services.AddSingleton<Reporting>();
         services.AddSingleton<Enrichment>();

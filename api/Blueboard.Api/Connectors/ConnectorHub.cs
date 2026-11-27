@@ -39,13 +39,15 @@ public sealed partial class ConnectorHub
     private readonly ILogger _log;
     private readonly KvState _kv;
     private readonly string? _webUrl;
+    private readonly ProtectedUserResolver? _protected;
 
     public OktaClient? Okta { get; }
     public IReadOnlyDictionary<string, ITicketClient> Tickets { get; }
 
     public ConnectorHub(Db db, Audit audit, BoardService board, SystemPrincipal system, Settings settings, Policy policy, PlaybookRunner? playbooks,
-        OktaClient? okta, IEnumerable<ITicketClient> tickets, RateLimiter? limiter = null, ILogger? log = null)
+        OktaClient? okta, IEnumerable<ITicketClient> tickets, RateLimiter? limiter = null, ILogger? log = null, ProtectedUserResolver? protectedUsers = null)
     {
+        _protected = protectedUsers;
         (_db, _audit, _board, _system, _s, _policy, _playbooks, _limiter) = (db, audit, board, system, settings.Connectors, policy, playbooks, limiter);
         Okta = okta;
         Tickets = tickets.ToDictionary(t => t.System);
@@ -56,7 +58,7 @@ public sealed partial class ConnectorHub
 
     /// <summary>Production wiring: clients for every configured connector, each with its own guarded HttpClient.</summary>
     public static ConnectorHub Create(Db db, Audit audit, BoardService board, SystemPrincipal system, Settings settings, Policy policy,
-        PlaybookRunner playbooks, RateLimiter limiter, ILogger log)
+        PlaybookRunner playbooks, RateLimiter limiter, ILogger log, ProtectedUserResolver? protectedUsers = null)
     {
         var c = settings.Connectors;
         OktaClient? okta = null;
@@ -68,7 +70,7 @@ public sealed partial class ConnectorHub
         var tickets = new List<ITicketClient>();
         if (c.ServiceNow.Enabled) tickets.Add(new ServiceNowClient(c.ServiceNow, ConnectorHttp.NewClient(c.Mocked), c.Mocked));
         if (c.Jira.Enabled) tickets.Add(new JiraClient(c.Jira, ConnectorHttp.NewClient(c.Mocked), c.Mocked));
-        return new ConnectorHub(db, audit, board, system, settings, policy, playbooks, okta, tickets, limiter, log);
+        return new ConnectorHub(db, audit, board, system, settings, policy, playbooks, okta, tickets, limiter, log, protectedUsers);
     }
 
     public bool AnyEnabled => Okta is not null || Tickets.Count > 0;
@@ -141,33 +143,44 @@ public sealed partial class ConnectorHub
 
     // ── Okta: identity links for policy ──────────────────────────────────────────────────────────────
 
+    /// <summary>
+    /// Stores the names policy may link: the Okta id, login and primary email only. secondEmail (and any other profile
+    /// field a user can edit in Okta) is never a link: a user could otherwise name a protected person, or someone else,
+    /// as their own alias. It stays visible in lookups as untrusted data.
+    /// </summary>
     private async Task SaveLinkAsync(OktaClient.UserContext u, CancellationToken ct)
     {
         await using var cmd = _db.Command("""
             insert into identity_links (provider, external_id, login, email, second_email, display_name, status, context, refreshed_at)
-            values ('okta', @id, @l, @e, @se, @d, @s, @c, now())
-            on conflict (provider, external_id) do update set login = excluded.login, email = excluded.email, second_email = excluded.second_email,
+            values ('okta', @id, @l, @e, null, @d, @s, @c, now())
+            on conflict (provider, external_id) do update set login = excluded.login, email = excluded.email, second_email = null,
               display_name = excluded.display_name, status = excluded.status, context = excluded.context, refreshed_at = now()
-            """).With("id", u.Id).With("l", Clip(u.Login, 320)).With("e", Clip(u.Email, 320)).With("se", Clip(u.SecondEmail, 320))
+            """).With("id", u.Id).With("l", Clip(u.Login, 320)).With("e", Clip(u.Email, 320))
             .With("d", Clip(u.DisplayName, 200)).With("s", Clip(u.Status, 40))
             .WithJson("c", new { last_login = u.LastLogin, factors = u.Factors, groups = u.Groups.Take(50), admin_roles = u.AdminRoles, admin_roles_checked = u.AdminRolesChecked });
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
-    /// <summary>Every name of each stored Okta identity that shares a name with <paramref name="names"/> (case-insensitive).</summary>
+    /// <summary>Most links read for one policy check: far above any real incident, a guard against a pathological table.</summary>
+    public const int MaxLinks = 5000;
+
+    /// <summary>
+    /// Every linkable name (Okta id, login, primary email) of each stored Okta identity that shares one of them with
+    /// <paramref name="names"/> (case-insensitive), in a stable order (by Okta id) so every check sees the same links.
+    /// </summary>
     public async Task<IReadOnlyList<IReadOnlyList<string>>> LinksForAsync(IEnumerable<string> names, CancellationToken ct = default)
     {
         var lower = names.Where(n => !string.IsNullOrWhiteSpace(n)).Select(n => n.Trim().ToLowerInvariant()).Distinct().ToArray();
         var links = new List<IReadOnlyList<string>>();
         if (lower.Length == 0) return links;
         await using var cmd = _db.Command("""
-            select external_id, login, email, second_email from identity_links
-            where provider = 'okta' and (lower(external_id) = any(@n) or lower(login) = any(@n) or lower(email) = any(@n) or lower(second_email) = any(@n))
-            limit 200
-            """).With("n", lower);
+            select external_id, login, email from identity_links
+            where provider = 'okta' and (lower(external_id) = any(@n) or lower(login) = any(@n) or lower(email) = any(@n))
+            order by external_id limit @max
+            """).With("n", lower).With("max", MaxLinks);
         await using var r = await cmd.ExecuteReaderAsync(ct);
         while (await r.ReadAsync(ct))
-            links.Add(Enumerable.Range(0, 4).Where(i => !r.IsDBNull(i)).Select(r.GetString).ToList());
+            links.Add([r.GetString(0), r.IsDBNull(1) ? "" : r.GetString(1), r.IsDBNull(2) ? "" : r.GetString(2)]);
         return links;
     }
 
@@ -176,17 +189,39 @@ public sealed partial class ConnectorHub
     /// adds these to IncidentContext, so an Okta id whose login or email is a protected UPN resolves to it in PolicyEngine.
     /// Request and preview refresh the target's own link first (PrepareTargetAsync), so it is always current at decision time.
     /// </summary>
-    public Task<IReadOnlyList<IReadOnlyList<string>>> LinksForIncidentAsync(IncidentContext incident, CancellationToken ct = default)
+    public async Task<IReadOnlyList<IReadOnlyList<string>>> LinksForIncidentAsync(IncidentContext incident, CancellationToken ct = default)
     {
-        if (Okta is null) return Task.FromResult<IReadOnlyList<IReadOnlyList<string>>>([]);
+        if (Okta is null) return [];
         var e = Entities.Extract(incident.Data);
-        return LinksForAsync(e.Users.SelectMany(u => new[] { u.Upn, u.AadUserId }).OfType<string>().Concat(_policy.ProtectedUsers), ct);
+        var policy = await ProtectedPolicyAsync(ct);
+        return await LinksForAsync(e.Users.SelectMany(u => new[] { u.Upn, u.AadUserId }).OfType<string>()
+            .Concat(policy.ProtectedUsers).Concat(policy.ResolvedProtectedUsers.Values), ct);
     }
+
+    /// <summary>policy.json with its protected object ids resolved to UPNs (when a resolver is wired).</summary>
+    private async Task<Policy> ProtectedPolicyAsync(CancellationToken ct) => _protected is null ? _policy : await _protected.ApplyAsync(_policy, ct);
 
     /// <summary>
     /// Request path for Okta kinds: the connector must be configured, and the target is looked up in Okta so its link
     /// (id, login, emails) is current before policy runs. Other kinds: nothing to do.
     /// </summary>
+    /// <summary>
+    /// Preview and simulate: the target's current linkable names (id, login, primary email) read from Okta without
+    /// storing anything, or null for a kind that isn't Okta's. An unknown user is still a 404.
+    /// </summary>
+    public async Task<IReadOnlyList<string>?> PreviewTargetAsync(ActionDef def, JsonObject prms, CancellationToken ct = default)
+    {
+        if (!Catalog.OktaKinds.Contains(def.Kind)) return null;
+        var okta = RequireOkta();
+        var user = prms["user"]!.GetValue<string>();
+        var ctx = await Mark("okta", () => okta.UserContextAsync(user, ct), ct) ?? throw new BoardException($"Okta user {user} not found", 404);
+        return [ctx.Id, ctx.Login ?? "", ctx.Email ?? ""];
+    }
+
+    /// <remarks>
+    /// The Okta id found now is pinned in the params (<c>okta_user_id</c>, replacing anything the requester sent), so
+    /// approval and execution act on this exact user even if the login is later moved to someone else.
+    /// </remarks>
     public async Task PrepareTargetAsync(ActionDef def, JsonObject prms, CancellationToken ct = default)
     {
         if (!Catalog.OktaKinds.Contains(def.Kind)) return;
@@ -195,19 +230,27 @@ public sealed partial class ConnectorHub
         var ctx = await Mark("okta", () => okta.UserContextAsync(user, ct), ct)
                   ?? throw new BoardException($"Okta user {user} not found", 404);
         await SaveLinkAsync(ctx, ct);
+        prms["okta_user_id"] = ctx.Id;
     }
 
     /// <summary>
     /// The broker's Okta write, after policy and approval. Re-resolves the user in Okta, refuses if any current name of that
     /// user is on protected_users (defence in depth: Okta data may have changed since the request), then calls Okta by id.
     /// </summary>
-    public async Task<object?> OktaWriteAsync(string user, string op, CancellationToken ct)
+    /// <param name="pinnedId">The Okta id resolved at request time (params okta_user_id). The write acts on that id only, and
+    /// only while <paramref name="user"/> is still one of its names; otherwise it fails and says so.</param>
+    public async Task<object?> OktaWriteAsync(string user, string? pinnedId, string op, CancellationToken ct)
     {
         var okta = RequireOkta();
-        var ctx = await Mark("okta", () => okta.UserContextAsync(user, ct), ct) ?? throw new BoardException($"Okta user {user} not found", 404);
+        var ctx = await Mark("okta", () => okta.UserContextAsync(pinnedId ?? user, ct), ct) ?? throw new BoardException($"Okta user {pinnedId ?? user} not found", 404);
         await SaveLinkAsync(ctx, ct);
-        var names = new[] { ctx.Id, ctx.Login, ctx.Email, ctx.SecondEmail }.OfType<string>().Select(n => n.ToLowerInvariant());
-        var protectedUsers = _policy.ProtectedUsers.Select(x => x.ToLowerInvariant().TrimEnd('.')).ToHashSet();
+        if (pinnedId is not null && !string.Equals(ctx.Id, pinnedId, StringComparison.Ordinal))
+            throw new BoardException($"refused at execution: Okta returned user {ctx.Id}, not {pinnedId} pinned at request time", 409);
+        if (pinnedId is not null && !new[] { ctx.Id, ctx.Login, ctx.Email }.OfType<string>().Contains(user, StringComparer.OrdinalIgnoreCase))
+            throw new BoardException($"refused at execution: Okta user {pinnedId} is no longer {user} (its login or email changed since the request); request it again", 409);
+        var names = new[] { ctx.Id, ctx.Login, ctx.Email }.OfType<string>().Select(n => n.ToLowerInvariant());
+        var policy = await ProtectedPolicyAsync(ct);
+        var protectedUsers = policy.ProtectedUsers.Concat(policy.ResolvedProtectedUsers.Values).Select(x => x.ToLowerInvariant().TrimEnd('.')).ToHashSet();
         if (names.FirstOrDefault(protectedUsers.Contains) is { } hit)
             throw new BoardException($"refused at execution: Okta user {ctx.Id} is also known as {hit}, a protected user", 409);
         var id = Uri.EscapeDataString(ctx.Id);
@@ -250,7 +293,7 @@ public sealed partial class ConnectorHub
                        coalesce(jsonb_array_length(context->'factors'), 0), coalesce(jsonb_array_length(context->'groups'), 0),
                        case when jsonb_typeof(context->'admin_roles') = 'array' then array(select jsonb_array_elements_text(context->'admin_roles')) end,
                        refreshed_at
-                from identity_links where provider = 'okta' and (lower(login) = any(@u) or lower(email) = any(@u) or lower(second_email) = any(@u))
+                from identity_links where provider = 'okta' and (lower(login) = any(@u) or lower(email) = any(@u))
                 order by refreshed_at desc limit 20
                 """).With("u", users);
             await using var r = await cmd.ExecuteReaderAsync(ct);
