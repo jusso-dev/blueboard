@@ -35,7 +35,7 @@ Warnings (allowed, but probably not what you meant):
 | Key | Default | Meaning |
 |---|---|---|
 | `version` | `1` | Policy format version. |
-| `auto_approve` | `run_av_scan`, `collect_investigation_package`, `add_incident_comment` | Non-destructive kinds that run without a person when every target is in the incident evidence. Destructive kinds listed here are ignored. |
+| `auto_approve` | `run_av_scan`, `collect_investigation_package`, `add_incident_comment` | Non-destructive kinds that run without a person when every target is in the incident evidence. Destructive kinds listed here are ignored, and so is `create_detection_rule` (a deployed rule always needs a person; `policy-check` warns). |
 | `disabled` | none | Kinds rejected outright. |
 | `protected_users` | none | UPNs or object IDs never disabled, reset or revoked. Matched by every alias in the evidence. |
 | `protected_devices` | none | MDE IDs, DNS names or host names never isolated or scanned. |

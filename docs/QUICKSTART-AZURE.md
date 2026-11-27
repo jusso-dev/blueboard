@@ -53,7 +53,7 @@ Write these down first. Every later step reads them.
 | Region (`LOCATION`) | `australiaeast` (default) or `australiasoutheast` | Australia East (it has availability zones, so production PostgreSQL HA is zone-redundant) |
 | Profile (`BB_PROFILE`) | `mvp`: public endpoints, smallest footprint. `production`: VNet, private endpoints, Key Vault, HA PostgreSQL, 35-day geo-redundant backups, audit export to Sentinel | `production` for anything that will hold real incident data |
 | Groups | Let blueboard create `blueboard-<env>-analysts`, `-approvers` and `-admins` (`GROUP_PREFIX` changes the prefix), or adopt groups you already govern (`GROUP_ANALYSTS_ID`, `GROUP_APPROVERS_ID`, `GROUP_ADMINS_ID`) | Adopt existing groups if your identity governance (IGA) process owns group membership |
-| Actions to broker (`ACTIONS`) | None (read-only), or a list of the 21 action kinds | None at first. Add writes in Stage 3 |
+| Actions to broker (`ACTIONS`) | None (read-only), or a list of the 26 action kinds | None at first. Add writes in Stage 3 |
 | Policy (`POLICY_FILE`) | `starter-readonly.json`, `starter-balanced-soc.json` or `starter-strict-regulated.json` from `templates/policies/`, copied to `policy.json` and filled in | Balanced or strict. Fill in `protected_users`, `protected_devices`, `protected_apps` and `protected_indicators` before Stage 3 |
 | Notification channel | Teams workflow, email (`Mail.Send`), signed webhook or ntfy. See [OPERATIONS.md § Notifications](OPERATIONS.md#notifications) | Teams or email, so approvers learn about waiting actions |
 | Break-glass accounts | Object ids of your emergency access accounts | Exclude them from Conditional Access (`CA_EXCLUDE_IDS`) and list them in `protected_users` |

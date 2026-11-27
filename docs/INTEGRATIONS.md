@@ -28,7 +28,7 @@ flowchart LR
   end
 
   subgraph Blueboard["blueboard Control Plane (Australia East/Southeast)"]
-    MCP["/runtime/webhooks/mcp<br/>(34 tools · Claims · Feed)"]
+    MCP["/runtime/webhooks/mcp<br/>(45 tools · Claims · Feed)"]
     BRK["PolicyEngine + Human Gate<br/>(21 Brokered Actions)"]
     PVG["Secret Guard + Optional Purview Guard<br/>(processContent DLP check)"]
   end

@@ -48,6 +48,11 @@ Things to try:
 
 Both published ports bind to `127.0.0.1` only.
 
+## Exposure and detection rules in the demo
+
+- **Exposure** (`/exposure`, sign in as an analyst with `Board.Hunt`) shows seeded vulnerabilities (`dev/fixtures/exposure.json`): CVE-2024-3400 on an internet-facing VPN edge, Log4Shell on a build server, a Windows update on three workstations. **Request remediation** files an `intune_*` action; the mock resolves MDE ↔ Intune ↔ Entra ids. `dc01.contoso.local` is in the example policy's `protected_devices`, so remediation on it is rejected by policy.
+- **Back-test**: call `backtest_detection` with the first query in [`templates/kql/detection-backtest-samples.kql`](../templates/kql/detection-backtest-samples.kql). The mock returns two weeks of hits across three devices. Then request `create_detection_rule` with the same query and the returned `backtest_id`; the dry run shows the exact tagged rule.
+
 ## How the demo stays safe
 
 The demo needs a few switches that must never be on in a real deployment. Each one is refused in Azure:
