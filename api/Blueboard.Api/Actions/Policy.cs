@@ -168,7 +168,12 @@ public sealed record Limits
 public enum Outcome { Reject, NeedsApproval, Auto }
 public sealed record PolicyDecision(Outcome Outcome, IReadOnlyList<string> Notes);
 /// <param name="MaliciousIocs">"kind:value" (normalised) of every indicator marked malicious in an ioc message on the incident.</param>
-public sealed record IncidentContext(string GraphId, JsonElement Data, IReadOnlySet<string>? MaliciousIocs = null);
+/// <param name="IdentityLinks">
+/// Outside-IdP identities (Okta) that share a name with someone in the evidence or the request: each is every name one
+/// outside user is known by (id, login, emails). PolicyEngine links them to the Entra aliases (UPN ↔ object id).
+/// </param>
+public sealed record IncidentContext(string GraphId, JsonElement Data, IReadOnlySet<string>? MaliciousIocs = null,
+    IReadOnlyList<IReadOnlyList<string>>? IdentityLinks = null);
 
 /// <summary>
 /// What the board would do with a request, before anything is written. The broker's request path, the preview
@@ -203,7 +208,7 @@ public static class PolicyEngine
     public static IReadOnlyList<string> ConfirmNames(ActionDef def, JsonObject p, IncidentContext? incident)
     {
         var targets = def.TargetsOf(p);
-        var (users, devices, apps) = Aliases(incident is null ? null : Entities.Extract(incident.Data));
+        var (users, devices, apps) = Aliases(incident is null ? null : Entities.Extract(incident.Data), incident?.IdentityLinks);
         var names = new List<string>();
         foreach (var d in targets.Devices)
         {
@@ -228,7 +233,7 @@ public static class PolicyEngine
         var pa = Lower(policy.ProtectedApps);
         var pi = Lower(policy.ProtectedIndicators);
         var entities = incident is null ? null : Entities.Extract(incident.Data);
-        var (userAliases, deviceAliases, appAliases) = Aliases(entities);
+        var (userAliases, deviceAliases, appAliases) = Aliases(entities, incident?.IdentityLinks);
 
         foreach (var u in targets.Users)
         {
@@ -236,6 +241,10 @@ public static class PolicyEngine
             if (pu.Count > 0 && !userAliases.ContainsKey(u.ToLowerInvariant()) && !u.Contains('@'))
                 notes.Add($"{u} could not be matched to a UPN, so the protected-user list was checked by object id only");
         }
+        // Okta kinds (cross-IdP): the Okta identity links that resolve an Okta id to its login and emails (and so to a
+        // protected UPN) are loaded with the incident, so these kinds must be linked to one (fail closed).
+        if (Catalog.OktaKinds.Contains(def.Kind) && incident is null)
+            return new(Outcome.Reject, [$"{def.Kind} must be linked to an incident so the Okta user can be checked against protected users"]);
         foreach (var d in targets.Devices)
         {
             if (NamesFor(deviceAliases, d).Any(pd.Contains)) return new(Outcome.Reject, [$"{d} is a protected device"]);
@@ -258,7 +267,9 @@ public static class PolicyEngine
             else if (policy.RequireTargetInIncident && all.Count > 0)
             {
                 var keys = entities!.Keys();
-                var missing = all.Where(t => !keys.Contains(t)).ToList();
+                // An Okta target counts as in the evidence when one of its linked names (login or email = a UPN) is.
+                var missing = all.Where(t => !keys.Contains(t)
+                    && !(Catalog.OktaKinds.Contains(def.Kind) && NamesFor(userAliases, t).Any(keys.Contains))).ToList();
                 if (missing.Count > 0) notes.Add($"not in incident {incident.GraphId} evidence: {string.Join(", ", missing)}");
             }
         }
@@ -327,13 +338,17 @@ public static class PolicyEngine
         return u.IdnHost.Trim('[', ']').ToLowerInvariant().TrimEnd('.');
     }
 
-    /// <summary>Every name a target is known by in the evidence: device MDE id ↔ DNS name ↔ host name; user oid ↔ UPN; app object id ↔ app id ↔ display name.</summary>
-    private static (Dictionary<string, HashSet<string>> Users, Dictionary<string, HashSet<string>> Devices, Dictionary<string, HashSet<string>> Apps) Aliases(IncidentEntities? e)
+    /// <summary>
+    /// Every name a target is known by in the evidence: device MDE id ↔ DNS name ↔ host name; user oid ↔ UPN; app object
+    /// id ↔ app id ↔ display name. Outside-IdP identities (Okta id ↔ login ↔ emails) are merged into the user groups
+    /// transitively, so an Okta user whose login or email equals an Entra UPN shares that UPN's object id too.
+    /// </summary>
+    private static (Dictionary<string, HashSet<string>> Users, Dictionary<string, HashSet<string>> Devices, Dictionary<string, HashSet<string>> Apps) Aliases(
+        IncidentEntities? e, IReadOnlyList<IReadOnlyList<string>>? identityLinks = null)
     {
         var users = new Dictionary<string, HashSet<string>>();
         var devices = new Dictionary<string, HashSet<string>>();
         var apps = new Dictionary<string, HashSet<string>>();
-        if (e is null) return (users, devices, apps);
         static void Link(Dictionary<string, HashSet<string>> map, IEnumerable<string?> names)
         {
             var all = names.OfType<string>().Where(n => n.Length > 0).Select(n => n.ToLowerInvariant()).ToList();
@@ -343,11 +358,27 @@ public static class PolicyEngine
                 set.UnionWith(all);
             }
         }
-        foreach (var d in e.Devices) Link(devices, [d.MdeDeviceId, d.Name, d.Name?.Split('.')[0]]);
-        foreach (var u in e.Users) Link(users, [u.AadUserId, u.Upn]);
-        foreach (var a in e.CloudApps) Link(apps, [a.ObjectId, a.AppId, a.DisplayName]);
+        // Outside identities merge with every group a name already belongs to, so links chain
+        // (Okta id ↔ email = UPN ↔ Entra oid) and every member sees the whole group.
+        static void Merge(Dictionary<string, HashSet<string>> map, IEnumerable<string?> names)
+        {
+            var merged = names.OfType<string>().Where(n => n.Length > 0).Select(n => n.ToLowerInvariant()).ToHashSet();
+            foreach (var n in merged.ToList()) if (map.TryGetValue(n, out var existing)) merged.UnionWith(existing);
+            foreach (var n in merged) map[n] = merged;
+        }
+        if (e is not null)
+        {
+            foreach (var d in e.Devices) Link(devices, [d.MdeDeviceId, d.Name, d.Name?.Split('.')[0]]);
+            foreach (var u in e.Users) Link(users, [u.AadUserId, u.Upn]);
+            foreach (var a in e.CloudApps) Link(apps, [a.ObjectId, a.AppId, a.DisplayName]);
+        }
+        foreach (var names in identityLinks ?? []) Merge(users, names);
         return (users, devices, apps);
     }
+
+    /// <summary>The user aliases (lower case) the policy check would use for <paramref name="target"/>. For tests and the preview.</summary>
+    internal static IReadOnlyCollection<string> UserAliases(string target, IncidentContext? incident) =>
+        NamesFor(Aliases(incident is null ? null : Entities.Extract(incident.Data), incident?.IdentityLinks).Users, target).ToHashSet();
 
     private static IEnumerable<string> NamesFor(Dictionary<string, HashSet<string>> map, string t) =>
         map.TryGetValue(t.ToLowerInvariant(), out var names) ? names : [t.ToLowerInvariant()];

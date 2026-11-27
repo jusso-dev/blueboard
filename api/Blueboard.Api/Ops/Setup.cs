@@ -28,7 +28,7 @@ public sealed record BoardStatus(string Broker, string? PausedBy, DateTimeOffset
 /// runHuntingQuery POST); write permissions are read from the managed identity token's roles claim, never by
 /// calling a write endpoint. Results never include tokens, URLs with secrets or policy contents beyond counts.
 /// </summary>
-public sealed class Setup(Db db, Settings settings, Policy policy, MsClient ms, Notifier notifier)
+public sealed class Setup(Db db, Settings settings, Policy policy, MsClient ms, Notifier notifier, Connectors.ConnectorHub? connectors = null)
 {
     private static readonly TimeSpan CacheFor = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(15);
@@ -61,6 +61,7 @@ public sealed class Setup(Db db, Settings settings, Policy policy, MsClient ms, 
         checks.Add(await NotificationsAsync(ct));
         checks.Add(await AuditExportAsync(ct));
         checks.Add(await RetentionAsync(ct));
+        checks.Add(await ConnectorsAsync(ct));
         return new SetupReport(DateTimeOffset.UtcNow, checks.All(c => c.Status != CheckStatus.Failed), checks);
     }
 
@@ -218,6 +219,8 @@ public sealed class Setup(Db db, Settings settings, Policy policy, MsClient ms, 
         var kinds = Catalog.All.Keys.Where(k => !policy.Disabled.Contains(k)).Order(StringComparer.Ordinal).ToList();
         foreach (var k in kinds.Where(Permissions.AzureRoleFor.ContainsKey))
             lines.Add($"Not checked here: {k} needs the Azure role {Permissions.AzureRoleFor[k]} (see docs/THREAT_INTEL.md)");
+        foreach (var k in kinds.Where(Permissions.ConnectorScopeFor.ContainsKey))
+            lines.Add($"Not checked here: {k} runs with the connector's own credential ({Permissions.ConnectorScopeFor[k]}); see the Connectors check");
         foreach (var group in kinds.Where(Permissions.WriteFor.ContainsKey).GroupBy(k => Permissions.WriteFor[k]))
         {
             var perm = group.Key;
@@ -435,6 +438,44 @@ public sealed class Setup(Db db, Settings settings, Policy policy, MsClient ms, 
     }
 
     internal const string RetentionName = "Data retention";
+
+    // connectors (Okta, ServiceNow, Jira) ------------------------------------------------------------------
+    private async Task<Check> ConnectorsAsync(CancellationToken ct)
+    {
+        const string name = "Connectors (Okta, ServiceNow, Jira)";
+        if (connectors is null || !connectors.AnyEnabled)
+            return new("connectors", name, CheckStatus.Ok, "None configured (optional). See docs/INTEGRATIONS.md to add Okta context and ticketing.");
+        var lines = new List<string>();
+        var failing = new List<string>();
+        try
+        {
+            await using var cmd = db.Command("select connector, last_ok_at, last_error_at, last_error from connector_status");
+            await using var r = await cmd.ExecuteReaderAsync(ct);
+            var rows = new Dictionary<string, (DateTimeOffset? Ok, DateTimeOffset? Err, string? Msg)>();
+            while (await r.ReadAsync(ct)) rows[r.GetString(0)] = (r.Get<DateTimeOffset?>("last_ok_at"), r.Get<DateTimeOffset?>("last_error_at"), r.Get<string>("last_error"));
+            var c = settings.Connectors;
+            foreach (var (id, on, auth) in new[]
+            {
+                ("okta", c.Okta.Enabled, c.Okta.AuthMode == "ssws" ? "SSWS token (less preferred than private_key_jwt)" : "private_key_jwt"),
+                ("servicenow", c.ServiceNow.Enabled, c.ServiceNow.WebhookSecret is null ? "outbound only" : "outbound + signed inbound"),
+                ("jira", c.Jira.Enabled, c.Jira.WebhookSecret is null ? "outbound only" : "outbound + signed inbound"),
+            })
+            {
+                if (!on) continue;
+                var st = rows.GetValueOrDefault(id);
+                if (st.Err is { } e && (st.Ok is null || e > st.Ok)) { failing.Add(id); lines.Add($"Failing: {id} ({auth}) since {Ago(e)}: {st.Msg}"); }
+                else lines.Add(st.Ok is { } ok ? $"OK: {id} ({auth}), last success {Ago(ok)}" : $"Not used yet: {id} ({auth}); use Test on Admin → Connectors");
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return new("connectors", name, CheckStatus.Failed, "Couldn't read connector health from the database.");
+        }
+        return failing.Count > 0
+            ? new("connectors", name, CheckStatus.Warning, $"{failing.Count} connector(s) failing: {string.Join(", ", failing)}.",
+                "Open Admin → Connectors, run Test, and check the credential (docs/admin/admin-sops.md SOP-15).", lines)
+            : new("connectors", name, CheckStatus.Ok, $"{lines.Count} configured.", null, lines);
+    }
 
     internal static Check RetentionCheck(int days, RetentionResult? last, DateTimeOffset now)
     {

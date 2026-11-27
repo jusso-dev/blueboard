@@ -100,6 +100,16 @@ public sealed class Posture(Db db, Settings settings, Policy policy)
                 edge == "front_door_waf" ? (wafBlocking ? "Front Door WAF is configured in Prevention mode. Verify origin lockdown and WAF logs in Azure." : "Front Door is configured, but blocking mode is not confirmed. Detection mode logs without blocking.") : "No WAF: the apps are reached directly (token auth on every API call).",
                 wafBlocking ? null : "After tuning in Detection: FRONT_DOOR=true WAF_MODE=Prevention ./infra/deploy.sh.", "consumer", "TM-36"),
 
+            new("connector_secrets", "Data protection", "Connector credentials are non-exportable or in Key Vault",
+                !(s.Connectors.Okta.Enabled || s.Connectors.AnyTicketing) ? Met
+                : s.Connectors.Okta.Enabled && s.Connectors.Okta.AuthMode == "ssws" ? Partial
+                : prod ? Met : Partial, 5,
+                !(s.Connectors.Okta.Enabled || s.Connectors.AnyTicketing) ? "No third-party connector is configured."
+                : $"Okta: {(s.Connectors.Okta.Enabled ? s.Connectors.Okta.AuthMode : "off")}. Ticketing: {(s.Connectors.AnyTicketing ? (prod ? "Key Vault references" : "plain app settings (mvp)") : "off")}.",
+                s.Connectors.Okta.Enabled && s.Connectors.Okta.AuthMode == "ssws" ? "Move Okta to OKTA_AUTH_MODE=private_key_jwt with a Key Vault key (docs/INTEGRATIONS.md § Okta)."
+                : (s.Connectors.Okta.Enabled || s.Connectors.AnyTicketing) && !prod ? "Use the production profile so connector secrets are Key Vault references." : null,
+                "consumer", "TM-45"),
+
             // Monitoring
             new("audit_export", "Monitoring", "Audit export configured for Microsoft Sentinel", auditConfigured ? Met : NotMet, 10,
                 auditConfigured ? "Export endpoint and rule are configured. Confirm recent rows arrive in BlueboardAudit_CL; configuration does not prove delivery." : "Audit export requires both a collection endpoint and a rule ID. The database owner could alter local audit rows.",

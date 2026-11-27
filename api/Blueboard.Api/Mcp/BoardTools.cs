@@ -21,7 +21,8 @@ namespace Blueboard.Api.Mcp;
 /// Every call authenticates the bearer token from the transport headers and re-reads the caller's roles from Entra;
 /// there is no shared key. Board content is untrusted data.
 /// </summary>
-public sealed class BoardTools(Authenticator auth, BoardService board, Search search, IncidentQueries incidents, Broker broker, Enrichment enrich, Ingest ingest, WebhookService hooks, Policy policy, PlaybookRunner playbooks, PlaybookSet playbookSet, IntelService intel, Participants participants, GifService gifs, MemoryService memory, ILogger<BoardTools> log)
+public sealed class BoardTools(Authenticator auth, BoardService board, Search search, IncidentQueries incidents, Broker broker, Enrichment enrich, Ingest ingest, WebhookService hooks, Policy policy, PlaybookRunner playbooks, PlaybookSet playbookSet, IntelService intel, Participants participants, GifService gifs, MemoryService memory, ILogger<BoardTools> log,
+    Connectors.ConnectorHub? connectors = null)
 {
     /// <summary>Authenticate, require the tool's role, read its input record, run, and return JSON text or an error string.</summary>
     private async Task<string> Call<TIn>(ToolInvocationContext ctx, Func<Principal, TIn, Task<object?>> fn) where TIn : class
@@ -253,6 +254,16 @@ public sealed class BoardTools(Authenticator auth, BoardService board, Search se
     [Function(nameof(LookupPurviewContext))]
     public Task<string> LookupPurviewContext([McpToolTrigger(Tools.LookupPurviewContext, Tools.LookupPurviewContextDoc)] ToolInvocationContext ctx) =>
         Call<PurviewLookupInput>(ctx, async (me, q) => await enrich.LookupPurviewAsync(me, q.User, q.IncludeLabels));
+
+    [Function(nameof(LookupOktaUser))]
+    public Task<string> LookupOktaUser([McpToolTrigger(Tools.LookupOktaUser, Tools.LookupOktaUserDoc)] ToolInvocationContext ctx) =>
+        Call<OktaUserInput>(ctx, async (me, q) => await Okta().LookupOktaUserAsync(me, q.User));
+
+    [Function(nameof(SearchOktaLogs))]
+    public Task<string> SearchOktaLogs([McpToolTrigger(Tools.SearchOktaLogs, Tools.SearchOktaLogsDoc)] ToolInvocationContext ctx) =>
+        Call<OktaLogsInput>(ctx, async (me, q) => await Okta().SearchOktaLogsAsync(me, q));
+
+    private Connectors.ConnectorHub Okta() => connectors ?? throw new BoardException("the Okta connector is not configured on this board", 409);
 
     [Function(nameof(ListActionTypes))]
     public Task<string> ListActionTypes([McpToolTrigger(Tools.ListActionTypes, Tools.ListActionTypesDoc)] ToolInvocationContext ctx) =>

@@ -1,6 +1,7 @@
 using Blueboard.Api.Actions;
 using Blueboard.Api.Auth;
 using Blueboard.Api.Board;
+using Blueboard.Api.Connectors;
 using Blueboard.Api.Core;
 using Blueboard.Api.Data;
 using Blueboard.Api.Graph;
@@ -34,7 +35,13 @@ builder.Services.AddSingleton<PurviewContentGuard>();
 builder.Services.AddSingleton<BoardService>();
 builder.Services.AddSingleton<MemoryService>();
 builder.Services.AddSingleton<SystemPrincipal>();
-builder.Services.AddSingleton<Broker>();
+builder.Services.AddSingleton<Broker>(sp => new Broker(sp.GetRequiredService<Db>(), sp.GetRequiredService<Audit>(), sp.GetRequiredService<BoardService>(),
+    sp.GetRequiredService<MsClient>(), settings, sp.GetRequiredService<Policy>(), sp.GetRequiredService<SystemPrincipal>(), sp.GetRequiredService<RateLimiter>(),
+    sp.GetRequiredService<ConnectorHub>()));
+// Okta, ServiceNow and Jira (all off unless configured). Each client calls only its configured origin through OutboundGuard.
+builder.Services.AddSingleton(sp => ConnectorHub.Create(sp.GetRequiredService<Db>(), sp.GetRequiredService<Audit>(), sp.GetRequiredService<BoardService>(),
+    sp.GetRequiredService<SystemPrincipal>(), settings, sp.GetRequiredService<Policy>(), sp.GetRequiredService<PlaybookRunner>(),
+    sp.GetRequiredService<RateLimiter>(), sp.GetRequiredService<ILoggerFactory>().CreateLogger("Blueboard.Connectors")));
 builder.Services.AddSingleton<Search>();
 builder.Services.AddSingleton<Reporting>();
 builder.Services.AddSingleton<Enrichment>();

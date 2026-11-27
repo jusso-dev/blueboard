@@ -47,6 +47,18 @@ public static class Permissions
         ["publish_ti_indicator"] = "Microsoft Sentinel Contributor on the Sentinel workspace",
     };
 
+    /// <summary>
+    /// Kinds that run through a third-party connector with that connector's own credential (no Microsoft permission). The
+    /// value is the OAuth scope the connector's service app needs. The setup page's connector check covers these.
+    /// </summary>
+    public static readonly IReadOnlyDictionary<string, string> ConnectorScopeFor = new Dictionary<string, string>
+    {
+        ["okta_suspend_user"] = "Okta okta.users.manage",
+        ["okta_unsuspend_user"] = "Okta okta.users.manage",
+        ["okta_clear_user_sessions"] = "Okta okta.users.manage",
+        ["okta_reset_factors"] = "Okta okta.users.manage",
+    };
+
     /// <summary>Optional: email notifications to approvers (NOTIFY_MAIL=1 in grant-permissions.sh).</summary>
     public static readonly Perm MailSend = new(MsApi.Graph, "Mail.Send");
 }

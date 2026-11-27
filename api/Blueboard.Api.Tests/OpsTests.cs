@@ -114,8 +114,8 @@ public class OpsTests
                 fromScript[kind] = $"{(m.Groups[2].Value == "MDE" ? MsApi.Defender : MsApi.Graph)} {m.Groups[3].Value}";
         var fromCode = Permissions.WriteFor.ToDictionary(kv => kv.Key, kv => $"{kv.Value.Api} {kv.Value.Name}");
         Assert.Equal(fromCode.OrderBy(k => k.Key), fromScript.OrderBy(k => k.Key));
-        // Every kind is covered by an application permission or (publish_ti_indicator) an Azure role.
-        Assert.Equal(Catalog.All.Keys.Order(), Permissions.WriteFor.Keys.Concat(Permissions.AzureRoleFor.Keys).Order());
+        // Every kind is covered by an application permission, (publish_ti_indicator) an Azure role, or (Okta) a connector scope.
+        Assert.Equal(Catalog.All.Keys.Order(), Permissions.WriteFor.Keys.Concat(Permissions.AzureRoleFor.Keys).Concat(Permissions.ConnectorScopeFor.Keys).Order());
     }
 
     internal static string RepoRoot()
