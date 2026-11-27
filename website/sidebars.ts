@@ -5,6 +5,7 @@ const sidebars: SidebarsConfig = {
     { type: "doc", id: "WALKTHROUGH", label: "Visual Walkthrough (Screenshots)" },
     { type: "doc", id: "WHAT-IS-BLUEBOARD", label: "What is blueboard?" },
     { type: "doc", id: "DEMO", label: "2-Minute Local Demo" },
+    { type: "doc", id: "DEFENDER-TEST-ALERTS", label: "Trigger a Defender Test Alert" },
     { type: "doc", id: "INTEGRATIONS", label: "Sentinel MCP, Purview & Defender" },
     { type: "doc", id: "SPEC", label: "Product Specification" }
   ],

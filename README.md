@@ -70,6 +70,33 @@ Then open **`http://localhost:8080`** to inspect seeded incidents (including AiT
 
 ---
 
+## Trigger a safe Defender test alert (Linux, macOS & Windows)
+
+Once `blueboard` is connected to a live Microsoft Defender XDR tenant (`INGEST_ENABLED=true`, `BROKER_EXECUTE=false` dry-run), run Microsoft's official benign detection test on a **non-production onboarded test device** to watch an incident flow from Defender XDR → `#incidents` → autonomous agent enrichment → **Approvals**:
+
+- **Linux (Bash)** — verify MDE sensor & trigger the standard EICAR detection (or run Microsoft's Linux EDR DIY script via `https://aka.ms/MDE-Linux-EDR-DIY`):
+  ```bash
+  mdatp health --field real_time_protection_enabled   # must be true
+  curl -fsSL -o /tmp/eicar.com.txt https://secure.eicar.org/eicar.com.txt || true
+  mdatp threat list
+  ```
+- **macOS (Terminal / zsh)** — verify MDE sensor & trigger the standard EICAR detection:
+  ```zsh
+  mdatp health --field real_time_protection_enabled   # must be true
+  curl -fsSL -o ~/Downloads/eicar.com.txt https://secure.eicar.org/eicar.com.txt || true
+  mdatp threat list
+  ```
+- **Windows (Admin PowerShell / CMD)** — Microsoft's official loopback-only EDR onboarding test (downloads nothing from the internet; raises *Suspicious PowerShell commandline*):
+  ```powershell
+  Get-Service Sense | Select-Object Name, Status
+  New-Item -ItemType Directory -Path 'C:\test-MDATP-test' -Force | Out-Null
+  cmd.exe /c "powershell.exe -NoExit -ExecutionPolicy Bypass -WindowStyle Hidden `$ErrorActionPreference='silentlycontinue';(New-Object System.Net.WebClient).DownloadFile('http://127.0.0.1/1.exe', 'C:\test-MDATP-test\invoice.exe');Start-Process 'C:\test-MDATP-test\invoice.exe'"
+  ```
+
+Within **1–10 minutes**, the alert lands in Defender XDR, syncs into **`#incidents`** on blueboard's 1-minute ingest loop, and triggers `@enrichment-agent` to hunt, post findings, and queue containment in **Approvals**. See [**`docs/DEFENDER-TEST-ALERTS.md`**](docs/DEFENDER-TEST-ALERTS.md) for full scripts, Linux/macOS EDR DIY options, cleanup commands, and troubleshooting.
+
+---
+
 ## Console at a glance
 
 | View | Purpose |
@@ -178,6 +205,7 @@ Read everything online at **[`jusso-dev.github.io/blueboard`](https://jusso-dev.
 | **What is blueboard? (Plain-English Overview)** | [`docs/WHAT-IS-BLUEBOARD.md`](docs/WHAT-IS-BLUEBOARD.md) | — | — |
 | **Threat Model (`TM-01`–`TM-26`)** | [`docs/THREAT-MODEL.md`](docs/THREAT-MODEL.md) | — | — |
 | **Azure Quickstart & Staged Go-Live** | [`docs/QUICKSTART-AZURE.md`](docs/QUICKSTART-AZURE.md) | — | — |
+| **Trigger a Safe Defender Test Alert (Linux, macOS & Windows)** | [`docs/DEFENDER-TEST-ALERTS.md`](docs/DEFENDER-TEST-ALERTS.md) | — | — |
 | **Single Sign-On & Role-Based Access (Entra)** | [`docs/ENTERPRISE-ACCESS.md`](docs/ENTERPRISE-ACCESS.md) | — | — |
 | **Trust Center & Assurance Pack** | [`docs/assurance/TRUST-CENTER.md`](docs/assurance/TRUST-CENTER.md) | — | — |
 | **Microsoft 2026 Integrations (Sentinel MCP, Purview, Defender, Copilot, Agent ID)** | [`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md) | — | — |

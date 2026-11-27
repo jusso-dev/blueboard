@@ -172,7 +172,7 @@ The steps and output match Path A, except that `deploy.sh` builds the Function A
 
    Point the agent at `https://<api-host>/runtime/webhooks/mcp` with a token for `api://blueboard-<env>/.default`. The full guide is [AGENTS.md](AGENTS.md).
 
-5. **Run a dry-run pilot.** Work real incidents on the board. Let analysts and agents request actions and approvers approve them. Each approved action is recorded and posted with its exact parameters, but **nothing is sent to Defender or Entra**. Review **Reports → Dry run** each week.
+5. **Run a dry-run pilot.** Work real incidents on the board — or fire a safe test alert on a non-production Linux, macOS, or Windows endpoint using [DEFENDER-TEST-ALERTS.md](DEFENDER-TEST-ALERTS.md) to watch Defender XDR sync, agent enrichment, and the approval queue respond end to end. Let analysts and agents request actions and approvers approve them. Each approved action is recorded and posted with its exact parameters, but **nothing is sent to Defender or Entra**. Review **Reports → Dry run** each week.
 
 ---
 
