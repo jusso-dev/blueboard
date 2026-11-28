@@ -44,13 +44,19 @@ public sealed partial class ConnectorHttp(HttpClient http, string origin, string
         return uri;
     }
 
-    public async Task<(int Status, JsonElement? Json, HttpResponseHeaders Headers)> SendAsync(HttpMethod method, string pathAndQuery,
-        AuthenticationHeaderValue? auth, HttpContent? content, CancellationToken ct, bool throwOnError = true)
+    public Task<(int Status, JsonElement? Json, HttpResponseHeaders Headers)> SendAsync(HttpMethod method, string pathAndQuery,
+        AuthenticationHeaderValue? auth, HttpContent? content, CancellationToken ct, bool throwOnError = true) =>
+        SendFreshAsync(method, pathAndQuery, auth, content is null ? null : _ => CloneAsync(content, ct), ct, throwOnError);
+
+    /// <param name="content">Builds the body for each attempt, so a retry can send a fresh one (Okta's token request signs a
+    /// new client assertion with a new jti: Okta refuses a jti it has seen).</param>
+    public async Task<(int Status, JsonElement? Json, HttpResponseHeaders Headers)> SendFreshAsync(HttpMethod method, string pathAndQuery,
+        AuthenticationHeaderValue? auth, Func<int, Task<HttpContent>>? content, CancellationToken ct, bool throwOnError = true)
     {
         var uri = BuildUri(Origin, pathAndQuery);
         for (var attempt = 0; ; attempt++)
         {
-            using var req = new HttpRequestMessage(method, uri) { Content = content is null ? null : await CloneAsync(content, ct) };
+            using var req = new HttpRequestMessage(method, uri) { Content = content is null ? null : await content(attempt) };
             req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
             req.Headers.UserAgent.ParseAdd("blueboard-connector/1.0");
             if (auth is not null) req.Headers.Authorization = auth;

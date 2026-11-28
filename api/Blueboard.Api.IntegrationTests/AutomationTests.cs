@@ -255,6 +255,17 @@ public sealed class AutomationTests(TestBoard t) : IClassFixture<TestBoard>
         Assert.Equal(before, await store.MatchPlaybookAsync(incident, Ct));
     }
 
+    [DbFact]
+    public async Task A_trigger_cannot_be_pointed_at_an_intel_playbook()
+    {
+        await Fresh(File());
+        var store = new PolicyStore(t.Db, t.Audit, t.Board, t.System, File(), t.Playbooks);
+        var admin = await t.As("analyst");
+        var ex = await Assert.ThrowsAsync<BoardException>(() => store.ChangeTriggerAsync(admin, "intel-on-incidents",
+            new TriggerInput("route advisories to the intel playbook", "emerging-threat-detection", 10, Titles: ["advisory"]), Ct));
+        Assert.Contains("scope intel", ex.Message);
+    }
+
     // ── revert ─────────────────────────────────────────────────────────────────────────────────
 
     [DbFact]

@@ -126,8 +126,9 @@ public sealed partial class PolicyStore(Db db, Audit audit, BoardService board, 
         return Pick((await LoadAsync(ct)).Triggers, playbooks, incident);
     }
 
+    /// <remarks>Intel-scoped playbooks run from a threat intel finding and never attach to an incident, whatever a trigger says.</remarks>
     public static string? Pick(IReadOnlyList<PlaybookTrigger> triggers, PlaybookSet playbooks, JsonElement incident) =>
-        triggers.Select((t, i) => (t, i)).Where(x => x.t.Enabled && playbooks.Get(x.t.PlaybookId) is not null)
+        triggers.Select((t, i) => (t, i)).Where(x => x.t.Enabled && playbooks.Get(x.t.PlaybookId) is { Scope: Playbooks.IncidentScope })
             .OrderByDescending(x => x.t.Priority).ThenBy(x => x.i)
             .FirstOrDefault(x => Playbooks.Matches(x.t.Match.ToPlaybookMatch(), incident)).t?.PlaybookId;
 
@@ -232,7 +233,9 @@ public sealed partial class PolicyStore(Db db, Audit audit, BoardService board, 
         {
             var pbId = isFile ? filePb!.Id : input.PlaybookId ?? throw new BoardException("playbook_id is required");
             if (isFile && input.PlaybookId is { } other && other != pbId) throw new BoardException($"{id} always attaches {pbId}");
-            if (playbooks.Get(pbId) is null) throw BoardException.NotFound($"playbook '{pbId}'");
+            if (playbooks.Get(pbId) is not { } target) throw BoardException.NotFound($"playbook '{pbId}'");
+            if (target.Scope != Playbooks.IncidentScope && input.Enabled)
+                throw new BoardException($"playbook '{pbId}' has scope {target.Scope}: it runs from a threat intel finding and can't be attached to incidents by a trigger");
             var m = new TriggerMatch(Clean(input.Severities), Clean(input.Sources), Clean(input.Titles), Clean(input.Categories), Clean(input.Techniques));
             if (m.Sources.Length + m.Titles.Length + m.Categories.Length + m.Techniques.Length == 0)
                 throw new BoardException("a trigger needs at least one of sources, titles, categories or techniques");

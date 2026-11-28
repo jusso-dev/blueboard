@@ -185,7 +185,7 @@ If the revert can't be filed, is denied, expires, is rejected on re-check, fails
 
 ### Playbook triggers
 
-Which playbook attaches to a new incident was previously fixed by each playbook file's `match`. It is now a trigger list on `/policy`: one file trigger per playbook (`file-<playbook id>`, from its front matter) plus custom triggers. Each has severities (filter), sources, title words, alert categories and MITRE techniques, a priority (highest wins) and an on/off switch. Disabling a trigger or removing a custom one is tightening; adding, editing or re-enabling one is loosening (a playbook posts work for people and agents), so it needs a second admin. Playbooks still never run actions.
+Which playbook attaches to a new incident was previously fixed by each playbook file's `match`. It is now a trigger list on `/policy`: one file trigger per playbook (`file-<playbook id>`, from its front matter) plus custom triggers. Each has severities (filter), sources, title words, alert categories and MITRE techniques, a priority (highest wins) and an on/off switch. Disabling a trigger or removing a custom one is tightening; adding, editing or re-enabling one is loosening (a playbook posts work for people and agents), so it needs a second admin. A trigger can't be enabled for a `scope: intel` playbook (validation refuses it), and matching skips intel playbooks whatever a stored trigger says. Playbooks still never run actions.
 
 ## Rate limits
 

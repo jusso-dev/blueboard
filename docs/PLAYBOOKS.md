@@ -89,7 +89,7 @@ high-severity finding on your tech stack. A playbook with `scope: intel` runs fr
   thread. Their `payload.checklist` carries `run` (the run id) and `ti_finding_id`; there is no incident.
 - Claiming, completing and unlocking work exactly as on incidents, including the one-minute backstop timer.
 - One run per finding and playbook: pressing the button again opens the existing thread.
-- Intel playbooks never attach to incidents (automatic matching skips them and `attach_playbook` refuses them), and
+- Intel playbooks never attach to incidents (automatic matching and `/policy` playbook triggers skip them, a trigger pointing at one is refused, and `attach_playbook` refuses them), and
   `start_ti_playbook` refuses incident playbooks.
 
 Why not a synthetic incident? Incidents mirror Defender and Sentinel, feed the queue, MTTx reports and retention, and

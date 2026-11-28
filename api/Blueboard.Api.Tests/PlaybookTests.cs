@@ -121,6 +121,18 @@ public class PlaybookTests
     }
 
     [Fact]
+    public void A_trigger_pointing_at_an_intel_playbook_never_attaches_it()
+    {
+        var set = Playbooks.Load(Path.Combine(AppContext.BaseDirectory, "playbooks"));
+        var incident = JsonDocument.Parse("""{ "displayName": "Emerging threat advisory", "severity": "high", "alerts": [ { "title": "Emerging threat advisory" } ] }""").RootElement;
+        var match = new Actions.TriggerMatch([], [], ["Emerging"], [], []);
+        var intel = new Actions.PlaybookTrigger("custom-intel", "custom", "emerging-threat-detection", 1000, match, true, 1, true);
+        Assert.Null(Actions.PolicyStore.Pick([intel], set, incident));
+        var phishing = intel with { Id = "custom-phish", PlaybookId = "phishing" };
+        Assert.Equal("phishing", Actions.PolicyStore.Pick([intel, phishing], set, incident));
+    }
+
+    [Fact]
     public void Intel_scoped_playbooks_need_no_match_and_never_attach_to_incidents()
     {
         var pb = Parse("""

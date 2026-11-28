@@ -45,15 +45,16 @@ public sealed partial class OktaClient
         {
             if (_token is { } t2 && t2.Expires > DateTimeOffset.UtcNow.AddMinutes(1)) return new AuthenticationHeaderValue("Bearer", t2.Token);
             var endpoint = $"{_s.OrgUrl}/oauth2/v1/token";
-            var assertion = await ClientAssertion.CreateAsync(_signer ?? throw new InvalidOperationException("no Okta signer"), _s.ClientId!, endpoint, _s.JwkKid, DateTimeOffset.UtcNow, ct);
-            var form = new FormUrlEncodedContent(new Dictionary<string, string>
+            var signer = _signer ?? throw new InvalidOperationException("no Okta signer");
+            // A fresh client assertion (new jti) for every attempt: a 429 retry must not replay the one Okta already saw.
+            async Task<HttpContent> Form(int _) => new FormUrlEncodedContent(new Dictionary<string, string>
             {
                 ["grant_type"] = "client_credentials",
                 ["scope"] = _s.Scopes,
                 ["client_assertion_type"] = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
-                ["client_assertion"] = assertion,
+                ["client_assertion"] = await ClientAssertion.CreateAsync(signer, _s.ClientId!, endpoint, _s.JwkKid, DateTimeOffset.UtcNow, ct),
             });
-            var (_, json, _) = await _http.SendAsync(HttpMethod.Post, "/oauth2/v1/token", null, form, ct);
+            var (_, json, _) = await _http.SendFreshAsync(HttpMethod.Post, "/oauth2/v1/token", null, Form, ct);
             var access = json?.TryGetProperty("access_token", out var a) == true ? a.GetString() : null;
             if (access is null) throw new BoardException("Okta token response had no access_token", 502);
             var secs = json!.Value.TryGetProperty("expires_in", out var e) && e.TryGetInt32(out var n) ? n : 3600;
