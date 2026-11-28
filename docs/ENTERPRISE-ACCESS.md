@@ -25,7 +25,7 @@ blueboard has no user database and no passwords of its own. Everyone (people and
 | **Full token validation on every request** | Signature against the tenant's published keys, issuer, audience (`api://blueboard-<env>` or the client id), lifetime (1 minute of clock skew), and the `tid` claim must equal your tenant | [`TokenValidator.cs`](../api/Blueboard.Api/Auth/TokenValidator.cs) |
 | **Token must be for the board** | A person's (delegated) token must carry the `Board.Access` scope **and** be issued to the board's own web app (`azp`). A token another app obtained for that person is refused | `TokenValidator.cs` |
 | **No other way in** | No cookie session, no platform auth header, no API key. The local-development bypass (`DEV_AUTH`) is refused when the API runs in Azure | [`Authenticator.cs`](../api/Blueboard.Api/Auth/Authenticator.cs) |
-| **Tokens in session storage** | The browser keeps tokens in `sessionStorage`, cleared when the tab closes | `web/src/lib/auth.ts` |
+| **Tokens in browser storage** | The browser keeps MSAL tokens in `localStorage` so sign-in persists across tabs and deep links, cleared on sign-out and idle sign-out | `web/src/lib/auth.ts` |
 
 **Roles come from the token on every request.** The API maps the token's `roles` claim to board roles on every REST and MCP call, and records the current set against the person. Nothing is cached server-side, so a change in Entra applies as soon as the caller holds a new token. Access tokens last about 60–90 minutes, and MSAL reuses a cached token until it expires. **To pick up a change straight away, sign out and in again.**
 

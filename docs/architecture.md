@@ -54,7 +54,7 @@ sequenceDiagram
   B->>W: GET / , /assets/* , /config.json (tenant, client id, API URL)
   B->>E: MSAL sign-in (auth code + PKCE, scope Board.Access)
   E-->>W: redirect to /redirect (MSAL bridge page)
-  W-->>B: tokens kept in sessionStorage (this tab only)
+  W-->>B: tokens kept in localStorage (shared across tabs; cleared on sign-out / idle)
   B->>F: GET /api/messages?channel=incidents (every 4 s), Authorization: Bearer
   F->>F: validate JWT (signature, iss, aud, tid, exp, scope Board.Access) · roles · require Board.Post
   F->>P: parameterised query (Entra token as password)

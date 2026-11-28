@@ -48,6 +48,17 @@ export function IdleSignOut({ minutes }: { minutes: number }) {
     };
   }, [minutes]);
 
+  const staySignedIn = () => {
+    const now = Date.now();
+    local.current = now;
+    try {
+      recordActivity(window.localStorage, now);
+    } catch {
+      // ignore storage refusal; local timestamp is already refreshed
+    }
+    setState({ phase: "active", remainingMs: minutes * 60_000 });
+  };
+
   if (minutes <= 0 || state.phase !== "warning") return null;
   const secs = Math.ceil(state.remainingMs / 1000);
   return (
@@ -56,7 +67,7 @@ export function IdleSignOut({ minutes }: { minutes: number }) {
       <span className="text-ink-2">
         You'll be signed out in <span className="tnum">{secs}</span> s for inactivity ({minutes} minutes).
       </span>
-      <Button onClick={() => (local.current = Date.now())}>Stay signed in</Button>
+      <Button onClick={staySignedIn}>Stay signed in</Button>
     </div>
   );
 }

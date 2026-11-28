@@ -30,7 +30,7 @@ This page covers what data blueboard holds, where it comes from and where it's s
 
 The web app holds no data. It serves static files and `/config.json`, which has only public sign-in settings (tenant id, client id, API URL and scope).
 
-Browser tokens are kept in the tab's `sessionStorage` and cleared when the tab closes.
+Browser tokens are kept in `localStorage` (shared across tabs and deep links) and cleared on sign-out and idle sign-out.
 
 ## Data-flow diagram
 

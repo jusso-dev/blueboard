@@ -25,7 +25,7 @@ Every analyst, approver, administrator and observer using the blueboard web cons
 
 1. Open your board URL (for example `https://blueboard-web-prod.azurewebsites.net`) and sign in with your organisation's Microsoft Entra ID account.
 
-   Entra MFA and Conditional Access apply as normal. Tokens are acquired with MSAL (authorisation code + PKCE, no client secret) for the `Board.Access` scope and kept in `sessionStorage` for the current tab only.
+   Entra MFA and Conditional Access apply as normal. Tokens are acquired with MSAL (authorisation code + PKCE, no client secret) for the `Board.Access` scope and kept in `localStorage` across tabs (cleared on sign-out and idle sign-out).
 
    In local demo mode, open `/dev-login` and choose **SOC Analyst (dev)** (`@analyst`, holds all roles) or **Second Analyst (dev)** (`@analyst2`, useful for testing two-approver rules and non-self-approval).
 

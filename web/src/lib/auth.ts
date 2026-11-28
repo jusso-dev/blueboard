@@ -4,8 +4,9 @@ import type { AccountInfo, IPublicClientApplication } from "@azure/msal-browser"
  * Microsoft Entra sign-in for the browser (MSAL, authorisation code flow with PKCE).
  *
  * The web host serves /config.json with the tenant, client id, API URL and scope, so one build runs in every
- * environment. Tokens live in sessionStorage (cleared when the tab closes) and are sent as a bearer token to
- * the Function App. Local development skips all of this: the API runs with DEV_AUTH and /dev-login picks an identity.
+ * environment. Tokens live in localStorage so sign-in persists across tabs, reloads and notification deep links
+ * (cleared on sign-out and idle sign-out) and are sent as a bearer token to the Function App. Local development
+ * skips all of this: the API runs with DEV_AUTH and /dev-login picks an identity.
  */
 export type PublicConfig = { mode?: "entra"; tenant_id: string; client_id: string; authority: string; api_base_url: string; scope: string };
 /** Served only by a local demo host (BLUEBOARD_DEV_AUTH, refused in Azure). */
@@ -49,12 +50,30 @@ export async function initAuth(): Promise<Auth> {
       redirectUri: `${location.origin}/redirect`,
       postLogoutRedirectUri: `${location.origin}/`,
     },
-    cache: { cacheLocation: "sessionStorage" },
+    cache: { cacheLocation: "localStorage" },
   });
-  const result = await pca.handleRedirectPromise();
-  const account = result?.account ?? pca.getActiveAccount() ?? pca.getAllAccounts()[0] ?? null;
-  if (account) pca.setActiveAccount(account);
+  let result = null;
+  try {
+    result = await pca.handleRedirectPromise();
+  } catch (e) {
+    // Stale or cancelled redirect state shouldn't prevent the app from booting into a cached session or sign-in screen.
+    console.warn("auth redirect handling failed", e);
+  }
+  const acc = result?.account ?? resolveAccount(pca);
+  if (acc) pca.setActiveAccount(acc);
   return (auth = { mode: "entra", apiBase: config.api_base_url, pca, config });
+}
+
+type AccountPca = Pick<IPublicClientApplication, "getActiveAccount" | "getAllAccounts" | "setActiveAccount">;
+type TokenPca = AccountPca & Pick<IPublicClientApplication, "acquireTokenSilent">;
+
+/** Resolve the active Entra account, falling back to any cached account (e.g. after sign-in in another tab). */
+export function resolveAccount(pca: AccountPca): AccountInfo | null {
+  const existing = pca.getActiveAccount();
+  if (existing) return existing;
+  const first = pca.getAllAccounts()[0] ?? null;
+  if (first) pca.setActiveAccount(first);
+  return first;
 }
 
 export function current(): Auth {
@@ -64,7 +83,7 @@ export function current(): Auth {
 
 export function account(): AccountInfo | null {
   const a = current();
-  return a.mode === "entra" ? a.pca.getActiveAccount() : null;
+  return a.mode === "entra" ? resolveAccount(a.pca) : null;
 }
 
 export async function signIn() {
@@ -74,28 +93,35 @@ export async function signIn() {
 
 export async function signOut() {
   const a = current();
-  if (a.mode === "entra") await a.pca.logoutRedirect({ account: a.pca.getActiveAccount() });
+  if (a.mode === "entra") await a.pca.logoutRedirect({ account: resolveAccount(a.pca) });
   else {
     sessionStorage.removeItem("bb_dev_principal");
     location.assign("/dev-login");
   }
 }
 
+/** Acquire a bearer header from MSAL, returning null when interactive sign-in is required. */
+export async function acquireEntraHeaders(pca: TokenPca, scope: string, forceRefresh = false): Promise<Record<string, string> | null> {
+  const acc = resolveAccount(pca);
+  if (!acc) return null;
+  try {
+    const t = await pca.acquireTokenSilent({ scopes: [scope], account: acc, ...(forceRefresh ? { forceRefresh: true } : {}) });
+    return { authorization: `Bearer ${t.accessToken}` };
+  } catch (e) {
+    const err = e as { name?: string; errorCode?: string };
+    // InteractionRequiredAuthError (consent, MFA, expired session) or no_account_error (signed out in another tab):
+    // send the user through sign-in again rather than reporting the API unreachable.
+    if (err.name === "InteractionRequiredAuthError" || err.errorCode === "no_account_error") return null;
+    throw e;
+  }
+}
+
 /** Authorization header for an API call, or null when the user must sign in. */
-export async function authHeaders(): Promise<Record<string, string> | null> {
+export async function authHeaders(forceRefresh = false): Promise<Record<string, string> | null> {
   const a = current();
   if (a.mode === "dev") {
     const dev = sessionStorage.getItem("bb_dev_principal");
     return dev ? { "x-dev-principal": dev } : {};
   }
-  const acc = a.pca.getActiveAccount();
-  if (!acc) return null;
-  try {
-    const t = await a.pca.acquireTokenSilent({ scopes: [a.config.scope], account: acc });
-    return { authorization: `Bearer ${t.accessToken}` };
-  } catch (e) {
-    // InteractionRequiredAuthError (consent, MFA, expired session): send the user through sign-in again.
-    if ((e as { name?: string }).name === "InteractionRequiredAuthError") return null;
-    throw e;
-  }
+  return acquireEntraHeaders(a.pca, a.config.scope, forceRefresh);
 }

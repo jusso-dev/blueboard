@@ -206,18 +206,31 @@ export class ApiError extends Error {
   }
 }
 
+async function authedFetch(path: string, init?: RequestInit, defaultHeaders?: Record<string, string>): Promise<Response> {
+  const headers = await authHeaders();
+  if (headers === null) throw new ApiError("sign in required", 401);
+  const send = (auth: Record<string, string>) =>
+    fetch(`${current().apiBase}${path}`, {
+      ...init,
+      credentials: "omit",
+      headers: { ...defaultHeaders, ...auth, ...init?.headers },
+    });
+  const res = await send(headers);
+  // A cached Entra access token can expire right at a clock-skew boundary: refresh silently once before signing out.
+  if (res.status === 401 && current().mode === "entra") {
+    const fresh = await authHeaders(true);
+    if (fresh === null) throw new ApiError("sign in required", 401);
+    return send(fresh);
+  }
+  return res;
+}
+
 /**
  * JSON call to the board API with an Entra access token (or the dev principal locally).
  * A 401 means "signed out": the shell then offers Microsoft sign-in.
  */
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const headers = await authHeaders();
-  if (headers === null) throw new ApiError("sign in required", 401);
-  const res = await fetch(`${current().apiBase}${path}`, {
-    ...init,
-    credentials: "omit",
-    headers: { "content-type": "application/json", ...headers, ...init?.headers },
-  });
+  const res = await authedFetch(path, init, { "content-type": "application/json" });
   if (res.status === 204) return undefined as T;
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new ApiError(body.error ?? res.statusText, res.status, res.headers.get("retry-after"));
@@ -226,9 +239,7 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
 
 /** Fetch a file from the API with auth and save it (CSV export). Links can't carry a bearer token. */
 export async function download(path: string, filename: string) {
-  const headers = await authHeaders();
-  if (headers === null) throw new ApiError("sign in required", 401);
-  const res = await fetch(`${current().apiBase}${path}`, { headers, credentials: "omit" });
+  const res = await authedFetch(path);
   if (!res.ok) throw new ApiError(res.statusText, res.status);
   const url = URL.createObjectURL(await res.blob());
   const a = document.createElement("a");
