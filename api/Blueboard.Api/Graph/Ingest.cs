@@ -108,9 +108,10 @@ public sealed class Ingest(Db db, BoardService board, MsClient ms, SystemPrincip
             return UpsertOutcome.Created;
         }
 
-        // Overturn tracking: a resolved classification from Defender / Sentinel is compared with the latest agent verdict (once each).
+        // Overturn tracking: a resolved classification from Defender / Sentinel is compared with each agent's earlier verdict (once each).
         if (feedback is not null && status == "resolved" && classification is not null)
-            await feedback.RecordResolutionAsync(incidentId, classification, "sync", ct);
+            // Judged against verdicts from before Defender / Sentinel last changed the incident (else before this sync).
+            await feedback.RecordResolutionAsync(incidentId, classification, "sync", Time(inc, "lastUpdateDateTime") is { } changed && changed < DateTimeOffset.UtcNow ? changed : DateTimeOffset.UtcNow, ct);
 
         var changes = new List<string>();
         var p = prev.Value;

@@ -210,9 +210,34 @@ public sealed class AgentObservabilityTests(TestBoard t) : IClassFixture<TestBoa
         var incident = (await t.Board.ResolveIncidentAsync(graphId, Ct))!.Value;
         var verdict = await t.Board.PostAsync(agent, new PostInput("incidents", "Benign.", "verdict",
             A1.El(new { classification = "falsePositive", confidence = 0.9 }), Incident: graphId), ct: Ct);
-        Assert.Equal("correct", await app.Feedback.RecordResolutionAsync(incident, "falsePositive", "update_incident", Ct));
-        Assert.Null(await app.Feedback.RecordResolutionAsync(incident, "falsePositive", "sync", Ct)); // already compared
+        Assert.Equal("correct", await app.Feedback.RecordResolutionAsync(incident, "falsePositive", "update_incident", DateTimeOffset.UtcNow, Ct));
+        Assert.Null(await app.Feedback.RecordResolutionAsync(incident, "falsePositive", "sync", DateTimeOffset.UtcNow, Ct)); // already compared
         Assert.Equal(1, await t.ScalarAsync("select count(*) from agent_feedback where message_id = @m and verdict = 'correct'", ("m", verdict.Id)));
+    }
+
+    [DbFact]
+    public async Task An_agent_cannot_clear_its_overturn_by_posting_after_the_resolution()
+    {
+        var app = A1.Build(t, new Policy());
+        var agent = await NewAgent();
+        var other = await NewAgent();
+        var graphId = Random.Shared.Next(100_000, 999_999).ToString();
+        await app.Ingest.UpsertAsync(TestBoard.SampleIncident(graphId), Ct);
+        var incident = (await t.Board.ResolveIncidentAsync(graphId, Ct))!.Value;
+        var wrong = await t.Board.PostAsync(agent, new PostInput("incidents", "Malicious.", "verdict",
+            A1.El(new { classification = "truePositive", confidence = 0.9 }), Incident: graphId), ct: Ct);
+        var right = await t.Board.PostAsync(other, new PostInput("incidents", "Benign.", "verdict",
+            A1.El(new { classification = "falsePositive", confidence = 0.8 }), Incident: graphId), ct: Ct);
+        var resolvedAt = DateTimeOffset.UtcNow;
+        await Task.Delay(20, Ct);
+        // Seeing the resolution coming, the first agent posts a matching verdict; it's after the cut-off, so it is ignored.
+        var late = await t.Board.PostAsync(agent, new PostInput("incidents", "Actually benign.", "verdict",
+            A1.El(new { classification = "falsePositive", confidence = 0.99 }), Incident: graphId), ct: Ct);
+
+        await app.Feedback.RecordResolutionAsync(incident, "falsePositive", "update_incident", resolvedAt, Ct);
+        Assert.Equal(1, await t.ScalarAsync("select count(*) from agent_feedback where message_id = @m and source = 'resolution' and verdict = 'incorrect'", ("m", wrong.Id)));
+        Assert.Equal(1, await t.ScalarAsync("select count(*) from agent_feedback where message_id = @m and source = 'resolution' and verdict = 'correct'", ("m", right.Id)));
+        Assert.Equal(0, await t.ScalarAsync("select count(*) from agent_feedback where message_id = @m", ("m", late.Id)));
     }
 
     [DbFact]

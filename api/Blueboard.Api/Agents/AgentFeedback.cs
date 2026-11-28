@@ -14,8 +14,8 @@ public sealed record AgentAccuracy(
 
 /// <summary>
 /// Human feedback on agent verdicts, findings and IOCs, and overturns: when an incident is resolved (by an
-/// update_incident action or a Defender / Sentinel sync) with a classification other than the latest agent verdict on
-/// it, that verdict is recorded as incorrect (source=resolution), and a matching one as correct. Feedback is given only
+/// update_incident action or a Defender / Sentinel sync) with a classification other than an agent's last verdict on it
+/// from before the resolution, that verdict is recorded as incorrect (source=resolution), and a matching one as correct. Feedback is given only
 /// by people over REST; agents read feedback on their own messages with get_agent_feedback (read only).
 /// </summary>
 public sealed class AgentFeedback(Db db, Audit audit)
@@ -111,11 +111,16 @@ public sealed class AgentFeedback(Db db, Audit audit)
 
     /// <summary>
     /// An incident was resolved with <paramref name="classification"/> (via = update_incident or sync). Compares it with
-    /// the latest agent verdict on the incident, once per (incident, classification): a different classification is an
-    /// overturn (incorrect), the same one confirms it (correct). "unknown" resolutions are not judged. Returns the
-    /// outcome recorded, or null.
+    /// each agent's last verdict posted before <paramref name="resolvedBefore"/>, once per (incident, classification): a
+    /// different classification is an overturn (incorrect), the same one confirms it (correct). "unknown" resolutions are
+    /// not judged. Returns the outcome for the most recent of those verdicts, or null.
     /// </summary>
-    public async Task<string?> RecordResolutionAsync(Guid incidentId, string? classification, string via, CancellationToken ct = default)
+    /// <param name="resolvedBefore">
+    /// When the resolution was decided: the resolving action's created_at, or the time Defender / Sentinel last updated
+    /// the incident (or the ingest time, when the source has none). A verdict an agent posts after that, for example to
+    /// agree once it sees the incident resolved, is never judged, so it can't replace its earlier wrong verdict.
+    /// </param>
+    public async Task<string?> RecordResolutionAsync(Guid incidentId, string? classification, string via, DateTimeOffset resolvedBefore, CancellationToken ct = default)
     {
         if (classification is null || classification == "unknown" || !Classifications.Contains(classification)) return null;
         await using (var claim = db.Command("""
@@ -123,29 +128,32 @@ public sealed class AgentFeedback(Db db, Audit audit)
             """).With("i", incidentId).With("c", classification).With("v", via))
             if (await claim.ExecuteScalarAsync(ct) is null) return null;
 
-        Guid messageId, agentId; string agentCls;
+        var judged = new List<(Guid Message, Guid Agent, string Classification, long Seq)>();
         await using (var cmd = db.Command("""
-            select m.id, m.author_id, m.payload->>'classification' from messages m join principals p on p.id = m.author_id
-            where m.incident_id = @i and m.type = 'verdict' and p.kind = 'agent' and m.payload ? 'classification'
-            order by m.seq desc limit 1
-            """).With("i", incidentId))
+            select distinct on (m.author_id) m.id, m.author_id, m.payload->>'classification', m.seq
+            from messages m join principals p on p.id = m.author_id
+            where m.incident_id = @i and m.type = 'verdict' and p.kind = 'agent' and m.payload ? 'classification' and m.created_at < @before
+            order by m.author_id, m.seq desc
+            """).With("i", incidentId).With("before", resolvedBefore))
         await using (var r = await cmd.ExecuteReaderAsync(ct))
+            while (await r.ReadAsync(ct)) judged.Add((r.GetGuid(0), r.GetGuid(1), r.GetString(2), r.GetInt64(3)));
+        if (judged.Count == 0) return null;
+
+        foreach (var (messageId, agentId, agentCls, _) in judged)
         {
-            if (!await r.ReadAsync(ct)) return null;
-            (messageId, agentId, agentCls) = (r.GetGuid(0), r.GetGuid(1), r.GetString(2));
+            var outcome = agentCls == classification ? "correct" : "incorrect";
+            await using (var ins = db.Command("""
+                insert into agent_feedback (message_id, agent_id, given_by, source, verdict, reason, agent_classification, corrected_classification, incident_id)
+                values (@m, @a, null, 'resolution', @v, @r, @ac, @cc, @i)
+                on conflict (message_id, corrected_classification) where source = 'resolution' do nothing
+                """).With("m", messageId).With("a", agentId).With("v", outcome)
+                    .With("r", $"incident resolved as {classification} ({(via == "sync" ? "Defender / Sentinel" : "update_incident action")})")
+                    .With("ac", agentCls).With("cc", classification).With("i", incidentId))
+                await ins.ExecuteNonQueryAsync(ct);
+            await audit.WriteAsync(null, outcome == "incorrect" ? "agent.verdict_overturned" : "agent.verdict_confirmed", messageId.ToString(),
+                new { incident_id = incidentId, agent_classification = agentCls, resolved_classification = classification, via, resolved_before = resolvedBefore }, ct);
         }
-        var outcome = agentCls == classification ? "correct" : "incorrect";
-        await using (var ins = db.Command("""
-            insert into agent_feedback (message_id, agent_id, given_by, source, verdict, reason, agent_classification, corrected_classification, incident_id)
-            values (@m, @a, null, 'resolution', @v, @r, @ac, @cc, @i)
-            on conflict (message_id, corrected_classification) where source = 'resolution' do nothing
-            """).With("m", messageId).With("a", agentId).With("v", outcome)
-                .With("r", $"incident resolved as {classification} ({(via == "sync" ? "Defender / Sentinel" : "update_incident action")})")
-                .With("ac", agentCls).With("cc", classification).With("i", incidentId))
-            await ins.ExecuteNonQueryAsync(ct);
-        await audit.WriteAsync(null, outcome == "incorrect" ? "agent.verdict_overturned" : "agent.verdict_confirmed", messageId.ToString(),
-            new { incident_id = incidentId, agent_classification = agentCls, resolved_classification = classification, via }, ct);
-        return outcome;
+        return judged.MaxBy(j => j.Seq).Classification == classification ? "correct" : "incorrect";
     }
 
     /// <summary>Accuracy per agent over a range (verdicts, findings and IOCs posted in it). Board.Admin report.</summary>

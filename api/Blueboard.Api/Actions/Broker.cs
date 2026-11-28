@@ -713,12 +713,13 @@ public sealed class Broker(Db db, Audit audit, BoardService board, MsClient ms, 
         await board.PostAsync(await system.GetAsync(ct), new PostInput("containment", text, "action_result",
             Json.Element(new { action_id = id, status, error, auto_rule = a.AutoRule, revert_at = revertAt, revert_of = a.RevertOf }), a.RequestMessageId, a.IncidentId?.ToString()), system: true, ct);
         if (a.RevertOf is { } original) await SettleRevertAsync(original, id, status == "succeeded" ? "reverted" : "failed", error, ct);
-        // Overturn tracking: an incident really resolved here is compared with the latest agent verdict on it.
+        // Overturn tracking: an incident really resolved here is compared with each agent's verdict from before the request.
         if (status == "succeeded" && settings.BrokerExecute && feedback is not null && def.Kind == "update_incident"
             && prms?["status"]?.GetValue<string>() == "resolved" && prms["classification"]?.GetValue<string>() is { } resolvedAs)
         {
             var incidentId = a.IncidentId ?? await board.ResolveIncidentAsync(prms["incident_id"]?.GetValue<string>(), ct);
-            if (incidentId is { } resolvedIncident) await feedback.RecordResolutionAsync(resolvedIncident, resolvedAs, "update_incident", ct);
+            // Judged against verdicts posted before this update_incident was requested.
+            if (incidentId is { } resolvedIncident) await feedback.RecordResolutionAsync(resolvedIncident, resolvedAs, "update_incident", a.CreatedAt, ct);
         }
     }
 
