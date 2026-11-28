@@ -125,8 +125,12 @@ public static class Reversal
             case "restrict_app_execution":
                 return (reverse, new JsonObject { ["machine_id"] = p["machine_id"]!.GetValue<string>() }, null);
             case "disable_user":
-            case "okta_suspend_user":
                 return (reverse, new JsonObject { ["user"] = p["user"]!.GetValue<string>() }, null);
+            case "okta_suspend_user":
+                // Undo on the same Okta user the suspend acted on: carry the id pinned at request time.
+                var reverseParams = new JsonObject { ["user"] = p["user"]!.GetValue<string>() };
+                if (p["okta_user_id"]?.GetValue<string>() is { } pinned) reverseParams["okta_user_id"] = pinned;
+                return (reverse, reverseParams, null);
             case "block_indicator":
                 if (result is { ValueKind: JsonValueKind.Object } r && r.TryGetProperty("id", out var id)
                     && (id.ValueKind == JsonValueKind.Number ? id.GetRawText() : id.ValueKind == JsonValueKind.String ? id.GetString() : null) is { } v

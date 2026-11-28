@@ -70,6 +70,9 @@ public class CrossWorkstreamTests
         var (k, p, _) = Reversal.Build("okta_suspend_user", new JsonObject { ["user"] = "00uabc123def456ghi78" }, null);
         Assert.Equal("okta_unsuspend_user", k);
         Assert.Equal("00uabc123def456ghi78", Catalog.Get(k!).Validate(JsonSerializer.SerializeToElement(p))["user"]!.GetValue<string>());
+        // The pinned Okta id travels with the revert, so the unsuspend acts on the same user.
+        var (_, pinned, _) = Reversal.Build("okta_suspend_user", new JsonObject { ["user"] = "ana@contoso.com", ["okta_user_id"] = "00uabc123def456ghi78" }, null);
+        Assert.Equal("00uabc123def456ghi78", Catalog.Get("okta_unsuspend_user").Validate(JsonSerializer.SerializeToElement(pinned))["okta_user_id"]!.GetValue<string>());
     }
 
     [Fact]
