@@ -6,7 +6,8 @@ namespace Blueboard.Api.Agents;
 
 /// <summary>
 /// Turns MCP tool arguments into a small, redacted summary for the trace. Never stores secrets or result payloads:
-/// any string the board's secret-leak detector flags is replaced, keys that name credentials are dropped, strings are
+/// any string the board's secret-leak detector flags is replaced (bearer and bare JWTs, vendor keys, connection-string
+/// keys and passwords, SAS signatures), keys that name credentials are dropped, strings are
 /// cut to a short excerpt, lists and depth are capped, and the whole summary is capped at <see cref="MaxBytes"/>.
 /// KQL for hunting tools is kept in full (up to 10,000 characters) unless it carries a secret.
 /// </summary>
@@ -21,12 +22,25 @@ public static class TraceRedactor
     /// <summary>Tools whose "query" argument is KQL worth showing in the trace.</summary>
     public static readonly HashSet<string> KqlTools = ["run_hunting_query", "run_sentinel_query"];
 
-    private static readonly string[] SensitiveKeyParts = ["secret", "password", "passwd", "token", "authorization", "credential", "api_key", "apikey", "private_key", "signing", "cookie", "session_key"];
+    /// <summary>Key names that hold a credential anywhere in the name (substring, case-insensitive).</summary>
+    private static readonly string[] SensitiveKeyParts = ["secret", "password", "passwd", "token", "authorization", "credential", "apikey", "privatekey",
+        "signing", "cookie", "sessionkey", "accesskey", "accountkey", "sharedaccesskey", "connectionstring"];
+    /// <summary>Short words that name a credential only as a whole word of the key (so "auth" but not "author", "oauth_app").</summary>
+    private static readonly string[] SensitiveKeyWords = ["auth", "pwd", "sig", "pat", "jwt", "bearer"];
 
+    /// <summary>
+    /// True for argument names that hold credentials, case-insensitive: x-api-key, api_key, access_key, auth,
+    /// authorization, client_secret, private_key, cookie, password, sig… Separators (_ - . space) are ignored for the
+    /// substring check, and short words match only as a whole segment.
+    /// </summary>
     public static bool IsSensitiveKey(string key)
     {
         var k = key.ToLowerInvariant();
-        return SensitiveKeyParts.Any(k.Contains);
+        var joined = new string(k.Where(char.IsAsciiLetterOrDigit).ToArray());
+        if (SensitiveKeyParts.Any(joined.Contains)) return true;
+        var words = k.Split(['_', '-', '.', ' '], StringSplitOptions.RemoveEmptyEntries);
+        return words.Any(SensitiveKeyWords.Contains) || (words.Contains("api") && words.Contains("key")) || (words.Contains("private") && words.Contains("key"))
+               || (words.Contains("access") && words.Contains("key"));
     }
 
     /// <summary>The redacted argument summary (null for no arguments).</summary>

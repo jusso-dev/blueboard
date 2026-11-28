@@ -187,4 +187,51 @@ public class AgentObservabilityTests
         Assert.Equal(0, new PriceTable().ToolPrice(McpObserver.RestWhoAmI));
         Assert.Equal(PriceTable.DefaultToolPriceUsd, new PriceTable().ToolPrice("rest:POST /api/actions"));
     }
+    private const string BareJwt = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwiYXVkIjoiYXBpOi8veCJ9.c2lnbmF0dXJlLXZhbHVlLWhlcmU";
+
+    [Theory]
+    [InlineData("token: " + BareJwt)]
+    [InlineData("https://acct.blob.core.windows.net/c/f?sv=2022-11-02&ss=b&srt=o&sp=r&se=2026-12-01T00:00:00Z&sig=abcdEFGHijklMNOPqrstUVWXyz0123456789%2BABCDE%3D")]
+    [InlineData("Server=tcp:db.contoso.com,1433;Initial Catalog=prod;User ID=svc;Password=Hunter2!Secret;")]
+    [InlineData("Data Source=sql01;Database=hr;uid=sa;pwd=S3cretPass")]
+    [InlineData("Endpoint=sb://ns.servicebus.windows.net/;SharedAccessKeyName=root;SharedAccessKey=AbCdEfGhIjKlMnOpQrStUvWxYz0123456789+/=")]
+    [InlineData("DefaultEndpointsProtocol=https;AccountName=x;AccountKey=abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGH==")]
+    public void Secret_leak_detector_catches_bare_jwts_sas_and_connection_string_secrets(string text) =>
+        Assert.NotNull(Board.BoardService.DetectSecretLeak(text));
+
+    [Theory]
+    // Ordinary SOC text must still post.
+    [InlineData("User reset their password=yes per helpdesk ticket; no further action.")]
+    [InlineData("Process ran: powershell.exe -enc SQBFAFgAIAAoAE4AZQB3AC0ATwBiAGoAZQBjAHQA")]
+    [InlineData("sha256 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08 seen on ws-042")]
+    [InlineData("Phishing URL https://evil.example/login?sig=abc&id=42 blocked")]
+    [InlineData("Header eyJ is base64 for a JSON brace; not a token.")]
+    [InlineData("eyJ0eXAiOiJKV1QifQ.eyJzdWIiOiIxIn0.c2lnbmF0dXJlLXZhbHVl has no alg, so it is not a JWT")]
+    [InlineData("Device 4b1d7e2c9f0a3b6d8e5c1a7f2e9d0c3b6a8f1e4d, incident 90210, user ana@contoso.com")]
+    public void Secret_leak_detector_lets_ordinary_soc_text_through(string text) =>
+        Assert.Null(Board.BoardService.DetectSecretLeak(text));
+
+    [Fact]
+    public void Bare_jwt_needs_three_segments_and_an_alg_header()
+    {
+        Assert.True(Board.BoardService.IsJwt(BareJwt));
+        Assert.False(Board.BoardService.IsJwt("eyJ0eXAiOiJKV1QifQ.eyJzdWIiOiIxIn0.c2lnbmF0dXJlLXZhbHVl"));
+        Assert.False(Board.BoardService.IsJwt("eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0"));
+        Assert.False(Board.BoardService.IsJwt("eyJ!!!.eyJ.x"));
+    }
+
+    [Theory]
+    [InlineData("x-api-key")] [InlineData("X-Api-Key")] [InlineData("api_key")] [InlineData("access_key")] [InlineData("AccessKey")]
+    [InlineData("auth")] [InlineData("Authorization")] [InlineData("client_secret")] [InlineData("private_key")] [InlineData("Cookie")]
+    [InlineData("set-cookie")] [InlineData("sig")] [InlineData("connection_string")] [InlineData("pwd")]
+    public void Sensitive_key_names_are_redacted_case_insensitively(string key)
+    {
+        Assert.True(TraceRedactor.IsSensitiveKey(key));
+        var s = TraceRedactor.Summarise(JsonSerializer.SerializeToElement(new Dictionary<string, object> { [key] = "value-123" }))!;
+        Assert.Equal("[redacted]", s[key]!.GetValue<string>());
+    }
+
+    [Theory]
+    [InlineData("author")] [InlineData("oauth_app")] [InlineData("message_id")] [InlineData("query")] [InlineData("signal")] [InlineData("path")]
+    public void Ordinary_argument_names_are_kept(string key) => Assert.False(TraceRedactor.IsSensitiveKey(key));
 }
