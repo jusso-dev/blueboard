@@ -6,6 +6,7 @@ using Blueboard.Api.Ops;
 using Blueboard.Contracts;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Npgsql;
 
 namespace Blueboard.Api.Agents;
 
@@ -135,9 +136,9 @@ public sealed class AgentBudgets(Db db, Audit audit, BoardService board, SystemP
     }
 
     /// <summary>Spend for the current UTC day and month: reported LLM cost plus metered tool cost; tokens are reported only.</summary>
-    private async Task<(double DayUsd, long DayTokens, double MonthUsd, long MonthTokens)> SpendAsync(Guid principalId, CancellationToken ct)
+    private static async Task<(double DayUsd, long DayTokens, double MonthUsd, long MonthTokens)> SpendAsync(NpgsqlConnection conn, NpgsqlTransaction tx, Guid principalId, CancellationToken ct)
     {
-        await using var cmd = db.Command("""
+        await using var cmd = new NpgsqlCommand("""
             with b as (select (now() at time zone 'utc')::date as d0, date_trunc('month', now() at time zone 'utc')::date as m0)
             select
               coalesce((select sum(u.cost_usd) from agent_usage u, b where u.principal_id = @p and u.created_at >= b.d0::timestamp at time zone 'utc'), 0)
@@ -146,7 +147,7 @@ public sealed class AgentBudgets(Db db, Audit audit, BoardService board, SystemP
               coalesce((select sum(u.cost_usd) from agent_usage u, b where u.principal_id = @p and u.created_at >= b.m0::timestamp at time zone 'utc'), 0)
                 + coalesce((select sum(m.cost_usd) from agent_metered_daily m, b where m.principal_id = @p and m.day >= b.m0), 0),
               coalesce((select sum(u.input_tokens + u.output_tokens + u.cache_read_tokens + u.cache_write_tokens) from agent_usage u, b where u.principal_id = @p and u.created_at >= b.m0::timestamp at time zone 'utc'), 0)
-            """).With("p", principalId);
+            """, conn, tx).With("p", principalId);
         await using var r = await cmd.ExecuteReaderAsync(ct);
         await r.ReadAsync(ct);
         return ((double)r.GetDecimal(0), (long)r.GetDecimal(1), (double)r.GetDecimal(2), (long)r.GetDecimal(3));
@@ -154,14 +155,14 @@ public sealed class AgentBudgets(Db db, Audit audit, BoardService board, SystemP
 
     private sealed record Limits(double? DailyUsd, double? MonthlyUsd, long? DailyTokens, long? MonthlyTokens, int SoftPct, double TopupUsd, long TopupTokens);
 
-    private async Task<Limits?> LimitsAsync(Guid principalId, CancellationToken ct)
+    private static async Task<Limits?> LimitsAsync(NpgsqlConnection conn, NpgsqlTransaction tx, Guid principalId, CancellationToken ct)
     {
-        await using var cmd = db.Command("""
+        await using var cmd = new NpgsqlCommand("""
             select b.daily_usd, b.monthly_usd, b.daily_tokens, b.monthly_tokens, b.soft_pct,
                    coalesce((select sum(usd) from agent_budget_topups t where t.principal_id = b.principal_id and t.expires_at > now()), 0),
                    coalesce((select sum(tokens) from agent_budget_topups t where t.principal_id = b.principal_id and t.expires_at > now()), 0)
             from agent_budgets b where b.principal_id = @p
-            """).With("p", principalId);
+            """, conn, tx).With("p", principalId);
         await using var r = await cmd.ExecuteReaderAsync(ct);
         if (!await r.ReadAsync(ct)) return null;
         return new Limits(r.IsDBNull(0) ? null : (double)r.GetDecimal(0), r.IsDBNull(1) ? null : (double)r.GetDecimal(1),
@@ -193,92 +194,127 @@ public sealed class AgentBudgets(Db db, Audit audit, BoardService board, SystemP
     }
 
     /// <summary>
-    /// Re-checks an agent against its budget: soft alert once per period, hard cap once per period (release claims,
-    /// notice, audit, alert), and clears a block an admin change has lifted. Returns the position.
+    /// Re-checks an agent against its budget: soft alert once per period, hard cap (release claims, notice, audit, alert),
+    /// and clears a block an admin change or new spend picture has lifted. Returns the position.
     /// </summary>
-    public async Task<BudgetPosition?> EvaluateAsync(Guid principalId, CancellationToken ct = default)
+    /// <remarks>
+    /// Evaluate, block and clear run in one transaction under a per-principal advisory lock, so concurrent evaluations
+    /// (metering on parallel calls, a report, the sweep, an admin change) queue and each sees the last one's result: they
+    /// can't flip block and clear against each other. The #general notice and approver alert go out once per period
+    /// (<c>notified_at</c>), however often a block is cleared and re-applied in it; every block and clear is audited.
+    /// </remarks>
+    /// <param name="adminChange">An admin raised, removed or topped up the budget: clear any block first (then re-check).</param>
+    public async Task<BudgetPosition?> EvaluateAsync(Guid principalId, CancellationToken ct = default, string? adminChange = null)
     {
-        var limits = await LimitsAsync(principalId, ct);
-        if (limits is null) return null;
-        var (dayUsd, dayTokens, monthUsd, monthTokens) = await SpendAsync(principalId, ct);
-        var exceeded = Exceeded(dayUsd, dayTokens, monthUsd, monthTokens, limits.DailyUsd, limits.MonthlyUsd, limits.DailyTokens, limits.MonthlyTokens, limits.TopupUsd, limits.TopupTokens);
-        var burn = Burn(dayUsd, dayTokens, monthUsd, monthTokens, limits.DailyUsd, limits.MonthlyUsd, limits.DailyTokens, limits.MonthlyTokens, limits.TopupUsd, limits.TopupTokens);
+        Limits? limits;
+        double dayUsd = 0, monthUsd = 0;
+        long dayTokens = 0, monthTokens = 0;
+        (string Period, string Reason)? exceeded = null;
+        var burn = 0d;
+        var cleared = false;
+        var newlyBlocked = false;
+        var notify = false;
+        var softAlert = false;
+        var released = 0;
+        await using (var conn = await db.OpenAsync(ct))
+        await using (var tx = await conn.BeginTransactionAsync(ct))
+        {
+            await using (var lk = new NpgsqlCommand("select pg_advisory_xact_lock(hashtext('budget:' || @p::text))", conn, tx).With("p", principalId))
+                await lk.ExecuteNonQueryAsync(ct);
+            limits = await LimitsAsync(conn, tx, principalId, ct);
+            if (adminChange is not null || limits is null)
+                cleared = await ClearBlocksAsync(conn, tx, principalId, adminChange ?? "no budget", ct);
+            if (limits is not null)
+            {
+                (dayUsd, dayTokens, monthUsd, monthTokens) = await SpendAsync(conn, tx, principalId, ct);
+                exceeded = Exceeded(dayUsd, dayTokens, monthUsd, monthTokens, limits.DailyUsd, limits.MonthlyUsd, limits.DailyTokens, limits.MonthlyTokens, limits.TopupUsd, limits.TopupTokens);
+                burn = Burn(dayUsd, dayTokens, monthUsd, monthTokens, limits.DailyUsd, limits.MonthlyUsd, limits.DailyTokens, limits.MonthlyTokens, limits.TopupUsd, limits.TopupTokens);
+                if (exceeded is { } x)
+                {
+                    (newlyBlocked, notify) = await BlockAsync(conn, tx, principalId, x.Period, x.Reason, ct);
+                    if (newlyBlocked)
+                        await using (var rel = new NpgsqlCommand("""
+                            update messages set claim_state = 'open', claimed_by = null, claim_expires_at = null
+                            where claimed_by = @p and claim_state = 'claimed'
+                            """, conn, tx).With("p", principalId))
+                            released = await rel.ExecuteNonQueryAsync(ct);
+                }
+                else
+                {
+                    cleared |= await ClearBlocksAsync(conn, tx, principalId, "spend is within budget", ct);
+                    if (burn * 100 >= limits.SoftPct)
+                        await using (var soft = new NpgsqlCommand("""
+                            insert into agent_budget_state as s (principal_id, period, period_start, soft_alerted_at)
+                            values (@p, 'month', date_trunc('month', now() at time zone 'utc')::date, now())
+                            on conflict (principal_id, period, period_start) do update set soft_alerted_at = now() where s.soft_alerted_at is null
+                            returning 1
+                            """, conn, tx).With("p", principalId))
+                            softAlert = await soft.ExecuteScalarAsync(ct) is not null;
+                }
+            }
+            await tx.CommitAsync(ct);
+        }
 
-        var blocked = false;
-        if (exceeded is { } x)
+        // Side effects after commit, decided under the lock, so each happens once.
+        if (cleared || newlyBlocked || softAlert)
         {
-            blocked = true;
-            await BlockAsync(principalId, x.Period, x.Reason, new { day_usd = dayUsd, month_usd = monthUsd, day_tokens = dayTokens, month_tokens = monthTokens }, ct);
+            var handle = await HandleAsync(principalId, ct);
+            var sys = await system.GetAsync(ct);
+            if (cleared && !newlyBlocked) await audit.WriteAsync(sys.Id, "agent.budget_cleared", handle, new { why = adminChange ?? "spend is within budget" }, ct);
+            if (newlyBlocked && exceeded is { } x)
+            {
+                await audit.WriteAsync(sys.Id, "agent.budget_exceeded", handle,
+                    new { period = x.Period, reason = x.Reason, spend = new { day_usd = dayUsd, month_usd = monthUsd, day_tokens = dayTokens, month_tokens = monthTokens }, released_claims = released, notified = notify }, ct);
+                if (notify)
+                {
+                    await board.PostAsync(sys, new PostInput("general",
+                        $"@{handle} is **over budget** ({x.Reason}). The board refuses its MCP and REST calls until the {(x.Period == "day" ? "next UTC day" : "next UTC month")} or an admin raises its budget or grants a top-up on Agents.{(released > 0 ? $" Released {released} claim(s) it held." : "")}",
+                        "status", Json.Element(new { state = "agent_budget_exceeded", handle, period = x.Period })), system: true, ct);
+                    await AlertAsync("agent.budget_exceeded", $"@{handle} is over budget", handle, x.Reason, ct);
+                }
+            }
+            if (softAlert && limits is not null)
+            {
+                var pct = (int)Math.Floor(burn * 100);
+                await audit.WriteAsync(sys.Id, "agent.budget_soft_alert", handle, new { used_pct = pct, soft_pct = limits.SoftPct }, ct);
+                await board.PostAsync(sys, new PostInput("general",
+                    $"@{handle} has used {pct}% of a budget limit (alert at {limits.SoftPct}%). An admin can review it on Agents.",
+                    "status", Json.Element(new { state = "agent_budget_soft_alert", handle, used_pct = pct })), system: true, ct);
+                await AlertAsync("agent.budget_soft_alert", $"@{handle} at {pct}% of budget", handle, $"alert threshold {limits.SoftPct}%", ct);
+            }
         }
-        else
-        {
-            await ClearBlocksAsync(principalId, "spend is within budget", ct);
-            if (burn * 100 >= limits.SoftPct) await SoftAlertAsync(principalId, burn, limits.SoftPct, ct);
-        }
-        return new BudgetPosition(Math.Round(dayUsd, 4), dayTokens, Math.Round(monthUsd, 4), monthTokens,
-            limits.DailyUsd, limits.MonthlyUsd, limits.DailyTokens, limits.MonthlyTokens, limits.SoftPct, blocked);
+        return limits is null ? null : new BudgetPosition(Math.Round(dayUsd, 4), dayTokens, Math.Round(monthUsd, 4), monthTokens,
+            limits.DailyUsd, limits.MonthlyUsd, limits.DailyTokens, limits.MonthlyTokens, limits.SoftPct, exceeded is not null);
     }
 
     private const string PeriodStart = "case when @per = 'day' then (now() at time zone 'utc')::date else date_trunc('month', now() at time zone 'utc')::date end";
 
-    private async Task BlockAsync(Guid principalId, string period, string reason, object spend, CancellationToken ct)
+    /// <summary>Blocks for the period. Newly: it wasn't blocked a moment ago. Notify: nobody was told yet this period.</summary>
+    private static async Task<(bool Newly, bool Notify)> BlockAsync(NpgsqlConnection conn, NpgsqlTransaction tx, Guid principalId, string period, string reason, CancellationToken ct)
     {
-        // One row per period: the first report over the line wins the insert and does the side effects exactly once.
-        await using (var cmd = db.Command($"""
+        await using (var cmd = new NpgsqlCommand($"""
             insert into agent_budget_state as s (principal_id, period, period_start, exceeded_at, detail)
             values (@p, @per, {PeriodStart}, now(), jsonb_build_object('reason', @r::text))
             on conflict (principal_id, period, period_start) do update
               set exceeded_at = now(), cleared_at = null, detail = jsonb_build_object('reason', @r::text)
               where s.exceeded_at is null or s.cleared_at is not null
             returning 1
-            """).With("p", principalId).With("per", period).With("r", reason))
-            if (await cmd.ExecuteScalarAsync(ct) is null) return;
-
-        var handle = await HandleAsync(principalId, ct);
-        int released;
-        await using (var rel = db.Command("""
-            update messages set claim_state = 'open', claimed_by = null, claim_expires_at = null
-            where claimed_by = @p and claim_state = 'claimed'
-            """).With("p", principalId))
-            released = await rel.ExecuteNonQueryAsync(ct);
-        var sys = await system.GetAsync(ct);
-        await audit.WriteAsync(sys.Id, "agent.budget_exceeded", handle, new { period, reason, spend, released_claims = released }, ct);
-        await board.PostAsync(sys, new PostInput("general",
-            $"@{handle} is **over budget** ({reason}). The board refuses its MCP calls until the {(period == "day" ? "next UTC day" : "next UTC month")} or an admin raises its budget or grants a top-up on Agents.{(released > 0 ? $" Released {released} claim(s) it held." : "")}",
-            "status", Json.Element(new { state = "agent_budget_exceeded", handle, period })), system: true, ct);
-        await AlertAsync("agent.budget_exceeded", $"@{handle} is over budget", handle, reason, ct);
+            """, conn, tx).With("p", principalId).With("per", period).With("r", reason))
+            if (await cmd.ExecuteScalarAsync(ct) is null) return (false, false);
+        await using var mark = new NpgsqlCommand($"""
+            update agent_budget_state set notified_at = now()
+            where principal_id = @p and period = @per and period_start = {PeriodStart} and notified_at is null returning 1
+            """, conn, tx).With("p", principalId).With("per", period);
+        return (true, await mark.ExecuteScalarAsync(ct) is not null);
     }
 
-    private async Task SoftAlertAsync(Guid principalId, double burn, int softPct, CancellationToken ct)
+    private static async Task<bool> ClearBlocksAsync(NpgsqlConnection conn, NpgsqlTransaction tx, Guid principalId, string why, CancellationToken ct)
     {
-        // Soft alerts follow the monthly period (one per month), so a busy agent doesn't alert every day.
-        await using (var cmd = db.Command("""
-            insert into agent_budget_state as s (principal_id, period, period_start, soft_alerted_at)
-            values (@p, 'month', date_trunc('month', now() at time zone 'utc')::date, now())
-            on conflict (principal_id, period, period_start) do update set soft_alerted_at = now() where s.soft_alerted_at is null
-            returning 1
-            """).With("p", principalId))
-            if (await cmd.ExecuteScalarAsync(ct) is null) return;
-        var handle = await HandleAsync(principalId, ct);
-        var pct = (int)Math.Floor(burn * 100);
-        var sys = await system.GetAsync(ct);
-        await audit.WriteAsync(sys.Id, "agent.budget_soft_alert", handle, new { used_pct = pct, soft_pct = softPct }, ct);
-        await board.PostAsync(sys, new PostInput("general",
-            $"@{handle} has used {pct}% of a budget limit (alert at {softPct}%). An admin can review it on Agents.",
-            "status", Json.Element(new { state = "agent_budget_soft_alert", handle, used_pct = pct })), system: true, ct);
-        await AlertAsync("agent.budget_soft_alert", $"@{handle} at {pct}% of budget", handle, $"alert threshold {softPct}%", ct);
-    }
-
-    private async Task ClearBlocksAsync(Guid principalId, string why, CancellationToken ct)
-    {
-        await using var cmd = db.Command("""
+        await using var cmd = new NpgsqlCommand("""
             update agent_budget_state set cleared_at = now(), detail = coalesce(detail, '{}') || jsonb_build_object('cleared', @w::text)
             where principal_id = @p and exceeded_at is not null and cleared_at is null
-            returning period
-            """).With("p", principalId).With("w", why);
-        var any = false;
-        await using (var r = await cmd.ExecuteReaderAsync(ct)) while (await r.ReadAsync(ct)) any = true;
-        if (any) await audit.WriteAsync((await system.GetAsync(ct)).Id, "agent.budget_cleared", await HandleAsync(principalId, ct), new { why }, ct);
+            """, conn, tx).With("p", principalId).With("w", why);
+        return await cmd.ExecuteNonQueryAsync(ct) > 0;
     }
 
     private async Task AlertAsync(string evt, string headline, string handle, string detail, CancellationToken ct)
@@ -326,9 +362,8 @@ public sealed class AgentBudgets(Db db, Audit audit, BoardService board, SystemP
                 .With("dt", b.DailyTokens).With("mt", b.MonthlyTokens).With("soft", b.SoftPct).With("note", reason).With("by", me.Id))
             await cmd.ExecuteNonQueryAsync(ct);
         await audit.WriteAsync(me.Id, "agent.budget_set", handle, new { b.DailyUsd, b.MonthlyUsd, b.DailyTokens, b.MonthlyTokens, b.SoftPct, reason }, ct);
-        // A raised budget lifts the block now; a lowered one may block now.
-        await ClearBlocksAsync(id, $"budget changed by @{me.Handle}", ct);
-        await EvaluateAsync(id, ct);
+        // A raised budget lifts the block now; a lowered one may block now (one locked step).
+        await EvaluateAsync(id, ct, $"budget changed by @{me.Handle}");
         return (await ListAsync(me, ct)).First(x => x.PrincipalId == id);
     }
 
@@ -340,7 +375,7 @@ public sealed class AgentBudgets(Db db, Audit audit, BoardService board, SystemP
         await using (var cmd = db.Command("delete from agent_budgets where principal_id = @p").With("p", id))
             await cmd.ExecuteNonQueryAsync(ct);
         await audit.WriteAsync(me.Id, "agent.budget_removed", handle, new { reason }, ct);
-        await ClearBlocksAsync(id, $"budget removed by @{me.Handle}", ct);
+        await EvaluateAsync(id, ct, $"budget removed by @{me.Handle}");
         return (await ListAsync(me, ct)).First(x => x.PrincipalId == id);
     }
 
@@ -358,8 +393,7 @@ public sealed class AgentBudgets(Db db, Audit audit, BoardService board, SystemP
             """).With("p", id).With("u", (decimal)t.Usd).With("t", t.Tokens).With("h", t.Hours).With("r", reason).With("by", me.Id))
             await cmd.ExecuteNonQueryAsync(ct);
         await audit.WriteAsync(me.Id, "agent.budget_topup", handle, new { t.Usd, t.Tokens, t.Hours, reason }, ct);
-        await ClearBlocksAsync(id, $"top-up by @{me.Handle}", ct);
-        await EvaluateAsync(id, ct);
+        await EvaluateAsync(id, ct, $"top-up by @{me.Handle}");
         return (await ListAsync(me, ct)).First(x => x.PrincipalId == id);
     }
 

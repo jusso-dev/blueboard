@@ -109,6 +109,33 @@ public sealed class AgentObservabilityTests(TestBoard t) : IClassFixture<TestBoa
     }
 
     [DbFact]
+    public async Task Concurrent_evaluations_block_once_notify_once_and_never_flip()
+    {
+        var app = A1.Build(t, new Policy());
+        var agent = await NewAgent();
+        var admin = await t.As("analyst");
+        await app.Budgets.SetBudgetAsync(admin, agent.Handle, new BudgetInput(DailyUsd: 0.05, Reason: "integration test budget"), Ct);
+
+        // Forty metered calls race (each re-evaluates); spend crosses $0.05 part-way through.
+        await Task.WhenAll(Enumerable.Range(0, 40).Select(_ => Task.Run(() => app.Budgets.MeterAsync(agent.Id, "read_feed", false, Ct), Ct)));
+        await Task.WhenAll(Enumerable.Range(0, 20).Select(_ => Task.Run(() => app.Budgets.EvaluateAsync(agent.Id, Ct), Ct)));
+
+        Assert.True((await app.Budgets.EvaluateAsync(agent.Id, Ct))!.Blocked);
+        Assert.Equal(1, await t.ScalarAsync("select count(*) from audit_log where event = 'agent.budget_exceeded' and subject = @h", ("h", agent.Handle)));
+        Assert.Equal(0, await t.ScalarAsync("select count(*) from audit_log where event = 'agent.budget_cleared' and subject = @h", ("h", agent.Handle)));
+        Assert.Equal(1, await t.ScalarAsync("select count(*) from messages where payload->>'state' = 'agent_budget_exceeded' and payload->>'handle' = @h", ("h", agent.Handle)));
+
+        // An admin top-up clears it; going over again in the same period blocks again but doesn't notify again.
+        await app.Budgets.TopUpAsync(admin, agent.Handle, new TopupInput(Usd: 0.5, Hours: 1, Reason: "integration test top-up"), Ct);
+        Assert.False((await app.Budgets.EvaluateAsync(agent.Id, Ct))!.Blocked);
+        await app.Budgets.SetBudgetAsync(admin, agent.Handle, new BudgetInput(DailyUsd: 0.01, Reason: "integration test lower"), Ct);
+        await using (var c = t.Db.Command("delete from agent_budget_topups where principal_id = @p").With("p", agent.Id)) await c.ExecuteNonQueryAsync(Ct);
+        await Task.WhenAll(Enumerable.Range(0, 10).Select(_ => Task.Run(() => app.Budgets.EvaluateAsync(agent.Id, Ct), Ct)));
+        Assert.True((await app.Budgets.EvaluateAsync(agent.Id, Ct))!.Blocked);
+        Assert.Equal(1, await t.ScalarAsync("select count(*) from messages where payload->>'state' = 'agent_budget_exceeded' and payload->>'handle' = @h", ("h", agent.Handle)));
+    }
+
+    [DbFact]
     public async Task Usage_reports_are_validated_deduplicated_and_priced_by_the_board()
     {
         var app = A1.Build(t, new Policy());
