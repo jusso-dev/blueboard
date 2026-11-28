@@ -136,6 +136,17 @@ public sealed class AgentObservabilityTests(TestBoard t) : IClassFixture<TestBoa
     }
 
     [DbFact]
+    public async Task Agent_report_accepts_a_range_with_any_utc_offset()
+    {
+        var reports = new AgentReports(t.Db, new AgentFeedback(t.Db, t.Audit));
+        var admin = await t.As("analyst");
+        var to = new DateTimeOffset(DateTime.UtcNow.Ticks, TimeSpan.Zero).ToOffset(TimeSpan.FromHours(10));
+        var report = await reports.BuildAsync(admin, to.AddDays(-7), to, Ct);
+        Assert.NotNull(report);
+        await Assert.ThrowsAsync<BoardException>(() => reports.BuildAsync(admin, to, to.AddDays(-1), Ct));
+    }
+
+    [DbFact]
     public async Task Usage_reports_are_validated_deduplicated_and_priced_by_the_board()
     {
         var app = A1.Build(t, new Policy());

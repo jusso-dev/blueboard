@@ -115,11 +115,13 @@ public sealed record TimelineRef(string Type, string Id, string? Label = null);
 /// One attack-timeline event. Kind: alert | evidence (from Defender/Sentinel data) | finding | ioc | verdict (board
 /// messages) | action (brokered actions). Lane: attack (what the adversary did), detection (alerts raised) or response
 /// (what the team did). Reported = a participant's claim (finding/ioc events[]), not Defender evidence; InEvidence says
-/// whether its entities appear in the incident's evidence.
+/// whether its entities appear in the incident's evidence. Source is who the board says it came from: for a reported
+/// event always "reported by @handle"; the source the participant claimed (say "Microsoft Defender XDR") is kept apart
+/// in ClaimedSource, untrusted, so a claim can never look like Defender evidence.
 /// </summary>
 public sealed record TimelineEvent(
     string Id, DateTimeOffset Ts, string Kind, string Lane, string Action, string[] Entities, string Source,
-    TimelineRef[] Refs, string[] ReportedBy, bool Reported, bool? InEvidence, Guid? ThreadId);
+    TimelineRef[] Refs, string[] ReportedBy, bool Reported, bool? InEvidence, Guid? ThreadId, string? ClaimedSource = null);
 
 public sealed record IncidentTimelineResult(Guid IncidentId, string GraphId, IReadOnlyList<TimelineEvent> Events, int Total, bool Truncated, string Notice);
 

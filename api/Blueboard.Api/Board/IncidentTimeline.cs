@@ -48,6 +48,7 @@ public static class IncidentTimeline
         public required string Action;
         public required List<string> Entities;
         public required string Source;
+        public string? ClaimedSource;
         public List<TimelineRef> Refs = [];
         public List<string> ReportedBy = [];
         public bool Reported;
@@ -144,7 +145,8 @@ public static class IncidentTimeline
                     Add(new Acc
                     {
                         Ts = ts, Kind = m.Type, Lane = "attack", Action = action, Entities = [entity],
-                        Source = Str(e, "source") ?? $"reported by @{m.Author.Handle}", Refs = refs, ReportedBy = [m.Author.Handle],
+                        // Always attributed to the reporter; the source they claim is shown separately, as untrusted.
+                        Source = $"reported by @{m.Author.Handle}", ClaimedSource = Str(e, "source"), Refs = refs, ReportedBy = [m.Author.Handle],
                         Reported = true, InEvidence = InEvidence(entity, evidence), ThreadId = thread,
                     });
                 }
@@ -244,7 +246,8 @@ public static class IncidentTimeline
             && (string.IsNullOrWhiteSpace(entityFilter) || e.Entities.Any(x => x.Contains(entityFilter.Trim(), StringComparison.OrdinalIgnoreCase)))).ToList();
         var take = Math.Clamp(limit, 1, 1000);
         var rows = filtered.Take(take).Select(e => new TimelineEvent(
-            Id(DedupeKey(e)), e.Ts, e.Kind, e.Lane, e.Action, [.. e.Entities], e.Source, [.. e.Refs], [.. e.ReportedBy], e.Reported, e.InEvidence, e.ThreadId)).ToList();
+            Id(DedupeKey(e)), e.Ts, e.Kind, e.Lane, e.Action, [.. e.Entities], e.Source, [.. e.Refs], [.. e.ReportedBy], e.Reported, e.InEvidence, e.ThreadId,
+            e.Reported ? e.ClaimedSource : null)).ToList();
         return new IncidentTimelineResult(incidentId, graphId, rows, filtered.Count, filtered.Count > take, Notice);
     }
 

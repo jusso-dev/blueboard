@@ -112,8 +112,8 @@ public static class Reversal
 
     /// <summary>
     /// Params for the reverse action, from the original's params, its result (block_indicator) or its id
-    /// (create_detection_rule), or why it can't be built. A block that only ran as a dry run has no Defender indicator
-    /// id to remove.
+    /// (create_detection_rule), or why it can't be built. A block or a rule that only ran as a dry run has nothing to
+    /// remove or disable, so its revert fails clearly instead of filing a reverse action.
     /// </summary>
     public static (string? Kind, JsonObject? Params, string? Why) Build(string kind, JsonObject p, JsonElement? result, Guid? actionId = null)
     {
@@ -134,6 +134,9 @@ public static class Reversal
                     return (reverse, new JsonObject { ["indicator_id"] = v }, null);
                 return (null, null, "the block's Defender indicator id is unknown (it ran as a dry run, or Defender didn't return one), so there is nothing to remove");
             case "create_detection_rule":
+                // A dry run created no rule, so there is nothing to disable (as for a dry-run block_indicator).
+                if (result is { ValueKind: JsonValueKind.Object } dr && dr.TryGetProperty("dry_run", out var d) && d.ValueKind == JsonValueKind.True)
+                    return (null, null, "the rule was only created as a dry run (BROKER_EXECUTE was off), so there is no rule to disable");
                 // The rule's id is derived from the creating action's id (Catalog.RuleId), so the action id is enough.
                 return actionId is { } aid
                     ? (reverse, new JsonObject { ["rule_action_id"] = aid.ToString() }, null)

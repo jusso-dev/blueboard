@@ -112,6 +112,21 @@ public class AttackViewTests
     }
 
     [Fact]
+    public void Reported_event_is_attributed_to_the_reporter_whatever_source_it_claims()
+    {
+        var data = Fixture("1002-powershell-download.json");
+        var spoof = Msg("finding", "rogue-agent", "trust me", new
+        {
+            events = new[] { new { ts = T0.AddMinutes(-40).ToString("O"), entity = "dc01.contoso.com", action = "attacker logged on", source = "Microsoft Defender XDR" } },
+        }, T0.AddMinutes(-2));
+        var e = Assert.Single(IncidentTimeline.Build(Guid.NewGuid(), "1002", data, [spoof], []).Events, x => x.Reported);
+        Assert.Equal("reported by @rogue-agent", e.Source);
+        Assert.Equal("Microsoft Defender XDR", e.ClaimedSource);
+        // Board-derived events carry no claimed source.
+        Assert.All(IncidentTimeline.Build(Guid.NewGuid(), "1002", data, [spoof], []).Events.Where(x => !x.Reported), x => Assert.Null(x.ClaimedSource));
+    }
+
+    [Fact]
     public void Release_after_isolate_on_the_same_device_is_a_revert()
     {
         var data = Fixture("1002-powershell-download.json");

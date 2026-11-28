@@ -58,6 +58,21 @@ public sealed class DetectionTests(TestBoard t) : IClassFixture<TestBoard>
     }
 
     [DbFact]
+    public async Task Reverting_a_dry_run_rule_fails_clearly()
+    {
+        var (detections, broker) = Build();
+        var bt = await detections.BacktestAsync(await t.As("agent"), new BacktestInput(Query, "defender", 14), Ct);
+        var row = await broker.RequestAsync(await t.As("agent"), Rule(bt.BacktestId), Ct);
+        var done = await broker.DecideAsync(await t.As("analyst"), row.Id, "approve", null, Ct);
+        Assert.True(done.Result!.Value.GetProperty("dry_run").GetBoolean());
+
+        var after = await broker.RevertOpAsync(await t.As("analyst2"), row.Id, new("now"), Ct);
+        Assert.Equal("failed", after.RevertState);
+        Assert.Null(after.RevertActionId);
+        Assert.Equal(1, await t.ScalarAsync("select count(*) from audit_log where event = 'action.revert_failed' and subject = @id and detail->>'reason' like '%dry run%'", ("id", row.Id.ToString())));
+    }
+
+    [DbFact]
     public async Task Rule_whose_query_differs_from_the_backtest_is_rejected()
     {
         var (detections, broker) = Build();

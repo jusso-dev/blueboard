@@ -25,8 +25,9 @@ public sealed class AgentReports(Db db, AgentFeedback feedback)
     public async Task<AgentCostReport> BuildAsync(Principal me, DateTimeOffset? fromIn, DateTimeOffset? toIn, CancellationToken ct = default)
     {
         me.Require(Roles.Admin);
-        var to = toIn ?? DateTimeOffset.UtcNow;
-        var from = fromIn ?? to.AddDays(-30);
+        // Npgsql writes timestamptz only from offset-0 values: normalise, so ?from=2026-11-01T00:00:00+10:00 works.
+        var to = (toIn ?? DateTimeOffset.UtcNow).ToUniversalTime();
+        var from = (fromIn ?? to.AddDays(-30)).ToUniversalTime();
         if (from >= to) throw new BoardException("from must be before to");
         if (to - from > TimeSpan.FromDays(400)) throw new BoardException("range must be at most 400 days");
 

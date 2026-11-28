@@ -92,6 +92,7 @@ function TimelinePanel({ timeline, node, onClearNode, onOpenThread }: { timeline
               <p className="text-meta text-muted [overflow-wrap:anywhere]">
                 {e.entities.length > 0 && <span className="font-mono">{e.entities.slice(0, 4).join(", ")}{e.entities.length > 4 ? ", …" : ""} · </span>}
                 {e.source}
+                {e.claimed_source && <> · claims source “{e.claimed_source}” (unverified)</>}
                 {e.reported_by.length > 0 && <> · by {e.reported_by.map((h) => `@${h}`).join(", ")}</>}
                 {e.refs.map((r, i) => {
                   const l = refLink(r, e.thread_id);

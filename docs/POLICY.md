@@ -169,7 +169,7 @@ Any request for a reversible kind may carry `revert_after_minutes` (5 to `max_re
 | `disable_user` | `enable_user` |
 | `block_indicator` | `unblock_indicator` (needs the Defender indicator id from a live run) |
 | `okta_suspend_user` | `okta_unsuspend_user` (Okta connector) |
-| `create_detection_rule` | `disable_detection_rule` (the rule is kept but stops raising alerts; `create_detection_rule` itself never runs automatically, so this applies to `revert_after_minutes` on a request) |
+| `create_detection_rule` | `disable_detection_rule` (the rule is kept but stops raising alerts; `create_detection_rule` itself never runs automatically, so this applies to `revert_after_minutes` on a request). A rule created only as a dry run has nothing to disable: its revert is marked failed, as for a dry-run `block_indicator` |
 
 Everything else is irreversible, including `disable_service_principal` (the catalogue has no enable action for it), `okta_clear_user_sessions`, `okta_reset_factors`, `purge_email` and `intune_expedite_quality_update`.
 

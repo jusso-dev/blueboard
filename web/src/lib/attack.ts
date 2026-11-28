@@ -16,6 +16,8 @@ export type TimelineEvent = {
   reported: boolean;
   in_evidence: boolean | null;
   thread_id: string | null;
+  /** Reported events only: the source the participant claimed (untrusted). `source` is always "reported by @handle". */
+  claimed_source?: string | null;
 };
 export type Timeline = { incident_id: string; graph_id: string; events: TimelineEvent[]; total: number; truncated: boolean; notice: string };
 

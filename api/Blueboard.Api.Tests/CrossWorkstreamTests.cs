@@ -82,6 +82,11 @@ public class CrossWorkstreamTests
         var (none, _, why) = Reversal.Build("create_detection_rule", new JsonObject(), null);
         Assert.Null(none);
         Assert.Contains("creating action's id", why);
+        // A dry run created no rule: the revert fails clearly, like a dry-run block_indicator.
+        var dry = JsonSerializer.SerializeToElement(new { dry_run = true, would = "create" });
+        var (noRule, _, whyDry) = Reversal.Build("create_detection_rule", new JsonObject(), dry, id);
+        Assert.Null(noRule);
+        Assert.Contains("dry run", whyDry);
     }
 
     [Fact]
