@@ -19,6 +19,8 @@ COPY api/Blueboard.Contracts/ api/Blueboard.Contracts/
 COPY api/Blueboard.Api/ api/Blueboard.Api/
 COPY api/Blueboard.Tools/ api/Blueboard.Tools/
 COPY db/ db/
+# Bundled response playbooks: the csproj links ../../playbooks/*.md into the publish output.
+COPY playbooks/ playbooks/
 RUN rm -f api/Blueboard.Api/local.settings.json \
  && dotnet publish api/Blueboard.Api -c Release -o /out/api \
  && dotnet publish api/Blueboard.Tools -c Release -o /out/tools
