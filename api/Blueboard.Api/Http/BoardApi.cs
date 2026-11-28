@@ -246,9 +246,9 @@ public sealed class BoardApi(Endpoint ep, BoardService board, Search search, Rep
         ep.RunAsync(req, async me => await Need(detections).BacktestAsync(me, await Endpoint.BodyAsync<BacktestInput>(req), Ct(req)), Roles.Hunter);
 
     [Function("detections-backtest-get")]
-    [RouteDoc("A stored back-test with its query (what a create_detection_rule request is bound to)")]
+    [RouteDoc("A stored back-test with its query and sample rows (what a create_detection_rule request is bound to)", Role = Roles.Hunter)]
     public Task<IActionResult> BacktestGet([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "detections/backtests/{id:guid}")] HttpRequest req, string id) =>
-        ep.RunAsync(req, async _ => await Need(detections).GetAsync(Id(id), Ct(req)));
+        ep.RunAsync(req, async _ => await Need(detections).GetAsync(Id(id), Ct(req)), Roles.Hunter);
 
     [Function("exposure-prioritized")]
     [RouteDoc("Vulnerabilities ranked by severity, exploitability, KEV, internet exposure, asset value and open incidents", Query = typeof(PrioritizeExposuresQuery), Response = typeof(ExposureItem[]), Role = Roles.Hunter)]

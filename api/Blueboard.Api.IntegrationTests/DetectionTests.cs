@@ -120,4 +120,19 @@ public sealed class DetectionTests(TestBoard t) : IClassFixture<TestBoard>
         public override AccessToken GetToken(TokenRequestContext requestContext, CancellationToken cancellationToken) => new("test-token", DateTimeOffset.UtcNow.AddHours(1));
         public override ValueTask<AccessToken> GetTokenAsync(TokenRequestContext requestContext, CancellationToken cancellationToken) => new(GetToken(requestContext, cancellationToken));
     }
+    [DbFact]
+    public async Task Reading_a_stored_backtest_needs_board_hunt()
+    {
+        var (detections, _) = Build();
+        var bt = await detections.BacktestAsync(await t.As("agent"), new BacktestInput(Query, "defender", 14, ["DeviceName"]), Ct);
+        var api = new Http.BoardApi(new Http.Endpoint(new Auth.Authenticator(t.Settings, new Auth.TokenValidator(t.Settings), t.Db, t.Audit),
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<Http.Endpoint>.Instance),
+            t.Board, t.Search, t.Reporting, t.Broker, null!, null!, null!, t.Db, t.Policy, t.Incidents, t.Runner, t.Playbooks, null!, t.Audit, null!, null!, null!,
+            detections: detections);
+        // "reader" has Board.Post only: the query and sample rows are hunting data, so it is refused.
+        Assert.Equal(403, A1.Read(await api.BacktestGet(A1.Request("reader"), bt.BacktestId.ToString())).Status);
+        var (ok, body) = A1.Read(await api.BacktestGet(A1.Request("analyst"), bt.BacktestId.ToString()));
+        Assert.Equal(200, ok);
+        Assert.Equal(Query, body.GetProperty("query").GetString());
+    }
 }

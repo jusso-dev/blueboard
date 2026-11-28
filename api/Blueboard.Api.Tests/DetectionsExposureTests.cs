@@ -515,7 +515,22 @@ public class DetectionsExposureTests
         var kql = ExposureService.AttackPathsKql(true, true, 999);
         Assert.Contains("take 50", kql);
         Enrichment.ValidateKql(kql, "P1D");
-        Enrichment.ValidateKql(ExposureService.PrioritiesKql, "P1D");
+        Enrichment.ValidateKql(ExposureService.PrioritiesKql(), "P1D");
+    }
+
+    [Fact]
+    public void Exposure_cve_filter_runs_in_kql_quoted_and_validated_and_worst_rows_come_before_the_cap()
+    {
+        var kql = ExposureService.PrioritiesKql(["cve-2024-3400", "CVE-2023-12345"]);
+        Assert.Contains("| where CveId in~ (dynamic([\"CVE-2024-3400\", \"CVE-2023-12345\"]))", kql);
+        Enrichment.ValidateKql(kql, "P1D");
+        // Filter first, order worst first, then cap.
+        Assert.True(kql.IndexOf("where CveId in~", StringComparison.Ordinal) < kql.IndexOf("summarize", StringComparison.Ordinal));
+        Assert.True(kql.IndexOf("order by SeverityRank asc", StringComparison.Ordinal) < kql.IndexOf("take 5000", StringComparison.Ordinal));
+        Assert.DoesNotContain("CveId in~", ExposureService.PrioritiesKql());
+        // Anything that isn't a CVE id is refused before a query is built.
+        Assert.Throws<BoardException>(() => ExposureService.PrioritiesKql(["CVE-2024-3400\") | union SecurityEvent | where (\"x"]));
+        Assert.Throws<BoardException>(() => ExposureService.PrioritiesKql(["not-a-cve"]));
     }
 
     // ── permissions and contracts ──────────────────────────────────────────────────────────────

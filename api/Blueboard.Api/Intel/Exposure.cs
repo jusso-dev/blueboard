@@ -13,15 +13,23 @@ namespace Blueboard.Api.Intel;
 /// </summary>
 public sealed class ExposureService(Audit audit, MsClient ms, Enrichment enrich, IntelService intel, IntelStore store, RateLimiter? limiter = null)
 {
-    /// <summary>One row per (CVE, device) for the worst vulnerabilities, with device context. Board-built; no caller input.</summary>
-    public const string PrioritiesKql = """
+    /// <summary>
+    /// One row per (CVE, device) for the worst vulnerabilities, with device context. Board-built: the only caller input is
+    /// an optional CVE list, each id validated against CVE-\d{4}-\d{4,} (<see cref="Kql.ValidCves"/>) and written as an
+    /// escaped string literal, so the filter runs in Defender before the row cap. Rows are ordered worst first (severity,
+    /// then CVSS, then exploit) before <c>take</c>, so the cap drops the least severe rows, not arbitrary ones.
+    /// </summary>
+    public static string PrioritiesKql(IReadOnlyCollection<string>? cves = null) => $$"""
         DeviceTvmSoftwareVulnerabilities
-        | where VulnerabilitySeverityLevel in ("Critical", "High", "Medium")
+        | where VulnerabilitySeverityLevel in ("Critical", "High", "Medium"){{(cves is { Count: > 0 } ? $"\n| where CveId in~ (dynamic([{string.Join(", ", Kql.ValidCves(cves).Select(Kql.Literal))}]))" : "")}}
         | summarize Software = take_any(strcat(SoftwareVendor, " ", SoftwareName, " ", SoftwareVersion)), Remediation = take_any(RecommendedSecurityUpdate)
             by CveId, DeviceId, DeviceName, Severity = VulnerabilitySeverityLevel
         | join kind=leftouter (DeviceTvmSoftwareVulnerabilitiesKB | project CveId, CvssScore, IsExploitAvailable) on CveId
         | join kind=leftouter (DeviceInfo | summarize arg_max(Timestamp, IsInternetFacing, AssetValue, AadDeviceId) by DeviceId) on DeviceId
         | project CveId, DeviceId, DeviceName, Severity, CvssScore, IsExploitAvailable, IsInternetFacing, AssetValue, AadDeviceId, Software, Remediation
+        | extend SeverityRank = case(Severity == "Critical", 0, Severity == "High", 1, 2)
+        | order by SeverityRank asc, CvssScore desc, IsExploitAvailable desc
+        | project-away SeverityRank
         | take 5000
         """;
 
@@ -99,7 +107,7 @@ public sealed class ExposureService(Audit audit, MsClient ms, Enrichment enrich,
         p.Require(Roles.Hunter);
         if (limiter is not null) await limiter.TakeAsync(p, "hunt", ct);
         var only = q.CveIds is { Length: > 0 } ids ? Kql.ValidCves(ids).ToHashSet(StringComparer.OrdinalIgnoreCase) : null;
-        var rows = await enrich.RunBoardQueryAsync(p.Id, "exposure.prioritize", PrioritiesKql, "P1D", new { q.Limit, cves = only }, ct);
+        var rows = await enrich.RunBoardQueryAsync(p.Id, "exposure.prioritize", PrioritiesKql(only), "P1D", new { q.Limit, cves = only }, ct);
         var open = await intel.OpenIncidentDevicesAsync(ct);
         var cves = rows.Select(r => J.Str(r, "CveId")).OfType<string>().Select(Indicators.NormaliseCve).OfType<string>().Distinct().Take(500).ToList();
         var kev = (await store.GetManyAsync(Sources.Kev, cves, ct)).Where(r => r.Found).Select(r => r.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
