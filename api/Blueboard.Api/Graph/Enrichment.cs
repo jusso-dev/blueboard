@@ -16,6 +16,10 @@ public sealed partial class Enrichment(Db db, Audit audit, BoardService board, M
     [GeneratedRegex(@"(?:^|;)\s*\.", RegexOptions.Multiline)] private static partial Regex MgmtCommand();
     [GeneratedRegex(@"\b(externaldata|http_request|http_request_post|sql_request|cosmosdb_sql_request|mysql_request|postgresql_request|azure_digital_twins_query_request|python|r)\s*\(", RegexOptions.IgnoreCase)] private static partial Regex OutboundPluginCall();
     [GeneratedRegex(@"\b(externaldata|http_request|http_request_post|sql_request|cosmosdb_sql_request|mysql_request|postgresql_request|azure_digital_twins_query_request)\b", RegexOptions.IgnoreCase)] private static partial Regex OutboundPlugin();
+    /// <summary>Cross-resource functions: reach another workspace, app, cluster, database or Azure Resource Graph.</summary>
+    [GeneratedRegex(@"(?<![\w.])(workspace|app|adx|cluster|database|arg)\s*\(", RegexOptions.IgnoreCase)] private static partial Regex CrossResource();
+    /// <summary>Time-relative or row-capping operators: make a back-test estimate depend on when or how it ran.</summary>
+    [GeneratedRegex(@"(?<![\w.])(ago|now)\s*\(|(?<![\w.])(take|limit|sample|sample-distinct)\b(?!\s*=)", RegexOptions.IgnoreCase)] private static partial Regex RelativeOrCapped();
     [GeneratedRegex(@"^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?)?$")] private static partial Regex IsoDuration();
     [GeneratedRegex("^[0-9a-f]{40}$", RegexOptions.IgnoreCase)] private static partial Regex MdeId();
     [GeneratedRegex(@"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", RegexOptions.IgnoreCase)] private static partial Regex GuidId();
@@ -149,7 +153,22 @@ public sealed partial class Enrichment(Db db, Audit audit, BoardService board, M
         if (MgmtCommand().IsMatch(stripped)) throw new BoardException("management commands are not allowed");
         if (OutboundPlugin().IsMatch(stripped) || OutboundPluginCall().IsMatch(stripped))
             throw new BoardException("external data and outbound network plugins are not allowed in hunting queries");
+        if (CrossResource().Match(stripped) is { Success: true } cross)
+            throw new BoardException($"cross-resource queries ({cross.Groups[1].Value.ToLowerInvariant()}()) are not allowed: query this tenant's tables only");
         return span;
+    }
+
+    /// <summary>
+    /// Detection KQL (back-test and create_detection_rule): on top of <see cref="ValidateKql"/>, refuse ago()/now()
+    /// and take/limit/sample outside string literals and comments. A back-test of "| where Timestamp > ago(1h)" or
+    /// "| take 10" over 14 days measures a small window or a capped row count, not what the rule will raise when it runs
+    /// every hour, so its estimate can't be trusted. The rule's own frequency/lookback sets the time window instead.
+    /// </summary>
+    internal static void ValidateDetectionKql(string query)
+    {
+        var stripped = StripCommentsAndStrings(query, out _);
+        if (RelativeOrCapped().Match(stripped) is { Success: true } m)
+            throw new BoardException($"detection queries may not use {m.Value.TrimEnd('(', ' ').ToLowerInvariant()}: the back-test estimate would not reflect the deployed rule's volume. Drop time filters (the rule's frequency and lookback set the window) and row caps");
     }
 
     private static bool TryMinutes(string raw, long factor, out long minutes)

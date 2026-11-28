@@ -64,6 +64,65 @@ public class DetectionsExposureTests
     }
 
     [Theory]
+    [InlineData("DeviceProcessEvents | where Timestamp > ago(1h)", "ago")]
+    [InlineData("DeviceProcessEvents | where Timestamp > now() - 1h", "now")]
+    [InlineData("DeviceProcessEvents | take 10", "take")]
+    [InlineData("DeviceProcessEvents | limit 10", "limit")]
+    [InlineData("DeviceProcessEvents | sample 10", "sample")]
+    [InlineData("DeviceProcessEvents\n| TAKE 5", "take")]
+    public void Rule_and_backtest_kql_refuse_time_relative_and_row_capping_operators(string query, string op)
+    {
+        var ex = Assert.Throws<BoardException>(() => Valid(Rule(query)));
+        Assert.Contains($"may not use {op}", ex.Message);
+        Assert.Throws<BoardException>(() => Enrichment.ValidateDetectionKql(query));
+    }
+
+    [Theory]
+    [InlineData("DeviceProcessEvents | where ProcessCommandLine has 'take 10'")]
+    [InlineData("DeviceProcessEvents | where ProcessCommandLine has \"ago(1h)\" // limit 5")]
+    [InlineData("DeviceProcessEvents | where InitiatingProcessFileName == 'sample.exe' /* now() */")]
+    [InlineData("DeviceProcessEvents | extend Taken = 1, limit_reached = false | where Taken == 1")]
+    public void Detection_guard_ignores_operators_inside_strings_comments_and_names(string query) =>
+        Enrichment.ValidateDetectionKql(query);
+
+    [Theory]
+    [InlineData("workspace('other').SecurityEvent | count", "workspace")]
+    [InlineData("app('x').requests", "app")]
+    [InlineData("adx('https://help.kusto.windows.net/Samples').StormEvents", "adx")]
+    [InlineData("cluster('c').database('d').T", "cluster")]
+    [InlineData("database('d').T", "database")]
+    [InlineData("arg('').Resources | take 1", "arg")]
+    [InlineData("DeviceEvents | union (Workspace ( 'x' ).Heartbeat)", "workspace")]
+    public void Hunting_backtest_and_rule_kql_refuse_cross_resource_functions(string query, string fn)
+    {
+        Assert.Contains($"({fn}())", Assert.Throws<BoardException>(() => Enrichment.ValidateKql(query, "P1D")).Message);
+        Assert.Throws<BoardException>(() => Valid(Rule(query)));
+    }
+
+    [Theory]
+    [InlineData("DeviceProcessEvents | where ProcessCommandLine has \"workspace('x')\"")]
+    [InlineData("DeviceProcessEvents | where AppName == 'app' // app('x') in a comment")]
+    [InlineData("DeviceProcessEvents | extend myapp(x) = 1")]
+    [InlineData("DeviceProcessEvents | where FolderPath has 'database'")]
+    public void Cross_resource_guard_ignores_strings_comments_and_other_names(string query) =>
+        Enrichment.ValidateKql(query, "P1D");
+
+    [Fact]
+    public void Peak_day_volume_and_overlapping_lookback_are_enforced_not_just_the_average()
+    {
+        // 14 days, average 50/day, but one day had 600 hits: the average passes, the peak does not.
+        var burst = new BacktestRecord(Guid.NewGuid(), "defender", DetectionService.QueryHash(Query), 14, 700, 50, 600, Now.AddHours(-2));
+        Assert.Contains("peaked at 600 hits", Resolvers.BacktestFacts(burst, "defender", DetectionService.QueryHash(Query), Now, "PT1H", "PT1H").Reject);
+        // A Sentinel rule running hourly over a 1-day lookback matches each row 24 times.
+        var steady = new BacktestRecord(Guid.NewGuid(), "sentinel", DetectionService.QueryHash(Query), 14, 280, 20, 30, Now.AddHours(-2));
+        Assert.Null(Resolvers.BacktestFacts(steady, "sentinel", DetectionService.QueryHash(Query), Now, "PT1H", "PT1H").Reject);
+        Assert.Contains("frequency and lookback", Resolvers.BacktestFacts(steady, "sentinel", DetectionService.QueryHash(Query), Now, "PT1H", "P1D").Reject);
+        Assert.Equal(30 * 24, Resolvers.PeakAlertsPerDay(steady, "sentinel", "PT1H", "P1D"));
+        // Defender derives its lookback from the frequency: no overlap factor.
+        Assert.Equal(30, Resolvers.PeakAlertsPerDay(steady, "defender", "PT1H", "P1D"));
+    }
+
+    [Theory]
     [InlineData(new object[] { "{\"backtest_id\":null}", "backtest_id is required" })]
     [InlineData(new object[] { "{\"backtest_id\":\"not-a-guid\"}", "invalid backtest_id" })]
     [InlineData(new object[] { "{\"frequency\":\"PT5M\"}", "frequency must be one of" })]

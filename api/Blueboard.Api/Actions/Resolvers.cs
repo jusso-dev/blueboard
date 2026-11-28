@@ -33,11 +33,30 @@ public static class Resolvers
     {
         var id = Guid.Parse(p["backtest_id"]!.GetValue<string>());
         var b = await DetectionService.LoadAsync(c.Db, id, ct);
-        return BacktestFacts(b, p["target"]!.GetValue<string>(), DetectionService.QueryHash(p["query"]!.GetValue<string>()), c.RequestedAt);
+        return BacktestFacts(b, p["target"]!.GetValue<string>(), DetectionService.QueryHash(p["query"]!.GetValue<string>()), c.RequestedAt,
+            p["frequency"]?.GetValue<string>(), p["lookback"]?.GetValue<string>());
+    }
+
+    /// <summary>
+    /// Alerts a deployed rule would raise on the back-test's busiest day: each run returns every row in its lookback,
+    /// so with a lookback longer than the frequency (Sentinel) the same rows are matched by lookback/frequency runs.
+    /// Defender derives the lookback from the frequency, so the factor is 1 there.
+    /// </summary>
+    public static double PeakAlertsPerDay(BacktestRecord b, string target, string? frequency, string? lookback)
+    {
+        var freq = Iso(frequency) ?? TimeSpan.FromHours(1);
+        var window = target == "sentinel" ? Iso(lookback) ?? freq : freq;
+        return b.PeakHitsPerDay * Math.Max(1, window / freq);
+    }
+
+    private static TimeSpan? Iso(string? d)
+    {
+        try { return d is null ? null : System.Xml.XmlConvert.ToTimeSpan(d); }
+        catch (FormatException) { return null; }
     }
 
     /// <summary>The back-test gate as a pure function (unit tested).</summary>
-    public static ActionFacts BacktestFacts(BacktestRecord? b, string target, string queryHash, DateTimeOffset requestedAt)
+    public static ActionFacts BacktestFacts(BacktestRecord? b, string target, string queryHash, DateTimeOffset requestedAt, string? frequency = null, string? lookback = null)
     {
         if (b is null) return new(Reject: "backtest_id was not found: run backtest_detection on this exact query first");
         if (b.Target != target) return new(Reject: $"back-test {b.Id} ran against {b.Target}, but the rule targets {target}");
@@ -50,6 +69,10 @@ public static class Resolvers
             return new(Reject: $"back-test {b.Id} is from {b.CreatedAt:u}; it must be from the 24 hours before the request, so run it again");
         if (b.EstAlertsPerDay > DetectionService.MaxAlertsPerDay)
             return new(Reject: $"back-test {b.Id} estimates {b.EstAlertsPerDay:0.#} alerts a day, above the ceiling of {DetectionService.MaxAlertsPerDay:0} (alert flood): tune the query");
+        // The average can hide a burst: the busiest day, scaled for overlapping runs, must fit under the ceiling too.
+        var peak = PeakAlertsPerDay(b, target, frequency, lookback);
+        if (peak > DetectionService.MaxAlertsPerDay)
+            return new(Reject: $"back-test {b.Id} peaked at {b.PeakHitsPerDay} hits in a day, about {peak:0.#} alerts a day at this frequency and lookback, above the ceiling of {DetectionService.MaxAlertsPerDay:0} (alert flood): tune the query or shorten the lookback");
         var notes = new List<string>
         {
             $"back-test {b.Id} ({b.Target}, {b.LookbackDays} days, {b.CreatedAt:u}): {b.TotalHits} hits, about {b.EstAlertsPerDay:0.##} alerts a day, peak {b.PeakHitsPerDay} in a day",

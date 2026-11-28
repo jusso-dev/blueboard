@@ -179,8 +179,10 @@ public static partial class Catalog
         if (target.Length == 0) throw new BoardException("target is required");
         var name = Req(p, "name", RuleName(), "3-200 characters, no control characters", 200).Trim();
         var query = Req(p, "query", max: 10000);
-        // The rule's KQL goes through the same lexical guards as hunting: no management commands, no outbound plugins.
+        // The rule's KQL goes through the same lexical guards as hunting: no management commands, no outbound plugins,
+        // no cross-resource functions; and, so its back-test estimate holds, no ago()/now() or take/limit/sample.
         Enrichment.ValidateKql(query, "P1D");
+        Enrichment.ValidateDetectionKql(query);
         var frequency = Enum(p, "frequency", Rules.Frequencies, "PT1H");
         var lookback = Enum(p, "lookback", Rules.Lookbacks, frequency);
         if (Array.IndexOf(Rules.Lookbacks, lookback) < Array.IndexOf(Rules.Lookbacks, frequency)) throw new BoardException("lookback must be at least frequency");

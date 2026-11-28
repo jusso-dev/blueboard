@@ -61,6 +61,7 @@ public sealed partial class DetectionService(Db db, Audit audit, MsClient ms, Se
         if (input.Target is not ("defender" or "sentinel")) throw new BoardException("target must be defender or sentinel");
         if (input.LookbackDays is < 1 or > 30) throw new BoardException("lookback_days must be 1-30 (advanced hunting keeps 30 days)");
         var span = Enrichment.ValidateKql(input.Query, $"P{input.LookbackDays}D");
+        Enrichment.ValidateDetectionKql(input.Query);
         var cols = ValidColumns(input.EntityColumns);
         var hash = QueryHash(input.Query);
         var now = DateTimeOffset.UtcNow;
