@@ -154,7 +154,7 @@ public sealed class AgentRisk(Db db, Audit audit, BoardService board, SystemPrin
                 """).With("p", id).With("s", score).WithJson("f", factors).With("alert", cfg.RiskAlertThreshold).With("quar", cfg.RiskQuarantineThreshold))
                 await up.ExecuteNonQueryAsync(ct);
             try { await ActAsync(id, handle, score, factors, cfg, ct); }
-            catch (Exception ex) when (ex is not OperationCanceledException) { _log.LogWarning(ex, "risk action for @{Handle} failed", handle); }
+            catch (Exception ex) when (ex is not OperationCanceledException) { _log.LogWarning(ex, "risk action for @{Handle} failed", Blueboard.Api.Ops.Notifier.OneLine(handle, 120)); }
         }
         return agents.Count;
     }

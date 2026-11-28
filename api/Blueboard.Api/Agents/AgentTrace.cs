@@ -56,7 +56,7 @@ public sealed class AgentTrace(Db db, ILogger<AgentTrace>? log = null)
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            _log.LogWarning(ex, "trace for {Tool} not recorded", e.Tool);
+            _log.LogWarning(ex, "trace for {Tool} not recorded", Blueboard.Api.Ops.Notifier.OneLine(e.Tool, 120));
         }
     }
 

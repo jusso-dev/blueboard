@@ -64,7 +64,7 @@ public sealed class McpObserver(AgentBudgets budgets, AgentTrace trace, Audit au
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            _log.LogWarning(ex, "metering for {Tool} failed", e.Tool);
+            _log.LogWarning(ex, "metering for {Tool} failed", Blueboard.Api.Ops.Notifier.OneLine(e.Tool, 120));
         }
         await trace.RecordAsync(e, ct);
     }
