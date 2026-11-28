@@ -54,6 +54,14 @@ function StatusBanner({ admin }: { admin: boolean }) {
       text: `by @${s.paused_by}. Nothing runs in the tenant; approvals are recorded and held${s.held ? ` (${s.held} held)` : ""}.`,
     });
   else if (s.broker === "dry_run") lines.push({ tone: "warning", label: "Dry run", text: "Approved actions are recorded but never sent to Defender or Entra (BROKER_EXECUTE is off)." });
+  if (s.automation_paused)
+    lines.push({
+      tone: "warning",
+      label: "Automation paused",
+      text: `by @${s.automation_paused_by ?? "an admin"}. Every request waits for a person, including kinds with automation rules.`,
+    });
+  if (admin && s.pending_policy_changes)
+    lines.push({ tone: "warning", label: "Policy changes", text: `${s.pending_policy_changes} loosening change(s) wait for a second admin on Policy.` });
   if (s.broker !== "paused" && s.held > 0) lines.push({ tone: "warning", label: "Held actions", text: `${s.held} action(s) approved during a pause are waiting for Run now on Approvals.` });
   if (s.policy !== "loaded")
     lines.push({
@@ -75,8 +83,11 @@ function StatusBanner({ admin }: { admin: boolean }) {
           <span className={cx("font-semibold", l.tone === "critical" ? "text-critical" : "text-warning")}>{l.label}:</span>
           <span className="text-ink-2">{l.text}</span>
           {admin && (
-            <Link to={l.label === "Broker paused" ? "/admin/participants" : "/setup"} className="text-accent underline-offset-4 hover:underline">
-              {l.label === "Broker paused" ? "Broker controls" : "Setup"}
+            <Link
+              to={l.label === "Broker paused" ? "/admin/participants" : l.label === "Automation paused" || l.label === "Policy changes" ? "/policy" : "/setup"}
+              className="text-accent underline-offset-4 hover:underline"
+            >
+              {l.label === "Broker paused" ? "Broker controls" : l.label === "Automation paused" || l.label === "Policy changes" ? "Policy" : "Setup"}
             </Link>
           )}
         </p>
@@ -99,6 +110,7 @@ function MobileBar() {
       { href: "/approvals", label: pending?.length ? `Approvals · ${pending.length}` : "Approvals" },
       { href: "/policy", label: "Policy" },
       { href: "/intel", label: "Threat intel" },
+      { href: "/exposure", label: "Exposure" },
       { href: "/memory", label: "Shared memory" },
       { href: "/settings/notifications", label: "Notifications" },
     ] },
@@ -106,10 +118,12 @@ function MobileBar() {
     ...(me?.roles.includes("admin") ? [{ label: "Administration", items: [
       { href: "/admin", label: "Admin centre" },
       { href: "/admin/posture", label: "Posture" },
+      { href: "/admin/connectors", label: "Connectors" },
       { href: "/admin/participants", label: "Access review" },
       { href: "/admin/audit", label: "Audit log" },
       { href: "/setup", label: "Setup" },
       { href: "/reports", label: "Reports" },
+      { href: "/agents", label: "Agents" },
     ] }] : []),
   ];
   const known = groups.some((g) => g.items.some((i) => i.href === path));
@@ -275,6 +289,9 @@ function Rail({ me }: { me: Me | null }) {
           <RailLink href="/intel" active={path.startsWith("/intel")}>
             Threat intel
           </RailLink>
+          <RailLink href="/exposure" active={path === "/exposure"}>
+            Exposure
+          </RailLink>
           <RailLink href="/memory" active={path === "/memory"}>
             Shared memory
           </RailLink>
@@ -295,7 +312,7 @@ function Rail({ me }: { me: Me | null }) {
         </div>
 
         {isAdmin && (
-          <details open={path.startsWith("/admin") || path === "/setup" || path === "/reports"}>
+          <details open={path.startsWith("/admin") || path === "/setup" || path === "/reports" || path === "/agents"}>
             <summary className="cursor-pointer rounded-[var(--radius-control)] px-2 py-2 text-meta font-medium text-muted hover:text-ink">Administration</summary>
             <div className="mt-1 space-y-px">
               <RailLink href="/admin" active={path === "/admin"}>
@@ -303,6 +320,9 @@ function Rail({ me }: { me: Me | null }) {
               </RailLink>
               <RailLink href="/admin/posture" active={path === "/admin/posture"}>
                 Posture
+              </RailLink>
+              <RailLink href="/admin/connectors" active={path === "/admin/connectors"}>
+                Connectors
               </RailLink>
               <RailLink href="/admin/participants" active={path === "/admin/participants"}>
                 Access review
@@ -315,6 +335,9 @@ function Rail({ me }: { me: Me | null }) {
               </RailLink>
               <RailLink href="/reports" active={path === "/reports"}>
                 Reports
+              </RailLink>
+              <RailLink href="/agents" active={path === "/agents"}>
+                Agents
               </RailLink>
             </div>
           </details>

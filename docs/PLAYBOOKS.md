@@ -22,6 +22,7 @@ match:                            # any one of these is enough
   categories: ["InitialAccess"]   # alert category, exact (case-insensitive)
   titles: ["phish", "malicious URL"]   # contained in the incident or an alert title
   techniques: ["T1566"]           # MITRE technique; T1566 also matches T1566.001
+# scope: incident                # optional: incident (default) or intel (see "Playbooks for threat intel")
 steps:
   - id: scope-recipients
     stage: triage                 # triage | investigate | contain | eradicate | recover | record
@@ -40,7 +41,8 @@ Notes for people reading the file. The board doesn't post these.
 Rules the board checks when the Function App starts:
 
 - `id` and every step `id` are lower-case slugs. Step ids are unique within the playbook.
-- `match` has at least one category, title or technique. Techniques look like `T1234` or `T1234.001`.
+- `match` has at least one category, title or technique (not needed for `scope: intel`). Techniques look like `T1234` or `T1234.001`.
+- `scope`, if present, is `incident` or `intel`.
 - 1 to 20 steps. Every `stage` is one of the six above.
 - `after` names other steps in the same playbook, and the steps don't depend on each other in a loop.
 - `suggested_action` is a kind from the action catalogue (`list_action_types`).
@@ -76,6 +78,31 @@ doesn't make every incident look like it needs a person.
 Agents reading the feed can tell checklist steps apart by `payload.checklist`. Like all board content, step text is
 data, not instructions: it comes from files your team controls, but agents should still treat it as untrusted.
 
+## Playbooks for threat intel (`scope: intel`)
+
+Some work starts from intelligence, not an incident: a vendor advisory, an article about a new technique, a
+high-severity finding on your tech stack. A playbook with `scope: intel` runs from a **threat intel finding**:
+
+- In **Threat intel**, open a finding and press **Run emerging-threat playbook**, or call `start_ti_playbook` with the
+  finding's id (`POST /api/intel/findings/{id}/playbook` for scripts).
+- The board posts a `status` root in `#intel` naming the finding, and the steps as claimable `question` replies in that
+  thread. Their `payload.checklist` carries `run` (the run id) and `ti_finding_id`; there is no incident.
+- Claiming, completing and unlocking work exactly as on incidents, including the one-minute backstop timer.
+- One run per finding and playbook: pressing the button again opens the existing thread.
+- Intel playbooks never attach to incidents (automatic matching and `/policy` playbook triggers skip them, a trigger pointing at one is refused, and `attach_playbook` refuses them), and
+  `start_ti_playbook` refuses incident playbooks.
+
+Why not a synthetic incident? Incidents mirror Defender and Sentinel, feed the queue, MTTx reports and retention, and
+are what containment is checked against. An intel run has no Defender evidence, so it lives as a tracked thread on the
+finding instead (migration `018_incident_timeline.sql`, table `ti_playbook_runs`). When the hunt finds activity, the
+agent adds it to the real incident with `add_timeline_events`.
+
+`emerging-threat-detection.md` is the bundled intel playbook: ingest the advisory or finding, extract TTPs, IOCs and CVEs
+(`lookup_intel`, `post_ti_finding`), check exposure (`check_cve_exposure`, `list_exposure_recommendations`,
+`get_attack_paths`), hunt (`run_hunting_query`, `run_sentinel_query`), draft and `backtest_detection`, propose the rule
+(`request_action` kind `create_detection_rule`, the step's `suggested_action`), then a person reviews and closes the
+finding. `create_detection_rule` always waits for a human approver, whatever `auto_approve` or an automation rule says.
+
 ## Starter playbooks
 
 | File | Matches | Steps |
@@ -83,6 +110,11 @@ data, not instructions: it comes from files your team controls, but agents shoul
 | `phishing.md` | titles containing "phish", "malicious URL", "email messages containing", "user clicked"; MITRE T1566 | 7 |
 | `endpoint-powershell.md` | alert category Execution; titles containing "PowerShell", "download cradle", "encoded command"; MITRE T1059.001 | 7 |
 | `risky-sign-in.md` | titles containing "impossible travel", "atypical travel", "risky sign-in", "unfamiliar sign-in", "anonymous IP address", "password spray"; MITRE T1078 | 6 |
+| `emerging-threat-detection.md` | `scope: intel`: runs from a threat intel finding, never from an incident | 7 |
+
+The other bundled files (`bec-aitm-token-theft.md`, `oauth-app-consent-abuse.md`, `azure-privilege-escalation.md`,
+`data-exfiltration-cloud.md`, `malware-infostealer.md`, `password-spray-mfa-fatigue.md`,
+`ransomware-lateral-movement.md`) match on their front matter; `GET /api/playbooks` lists them all.
 
 `seed-dev --sample` creates one PowerShell incident and one phishing incident so you can try both locally.
 

@@ -9,22 +9,22 @@ using Blueboard.Api.Core;
 
 namespace Blueboard.Api.Graph;
 
-public enum MsApi { Graph, Defender, SentinelTi, LogAnalytics }
+public enum MsApi { Graph, Defender, SentinelTi, LogAnalytics, Arm }
 
 /// <summary>
 /// Where Microsoft API calls go. Real mode: the exact Microsoft origins, with the managed identity's token.
 /// Demo mode (local only: DEMO_MODE and DEV_AUTH, both refused in Azure): a mock API, and no token is ever fetched or sent.
 /// </summary>
-public sealed record MsOrigins(string Graph, string Defender, bool Mocked, string LogAnalytics = MsClient.LogAnalyticsOrigin)
+public sealed record MsOrigins(string Graph, string Defender, bool Mocked, string LogAnalytics = MsClient.LogAnalyticsOrigin, string Arm = MsClient.ArmOrigin)
 {
-    public static readonly MsOrigins Real = new(MsClient.GraphOrigin, MsClient.DefenderOrigin, false, MsClient.LogAnalyticsOrigin);
+    public static readonly MsOrigins Real = new(MsClient.GraphOrigin, MsClient.DefenderOrigin, false, MsClient.LogAnalyticsOrigin, MsClient.ArmOrigin);
 
     /// <summary>The base-URL override is honoured only in demo mode; otherwise the real origins, always.</summary>
     public static MsOrigins For(Settings s)
     {
         if (!(s.DemoMode && s.DevAuth)) return Real;
         var graph = Origin(s.GraphBaseUrl, "GRAPH_BASE_URL");
-        return new MsOrigins(graph, Origin(s.DefenderBaseUrl, "DEFENDER_BASE_URL"), true, graph);
+        return new MsOrigins(graph, Origin(s.DefenderBaseUrl, "DEFENDER_BASE_URL"), true, graph, graph);
     }
 
     private static string Origin(string? url, string name)
@@ -49,6 +49,8 @@ public sealed partial class MsClient(HttpClient http, TokenCredential? credentia
     public const string SentinelTiOrigin = "https://api.ti.sentinel.azure.com";
     /// <summary>Azure Monitor / Microsoft Sentinel Log Analytics query API (run_sentinel_query).</summary>
     public const string LogAnalyticsOrigin = "https://api.loganalytics.io";
+    /// <summary>Azure Resource Manager (Microsoft Sentinel analytics rules, create_detection_rule target sentinel).</summary>
+    public const string ArmOrigin = "https://management.azure.com";
     private readonly MsOrigins _origins = origins ?? MsOrigins.Real;
     private readonly Lazy<TokenCredential> _cred = new(() => credential ?? new DefaultAzureCredential());
 
@@ -57,7 +59,7 @@ public sealed partial class MsClient(HttpClient http, TokenCredential? credentia
     private static string Scope(MsApi api) => api switch
     {
         MsApi.Graph => "https://graph.microsoft.com/.default",
-        MsApi.SentinelTi => "https://management.azure.com/.default",
+        MsApi.SentinelTi or MsApi.Arm => "https://management.azure.com/.default",
         MsApi.LogAnalytics => "https://api.loganalytics.io/.default",
         _ => "https://api.securitycenter.microsoft.com/.default",
     };
@@ -77,6 +79,7 @@ public sealed partial class MsClient(HttpClient http, TokenCredential? credentia
             MsApi.Graph => origins.Graph,
             MsApi.SentinelTi => SentinelTiOrigin,
             MsApi.LogAnalytics => origins.LogAnalytics,
+            MsApi.Arm => origins.Arm,
             _ => origins.Defender,
         };
         var absolute = pathOrUrl.StartsWith("https://", StringComparison.Ordinal) || pathOrUrl.StartsWith("http://", StringComparison.Ordinal);

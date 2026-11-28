@@ -43,6 +43,11 @@ internal static class A1
         public required Authenticator Auth { get; init; }
         public required BoardApi Api { get; init; }
         public required FakeMicrosoft Microsoft { get; init; }
+        public required Blueboard.Api.Agents.AgentBudgets Budgets { get; init; }
+        public required Blueboard.Api.Agents.AgentTrace Trace { get; init; }
+        public required Blueboard.Api.Agents.AgentFeedback Feedback { get; init; }
+        public required Blueboard.Api.Mcp.McpObserver Observer { get; init; }
+        public required Ingest Ingest { get; init; }
     }
 
     /// <summary>limited: wire the rate limiter in (the limit tests). Off elsewhere so approval tests can file many requests.</summary>
@@ -56,22 +61,44 @@ internal static class A1
         var fake = new FakeMicrosoft();
         var ms = new MsClient(new HttpClient(fake), new FakeCredential());
         var sys = new SystemPrincipal(db);
-        var broker = new Broker(db, audit, board, ms, t.Settings, policy, sys, use);
+        var feedback = new Blueboard.Api.Agents.AgentFeedback(db, audit);
+        var budgets = new Blueboard.Api.Agents.AgentBudgets(db, audit, board, sys, new Blueboard.Api.Agents.PriceTable());
+        var trace = new Blueboard.Api.Agents.AgentTrace(db);
+        var observer = new Blueboard.Api.Mcp.McpObserver(budgets, trace, audit);
+        var broker = new Broker(db, audit, board, ms, t.Settings, policy, sys, use, feedback: feedback);
         var enrich = new Enrichment(db, audit, board, ms, use);
         var auth = new Authenticator(t.Settings, new TokenValidator(t.Settings), db, audit);
-        var ep = new Blueboard.Api.Http.Endpoint(auth, NullLogger<Blueboard.Api.Http.Endpoint>.Instance);
+        var ep = new Blueboard.Api.Http.Endpoint(auth, NullLogger<Blueboard.Api.Http.Endpoint>.Instance, observer);
         var hooks = new Blueboard.Api.Webhooks.WebhookService(db, audit, board, sys, t.Settings);
         var books = PlaybookSet.Empty;
         var runner = new PlaybookRunner(db, board, sys, books);
-        var ingest = new Ingest(db, board, ms, sys, t.Settings, runner);
+        var ingest = new Ingest(db, board, ms, sys, t.Settings, runner, feedback);
         var search = new Search(db, board);
         var queries = new IncidentQueries(db, board, books);
         var intel = Intel(db, board, ms, enrich, sys, t.Settings);
         var gifs = new GifService(new HttpClient(), t.Settings, use);
         var memory = new MemoryService(db, audit, board, use);
-        var api = new BoardApi(ep, board, search, new Reporting(db), broker, enrich, ingest, hooks, db, policy, queries, runner, books, intel, audit, gifs, memory);
-        return new App { Db = db, Policy = policy, Limiter = limiter, Board = board, Broker = broker, Enrich = enrich, Auth = auth, Api = api, Hooks = hooks, Intel = intel, Gifs = gifs, Memory = memory, Playbooks = runner, Microsoft = fake };
+        var api = new BoardApi(ep, board, search, new Reporting(db), broker, enrich, ingest, hooks, db, policy, queries, runner, books, intel, audit, gifs, memory, new AttackViews(db, board, policy));
+        return new App { Db = db, Policy = policy, Limiter = limiter, Board = board, Broker = broker, Enrich = enrich, Auth = auth, Api = api, Hooks = hooks, Intel = intel, Gifs = gifs, Memory = memory, Playbooks = runner, Microsoft = fake,
+            Budgets = budgets, Trace = trace, Feedback = feedback, Observer = observer, Ingest = ingest };
     }
+
+    /// <summary>The MCP tools over this app, with the observability hook (budgets, metering, traces) wired in.</summary>
+    public static Blueboard.Api.Mcp.BoardTools Tools(App app)
+    {
+        var books = PlaybookSet.Empty;
+        return new Blueboard.Api.Mcp.BoardTools(app.Auth, app.Board, new Search(app.Db, app.Board), new IncidentQueries(app.Db, app.Board, books),
+            app.Broker, app.Enrich, app.Ingest, app.Hooks, app.Policy, app.Playbooks, books, app.Intel, null!, app.Gifs, app.Memory, new AttackViews(app.Db, app.Board, app.Policy),
+            NullLogger<Blueboard.Api.Mcp.BoardTools>.Instance, observer: app.Observer, budgets: app.Budgets, feedback: app.Feedback);
+    }
+
+    /// <summary>An MCP tool call as the Functions MCP extension hands it over, signed in as a dev principal.</summary>
+    public static Microsoft.Azure.Functions.Worker.Extensions.Mcp.ToolInvocationContext Mcp(string tool, string handle, Dictionary<string, object>? args = null) => new()
+    {
+        Name = tool,
+        Transport = new Microsoft.Azure.Functions.Worker.Extensions.Mcp.HttpTransport("http") { Headers = new() { ["Authorization"] = $"Bearer dev:{handle}" } },
+        Arguments = args ?? new Dictionary<string, object>(),
+    };
 
     /// <summary>Threat intel with every source off (the default), so these tests never fetch anything.</summary>
     private static Blueboard.Api.Intel.IntelService Intel(Db db, BoardService board, MsClient ms, Enrichment enrich, SystemPrincipal sys, Blueboard.Api.Core.Settings settings) =>
@@ -80,10 +107,11 @@ internal static class A1
             NullLogger<Blueboard.Api.Intel.IntelService>.Instance);
 
     /// <summary>An HTTP request as the Functions host would hand it over, signed in as a dev principal.</summary>
-    public static HttpRequest Request(string handle, string method = "GET", object? body = null, string? query = null)
+    public static HttpRequest Request(string handle, string method = "GET", object? body = null, string? query = null, string? path = null)
     {
         var ctx = new DefaultHttpContext();
         ctx.Request.Method = method;
+        if (path is not null) ctx.Request.Path = path;
         ctx.Request.Headers.Authorization = $"Bearer dev:{handle}";
         if (query is not null) ctx.Request.QueryString = new QueryString(query);
         if (body is not null)

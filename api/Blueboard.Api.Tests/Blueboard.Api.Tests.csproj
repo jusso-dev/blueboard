@@ -15,5 +15,6 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="Fixtures/ti/**/*" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../../dev/fixtures/incidents/*.json" LinkBase="demo-incidents" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

@@ -83,7 +83,7 @@ public class PolicyFileTests
     {
         var report = PolicyReport.Build(new Policy { Disabled = ["purge_email"], RequireTwoApprovers = ["disable_user"] });
         Assert.Equal(Catalog.All.Count, report.Actions.Count);
-        Assert.All(report.Actions, a => Assert.Contains(a.Target, new[] { "device", "user", "app", "indicator", "email", "incident" }));
+        Assert.All(report.Actions, a => Assert.Contains(a.Target, new[] { "device", "user", "app", "indicator", "email", "incident", "detection" }));
         Assert.Equal("disabled", report.Actions.Single(a => a.Kind == "purge_email").Mode);
         Assert.Equal("two_approvers", report.Actions.Single(a => a.Kind == "disable_user").Mode);
         Assert.Equal("auto", report.Actions.Single(a => a.Kind == "run_av_scan").Mode);

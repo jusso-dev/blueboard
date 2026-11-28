@@ -14,7 +14,7 @@ public sealed record PostInput(
     [StringLength(20000, MinimumLength = 1)] string Body,
     [Description("chat | finding | question | ioc | verdict | status (default chat)")]
     [AllowedValues("chat", "finding", "question", "ioc", "verdict", "status")] string? Type = null,
-    [Description("Typed payload. ioc {\"indicators\":[{\"kind\",\"value\",\"verdict\",\"source\"}]}, verdict {\"classification\",\"confidence\",\"determination\"}, finding {\"confidence\",\"entities\",\"evidence\"}, status {\"state\"}. Any message may also include gif: {\"url\",\"preview_url\",\"title\",\"provider\"} using an allowlisted URL from search_gifs.")]
+    [Description("Typed payload. ioc {\"indicators\":[{\"kind\",\"value\",\"verdict\",\"source\"}]}, verdict {\"classification\",\"confidence\",\"determination\"}, finding {\"confidence\",\"entities\",\"evidence\"}, status {\"state\"}. finding and ioc may add timeline events: \"events\":[{\"ts\",\"entity\",\"action\",\"source\",\"ref\"}] (1-200, ts ISO-8601). Any message may also include gif: {\"url\",\"preview_url\",\"title\",\"provider\"} using an allowlisted URL from search_gifs.")]
     JsonElement? Payload = null,
     [Description("Thread root message id, to reply in a thread")] Guid? ParentId = null,
     [Description("Board incident id or Defender incident id, to link the message")]
@@ -88,11 +88,72 @@ public sealed record AttachPlaybookInput(
     [Description("Board incident id or Defender incident id")][StringLength(100, MinimumLength = 1)] string Incident,
     [Description("Playbook id from list_playbooks")][StringLength(41, MinimumLength = 1), RegularExpression("^[a-z0-9][a-z0-9-]{0,40}$")] string PlaybookId);
 
+/// <summary>
+/// One attack-timeline event an agent or analyst reports (finding/ioc payload events[], add_timeline_events).
+/// These are claims, not Defender evidence: the timeline shows who reported them and whether the entity is in evidence.
+/// </summary>
+public sealed record TimelineEventInput(
+    [Description("When it happened, ISO-8601 with an offset, e.g. 2026-11-20T09:14:03Z. Not in the future.")] DateTimeOffset Ts,
+    [Description("The entity it happened on: UPN, device name or MDE id, IP, domain, URL, file hash or name, mailbox, app id")]
+    [StringLength(512, MinimumLength = 1)] string Entity,
+    [Description("What happened, e.g. 'logged on', 'ran powershell.exe -enc ...', 'connected to 203.0.113.77'")]
+    [StringLength(300, MinimumLength = 1)] string Action,
+    [Description("Where you saw it, e.g. DeviceProcessEvents, SigninLogs, run_hunting_query")][StringLength(200)] string? Source = null,
+    [Description("Optional pointer: alert id, hunting query name, message id or https URL")][StringLength(500)] string? Ref = null);
+
+public sealed record TimelineQuery(
+    [Description("Board incident id or Defender incident id")][StringLength(100, MinimumLength = 1)] string Incident,
+    [Description("Only events that touch this entity (case-insensitive substring of an event entity)")][StringLength(512)] string? Entity = null,
+    [Description("alert | evidence | finding | ioc | verdict | action")][AllowedValues("alert", "evidence", "finding", "ioc", "verdict", "action")] string? Source = null,
+    [Description("1-1000, default 500 (oldest first)")][Range(1, 1000)] int Limit = 500);
+
+/// <summary>GET /api/incidents/{id}/timeline query string (the incident comes from the route).</summary>
+public sealed record TimelineFilter(
+    [Description("Only events that touch this entity (case-insensitive substring of an event entity)")][StringLength(512)] string? Entity = null,
+    [Description("alert | evidence | finding | ioc | verdict | action")][AllowedValues("alert", "evidence", "finding", "ioc", "verdict", "action")] string? Source = null,
+    [Description("1-1000, default 500 (oldest first)")][Range(1, 1000)] int Limit = 500);
+
+public sealed record AddTimelineEventsInput(
+    [Description("Board incident id or Defender incident id")][StringLength(100, MinimumLength = 1)] string Incident,
+    [Description("1-200 timeline events from your hunting results: [{ts, entity, action, source, ref}]")] TimelineEventInput[] Events,
+    [Description("What the hunt showed, in a sentence or two (the finding's body, 5-4000 characters)")][StringLength(4000, MinimumLength = 5)] string Summary,
+    [Description("The KQL you ran, for the record (optional)")][StringLength(10000)] string? Query = null,
+    [Description("Confidence 0-1 (optional)")][Range(0, 1)] double? Confidence = null,
+    [Description("Thread root to reply in (default: the incident's root message in #incidents)")] Guid? ParentId = null);
+
+public sealed record StartTiPlaybookInput(
+    [Description("Threat intel finding id from list_ti_findings")] Guid TiFindingId,
+    [Description("Playbook id (default emerging-threat-detection)")][StringLength(41, MinimumLength = 1), RegularExpression("^[a-z0-9][a-z0-9-]{0,40}$")] string? PlaybookId = null);
+
 public sealed record IntelLookupInput(
     [Description("e.g. CVE-2021-44228, GHSA-jfh8-c2jp-5v3q, 203.0.113.5, bad.example, a sha256")][StringLength(2048, MinimumLength = 3)] string Key);
 
 public sealed record ExposureInput(
     [Description("CVE ids, e.g. [\"CVE-2021-44228\",\"CVE-2024-3400\"] (1-100)")] string[] CveIds);
+
+public sealed record BacktestInput(
+    [Description("Candidate detection KQL (read-only; same guards as run_hunting_query). Project Timestamp (Defender) or TimeGenerated (Sentinel) so hits per day are exact.")]
+    [StringLength(10000, MinimumLength = 5)] string Query,
+    [Description("defender (Defender XDR advanced hunting) or sentinel (the configured Log Analytics workspace)")]
+    [AllowedValues("defender", "sentinel")] string Target = "defender",
+    [Description("Days of history to replay, 1-30 (default 14; create_detection_rule needs at least 7)")][Range(1, 30)] int LookbackDays = 14,
+    [Description("Up to 5 result columns to count distinct values for, e.g. [\"DeviceName\",\"AccountUpn\"]")] string[]? EntityColumns = null);
+
+public sealed record BacktestQuery([Description("backtest_id from backtest_detection")] Guid BacktestId);
+
+public sealed record ExposureRecommendationsQuery(
+    [Description("Only recommendations with a public exploit")] bool ExploitableOnly = false,
+    [Description("Defender recommendation status filter: Active (default) or Exception")][AllowedValues("Active", "Exception")] string Status = "Active",
+    [Description("1-100, default 25")][Range(1, 100)] int Limit = 25);
+
+public sealed record AttackPathsQuery(
+    [Description("Only paths that start at an internet-facing node (default true)")] bool InternetFacingOnly = true,
+    [Description("Only paths that end at a critical asset, criticality level 0-1 (default true)")] bool CriticalTargetsOnly = true,
+    [Description("1-50, default 20")][Range(1, 50)] int Limit = 20);
+
+public sealed record PrioritizeExposuresQuery(
+    [Description("1-100, default 25")][Range(1, 100)] int Limit = 25,
+    [Description("Restrict to these CVE ids (optional)")] string[]? CveIds = null);
 
 public sealed record TiFindingIndicatorInput(
     [Description("ip | domain | url | sha256 | sha1 | md5 | email | cve")][AllowedValues("ip", "domain", "url", "sha256", "sha1", "md5", "email", "cve")] string Kind,
@@ -129,7 +190,9 @@ public sealed record ActionRequest(
     [Description("Why, citing evidence on the board (20-4000 characters)")][StringLength(4000, MinimumLength = 20)] string Justification,
     [Description("Board incident id or Defender incident id")] string? Incident = null,
     [Description("Board message this responds to")] Guid? ParentId = null,
-    [Description("Board message id where a human approver told you to do this; the board treats their instruction as the approval when policy allows")] Guid? OnBehalfOf = null);
+    [Description("Board message id where a human approver told you to do this; the board treats their instruction as the approval when policy allows")] Guid? OnBehalfOf = null,
+    [Description("Reversible kinds only (isolate_device, disable_user, block_indicator, restrict_app_execution): undo it automatically this many minutes after it runs (5-10080). People can Keep or Revert now")]
+    [Range(5, 10080)] int? RevertAfterMinutes = null);
 
 public sealed record ActionQuery([Description("Action id")] Guid ActionId);
 
@@ -264,3 +327,53 @@ public sealed record AuditQuery(
 
 /// <summary>For tools and routes with no arguments.</summary>
 public sealed record NoInput;
+
+// ── agent observability (WS3) ─────────────────────────────────────────────────────────────────
+
+/// <summary>
+/// report_usage: an agent reports the LLM tokens one model call used. Untrusted: the board range-checks every field,
+/// prices it from its own price table when it knows the model, and only ever adds rows (a report can't lower a total).
+/// </summary>
+public sealed record UsageReportInput(
+    [Description("Model id the call ran on, e.g. claude-opus-5-5")]
+    [StringLength(100, MinimumLength = 1), RegularExpression("^[A-Za-z0-9._:/@\\[\\]-]{1,100}$")] string Model,
+    [Description("Uncached input tokens (0-50,000,000)")][Range(0, 50_000_000)] long InputTokens = 0,
+    [Description("Output tokens, thinking included (0-50,000,000)")][Range(0, 50_000_000)] long OutputTokens = 0,
+    [Description("Input tokens read from the prompt cache (0-50,000,000)")][Range(0, 50_000_000)] long CacheReadTokens = 0,
+    [Description("Input tokens written to the prompt cache (0-50,000,000)")][Range(0, 50_000_000)] long CacheWriteTokens = 0,
+    [Description("Your own cost estimate in USD (0-1000). Used only when the board's price table doesn't know the model.")][Range(0d, 1000d)] double? CostUsd = null,
+    [Description("Provider request/response id, so a retried report is counted once")][StringLength(200)] string? RequestId = null,
+    [Description("Board message this call produced or worked on (optional)")] Guid? MessageId = null,
+    [Description("Message you hold a claim on while making this call (optional)")] Guid? ClaimMessageId = null,
+    [Description("Board incident id or Defender incident id (optional)")][StringLength(100)] string? Incident = null);
+
+public sealed record AgentFeedbackQuery(
+    [Description("Only feedback marking your message incorrect (overturns and corrections)")] bool IncorrectOnly = false,
+    [Description("1-200, default 50")][Range(1, 200)] int Limit = 50);
+
+/// <summary>A person's verdict on an agent's verdict, finding or ioc message. People only.</summary>
+public sealed record FeedbackInput(
+    [Description("correct or incorrect")][AllowedValues("correct", "incorrect")] string Verdict,
+    [Description("Why (optional, up to 1000 characters); the agent can read it")][StringLength(1000)] string? Reason = null,
+    [Description("For a verdict marked incorrect: the right classification")]
+    [AllowedValues("truePositive", "falsePositive", "informationalExpectedActivity", "unknown")] string? CorrectedClassification = null);
+
+/// <summary>An agent's budget (Board.Admin, people only). Omitted or null limits are not enforced.</summary>
+public sealed record BudgetInput(
+    [Description("USD per UTC day")][Range(0d, 1_000_000d)] double? DailyUsd = null,
+    [Description("USD per UTC month")][Range(0d, 10_000_000d)] double? MonthlyUsd = null,
+    [Description("Tokens per UTC day")][Range(0, 100_000_000_000)] long? DailyTokens = null,
+    [Description("Tokens per UTC month")][Range(0, 1_000_000_000_000)] long? MonthlyTokens = null,
+    [Description("Soft alert at this percentage of a limit (1-100, default 80)")][Range(1, 100)] int SoftPct = 80,
+    [Description("Why (5-500 characters, kept in the audit log)")][StringLength(500, MinimumLength = 5)] string Reason = "");
+
+/// <summary>A temporary budget top-up (Board.Admin, people only).</summary>
+public sealed record TopupInput(
+    [Description("Extra USD on top of each limit until it expires")][Range(0d, 1_000_000d)] double Usd = 0,
+    [Description("Extra tokens on top of each limit until it expires")][Range(0, 100_000_000_000)] long Tokens = 0,
+    [Description("Hours the top-up lasts (1-744)")][Range(1, 744)] int Hours = 24,
+    [Description("Why (5-500 characters, kept in the audit log)")][StringLength(500, MinimumLength = 5)] string Reason = "");
+
+public sealed record AgentReportQuery(
+    [Description("From (ISO-8601), default 30 days before to")] DateTimeOffset? From = null,
+    [Description("To (ISO-8601), default now")] DateTimeOffset? To = null);

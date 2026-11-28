@@ -94,6 +94,7 @@ public class PlaybookTests
             "azure-privilege-escalation",
             "bec-aitm-token-theft",
             "data-exfiltration-cloud",
+            "emerging-threat-detection",
             "endpoint-powershell",
             "malware-infostealer",
             "oauth-app-consent-abuse",
@@ -103,6 +104,50 @@ public class PlaybookTests
             "risky-sign-in",
         ], set.All.Select(p => p.Id));
         Assert.All(set.All, p => Assert.InRange(p.Steps.Count, 6, 10));
+        Assert.Equal(["emerging-threat-detection"], set.All.Where(p => p.Scope == Playbooks.IntelScope).Select(p => p.Id));
+    }
+
+    [Fact]
+    public void Emerging_threat_playbook_chains_intel_exposure_hunt_and_detection_with_a_human_last()
+    {
+        var pb = Playbooks.Load(Path.Combine(AppContext.BaseDirectory, "playbooks")).Get("emerging-threat-detection")!;
+        Assert.Equal(Playbooks.IntelScope, pb.Scope);
+        Assert.Equal(["ingest-advisory", "extract-ttps-iocs", "check-exposure", "hunt-activity", "backtest-detection", "propose-detection", "human-review"], pb.Steps.Select(s => s.Id));
+        var text = string.Join("\n", pb.Steps.Select(s => s.Detail));
+        foreach (var tool in new[] { "lookup_intel", "post_ti_finding", "check_cve_exposure", "list_exposure_recommendations", "get_attack_paths", "run_hunting_query", "run_sentinel_query", "backtest_detection", "create_detection_rule" })
+            Assert.Contains(tool, text);
+        Assert.Equal("record", pb.Steps[^1].Stage);
+        Assert.Equal("create_detection_rule", pb.Steps.Single(s => s.Id == "propose-detection").SuggestedAction);
+    }
+
+    [Fact]
+    public void A_trigger_pointing_at_an_intel_playbook_never_attaches_it()
+    {
+        var set = Playbooks.Load(Path.Combine(AppContext.BaseDirectory, "playbooks"));
+        var incident = JsonDocument.Parse("""{ "displayName": "Emerging threat advisory", "severity": "high", "alerts": [ { "title": "Emerging threat advisory" } ] }""").RootElement;
+        var match = new Actions.TriggerMatch([], [], ["Emerging"], [], []);
+        var intel = new Actions.PlaybookTrigger("custom-intel", "custom", "emerging-threat-detection", 1000, match, true, 1, true);
+        Assert.Null(Actions.PolicyStore.Pick([intel], set, incident));
+        var phishing = intel with { Id = "custom-phish", PlaybookId = "phishing" };
+        Assert.Equal("phishing", Actions.PolicyStore.Pick([intel, phishing], set, incident));
+    }
+
+    [Fact]
+    public void Intel_scoped_playbooks_need_no_match_and_never_attach_to_incidents()
+    {
+        var pb = Parse("""
+            ---
+            id: intel-test
+            title: Intel test
+            scope: intel
+            steps:
+              - { id: a, stage: triage, title: First }
+            ---
+            """);
+        Assert.Equal(Playbooks.IntelScope, pb.Scope);
+        var set = new PlaybookSet([pb], []);
+        Assert.Null(set.Match(Incident("anything at all")));
+        Assert.Contains("scope must be one of", Error(Doc(Good, "scope: weird\nmatch: { titles: [phish] }")));
     }
 
     private static JsonElement Incident(string title, string? category = null, params string[] techniques) => JsonSerializer.SerializeToElement(new

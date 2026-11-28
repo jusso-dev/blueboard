@@ -14,7 +14,9 @@ sealed class ScriptedAgent(ScriptedAgent.Script script, TimeSpan delay)
     public sealed record Lookup(string Kind, string Value);
     public sealed record Post(string Body, JsonElement? Payload);
     public sealed record ActionStep(string Kind, JsonElement Params, string Justification);
-    public sealed record Entry(Lookup[] Lookups, string? Hunt, Post Finding, JsonElement[] Iocs, JsonElement Verdict, string? Question, ActionStep? Action);
+    /// <summary>A hunting result to add to the attack timeline, minutes before the agent posts it (fixtures can't hold real times).</summary>
+    public sealed record TimelineStep(int MinutesAgo, string Entity, string Action, string? Source);
+    public sealed record Entry(Lookup[] Lookups, string? Hunt, Post Finding, JsonElement[] Iocs, JsonElement Verdict, string? Question, ActionStep? Action, TimelineStep[]? Timeline = null);
     public sealed record Script(Dictionary<string, Entry> Incidents, [property: JsonPropertyName("mention_reply")] string MentionReply);
 
     public static async Task<Script> LoadAsync(string path, CancellationToken ct) =>
@@ -38,6 +40,14 @@ sealed class ScriptedAgent(ScriptedAgent.Script script, TimeSpan delay)
         await Pause(ct);
         await w.ReplyAsync(e.Finding.Body, "finding", e.Finding.Payload, ct);
         await Pause(ct);
+        if (e.Timeline is { Length: > 0 } tl)
+        {
+            var now = DateTimeOffset.UtcNow;
+            await Try(() => w.Board.AddTimelineEventsAsync(new AddTimelineEventsInput(id,
+                tl.Select(t => new TimelineEventInput(now.AddMinutes(-t.MinutesAgo), t.Entity, t.Action, t.Source, e.Hunt is null ? null : "hunting query")).ToArray(),
+                $"Hunting results for incident {id}: {tl.Length} event(s) added to the attack timeline.", e.Hunt, null, w.ThreadId), ct));
+            await Pause(ct);
+        }
         await w.ReplyAsync($"Indicators from incident {id}.", "ioc", new { indicators = e.Iocs }, ct);
         await Pause(ct);
         var cls = e.Verdict.GetProperty("classification").GetString();

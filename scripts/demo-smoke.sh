@@ -75,4 +75,9 @@ echo "ok: $pending actions pending approval across $per_incident incidents"
 lookup=$(tool lookup_entity '{"kind":"user","value":"ana.lopez@contoso.com"}')
 [[ "$(printf '%s' "$lookup" | jq -r .user.displayName)" == "Ana Lopez" ]] || die "lookup_entity did not return fixture data: $lookup"
 echo "ok: lookup_entity returns fixture data"
+
+# Okta connector (mocked): read-only context for the same user, wrapped as untrusted data.
+okta=$(tool lookup_okta_user '{"user":"ana.lopez@contoso.com"}')
+[[ "$(printf '%s' "$okta" | jq -r .untrusted_data.status)" == "ACTIVE" ]] || die "lookup_okta_user did not return mock Okta data: $okta"
+echo "ok: lookup_okta_user returns mock Okta data"
 echo "demo-smoke passed"

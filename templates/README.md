@@ -30,6 +30,7 @@ Blueboard speaks standard Streamable HTTP MCP (`/runtime/webhooks/mcp`) with Ent
 - [`kql/cloud-azure-privesc.kql`](kql/cloud-azure-privesc.kql) — Azure RBAC writes, VM RunCommand, Key Vault secret enumeration.
 - [`kql/purview-dlp-insider-ai.kql`](kql/purview-dlp-insider-ai.kql) — Purview DLP alerts, sensitivity label downgrades, mass SharePoint/OneDrive downloads, Insider Risk correlation, and generative AI / Copilot prompt uploads.
 - [`kql/sentinel-blueboard-audit.kql`](kql/sentinel-blueboard-audit.kql) — Auditing Blueboard itself via `BlueboardAudit_CL`.
+- [`kql/detection-backtest-samples.kql`](kql/detection-backtest-samples.kql) — Candidate detections to run through `backtest_detection` before `create_detection_rule`.
 
 ## Sample Defender, Sentinel & Purview Incident Fixtures (`templates/incidents/`)
 

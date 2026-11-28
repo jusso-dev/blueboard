@@ -28,10 +28,15 @@ public sealed record ActionDef(
     Func<MsClient, JsonObject, string, CancellationToken, Task<object?>> Run,
     // Builds the exact outbound request from params plus broker context. When set, the dry run shows it in full and
     // Run receives it instead of the params (publish_ti_indicator).
-    Func<JsonObject, ActionContext, JsonObject>? Prepare = null);
+    Func<JsonObject, ActionContext, JsonObject>? Prepare = null,
+    // Third-party connector writes (Okta): run with the connector clients instead of MsClient. Run is unused for these.
+    Func<Connectors.ConnectorHub, JsonObject, string, CancellationToken, Task<object?>>? RunConnector = null,
+    // Looks up facts policy and Prepare need beyond the params: device aliases (Intune ↔ MDE ↔ name), the back-test a
+    // rule is bound to, the rule a disable refers to. Run before every policy check (Resolvers.cs).
+    Func<ResolveContext, JsonObject, CancellationToken, Task<ActionFacts>>? Resolve = null);
 
 /// <summary>
-/// Every write the board can make in Defender, Entra and Sentinel. Agents only request these; the broker
+/// Every write the board can make in Defender, Entra, Sentinel and Intune. Agents only request these; the broker
 /// runs them with the Function App's identity after policy and (usually) human approval.
 /// </summary>
 public static partial class Catalog
@@ -402,13 +407,13 @@ public static partial class Catalog
             p => $"Add a comment to incident {S(p, "incident_id")}",
             (ms, p, _, ct) => Send(ms, MsApi.Graph, $"/v1.0/security/incidents/{Enc(S(p, "incident_id"))}/comments", HttpMethod.Post,
                 new Dictionary<string, string> { ["@odata.type"] = "microsoft.graph.security.alertComment", ["comment"] = S(p, "comment") }, ct)),
-    }.ToDictionary(a => a.Kind);
+    }.Concat(OktaActions()).Concat(DetectionAndPatchKinds()).ToDictionary(a => a.Kind);
 
     /// <summary>Incident-scoped kinds must be linked to, and aimed at, that same incident.</summary>
     public static readonly HashSet<string> IncidentScoped = ["update_incident", "add_incident_comment"];
 
     /// <summary>What a kind acts on: device, user, app, indicator, email or incident. The UI filters its action picker by this.</summary>
-    public static string TargetType(string kind) => kind switch
+    public static string TargetType(string kind) => OktaKinds.Contains(kind) ? "user" : kind switch
     {
         "isolate_device" or "release_device" or "run_av_scan" or "collect_investigation_package"
             or "restrict_app_execution" or "unrestrict_app_execution" or "stop_and_quarantine_file" or "tag_device" => "device",
@@ -417,8 +422,16 @@ public static partial class Catalog
         "disable_service_principal" => "app",
         "block_indicator" or "unblock_indicator" or "publish_ti_indicator" => "indicator",
         "purge_email" => "email",
+        "intune_sync_device" or "intune_update_defender_signatures" or "intune_expedite_quality_update" => "device",
+        "create_detection_rule" or "disable_detection_rule" => "detection",
         _ => "incident",
     };
+
+    /// <summary>
+    /// Not destructive (no user or device loses access) but never run without a person, even if listed in auto_approve:
+    /// a detection rule an agent deployed on its own could flood the SOC or quietly stand in for real coverage.
+    /// </summary>
+    public static readonly HashSet<string> NeverAuto = ["create_detection_rule"];
 
     /// <summary>Kinds whose value must already be confirmed malicious by an ioc message on the linked incident.</summary>
     public static readonly HashSet<string> NeedsMaliciousIoc = ["publish_ti_indicator"];

@@ -12,6 +12,16 @@
   "act_on_instruction": [],
   "expiry_hours": 4,
   "expiry_hours_by_kind": {},
+  "automation": {
+    "conditional_auto_allowed": [],
+    "irreversible_auto_allowed": [],
+    "min_confidence_floor": 0.8,
+    "max_per_hour": 10,
+    "max_per_incident": 3,
+    "max_revert_after_minutes": 1440,
+    "change_expiry_hours": 24,
+    "rules": {}
+  },
   "limits": {
     "pending_actions_per_incident": 10,
     "agent": {

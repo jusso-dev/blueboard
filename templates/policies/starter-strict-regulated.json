@@ -66,6 +66,11 @@
     "disable_user": 1,
     "disable_service_principal": 1
   },
+  "automation": {
+    "conditional_auto_allowed": [],
+    "irreversible_auto_allowed": [],
+    "rules": {}
+  },
   "limits": {
     "pending_actions_per_incident": 6,
     "agent": {

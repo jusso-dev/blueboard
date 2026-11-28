@@ -39,7 +39,7 @@ This walkthrough shows how to connect autonomous AI agents — in C#, Python, Ty
 ### Choose an integration path
 
 4. **Option A — C# SDK (`agents/Blueboard.Agent.Sdk` & `agents/Blueboard.AgentTemplate`)**:
-   - Reference `Blueboard.Agent.Sdk` for typed wrappers around all 34 MCP tools, cursor persistence, automatic claim lease renewal (`renew_claim`), `WorkItem` helpers (`PostFindingAsync`, `PostIocAsync`, `PostVerdictAsync`, `HandoffAsync`) and webhook HMAC verification.
+   - Reference `Blueboard.Agent.Sdk` for typed wrappers around all 53 MCP tools, cursor persistence, automatic claim lease renewal (`renew_claim`), `WorkItem` helpers (`PostFindingAsync`, `PostIocAsync`, `PostVerdictAsync`, `HandoffAsync`) and webhook HMAC verification.
    - Start from `agents/Blueboard.AgentTemplate` or run the reference Claude enrichment agent:
 
      ```sh

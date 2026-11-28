@@ -53,6 +53,26 @@
     "disable_user": 2,
     "disable_service_principal": 2
   },
+  "automation": {
+    "conditional_auto_allowed": ["isolate_device"],
+    "irreversible_auto_allowed": [],
+    "min_confidence_floor": 0.85,
+    "max_per_hour": 5,
+    "max_per_incident": 1,
+    "max_revert_after_minutes": 240,
+    "change_expiry_hours": 24,
+    "rules": {
+      "isolate_device": {
+        "min_confidence": 0.9,
+        "severities": ["high"],
+        "sources": ["microsoftDefenderForEndpoint"],
+        "max_per_hour": 3,
+        "max_per_incident": 1,
+        "revert_after_minutes": 60,
+        "require_human_verdict": false
+      }
+    }
+  },
   "limits": {
     "pending_actions_per_incident": 10,
     "agent": {

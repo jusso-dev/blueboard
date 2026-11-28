@@ -48,6 +48,8 @@ public sealed class BoardToolException(string tool, string message, int status) 
     public string Tool { get; } = tool;
     public int Status { get; } = status;
     public bool IsConflict => Status == 409;
+    /// <summary>The board refused the call because this agent is over its budget (status 402). Stop working until an admin raises it.</summary>
+    public bool IsBudgetExceeded => Status == 402;
 }
 
 /// <summary>
@@ -157,12 +159,24 @@ public sealed class BoardConnection : IAsyncDisposable
     public Task<JsonElement> SyncIncidentAsync(string incident, CancellationToken ct = default) => Call<JsonElement>(Tools.SyncIncident, new IncidentQuery(incident), ct);
     public Task<JsonElement> ListPlaybooksAsync(CancellationToken ct = default) => Call<JsonElement>(Tools.ListPlaybooks, null, ct);
     public Task<JsonElement> AttachPlaybookAsync(string incident, string playbookId, CancellationToken ct = default) => Call<JsonElement>(Tools.AttachPlaybook, new AttachPlaybookInput(incident, playbookId), ct);
+    public Task<IncidentTimelineResult> GetIncidentTimelineAsync(string incident, string? entity = null, string? source = null, int limit = 500, CancellationToken ct = default) =>
+        Call<IncidentTimelineResult>(Tools.GetIncidentTimeline, new TimelineQuery(incident, entity, source, limit), ct);
+    public Task<IncidentGraphResult> GetIncidentGraphAsync(string incident, CancellationToken ct = default) => Call<IncidentGraphResult>(Tools.GetIncidentGraph, new IncidentQuery(incident), ct);
+    public Task<JsonElement> AddTimelineEventsAsync(AddTimelineEventsInput input, CancellationToken ct = default) => Call<JsonElement>(Tools.AddTimelineEvents, input, ct);
+    public Task<TiPlaybookRun> StartTiPlaybookAsync(Guid tiFindingId, string? playbookId = null, CancellationToken ct = default) =>
+        Call<TiPlaybookRun>(Tools.StartTiPlaybook, new StartTiPlaybookInput(tiFindingId, playbookId), ct);
     public Task<JsonElement> RunHuntingQueryAsync(string query, string? timespan = null, CancellationToken ct = default) => Call<JsonElement>(Tools.RunHuntingQuery, new HuntInput(query, timespan), ct);
     public Task<JsonElement> RunSentinelQueryAsync(string query, string? timespan = null, CancellationToken ct = default) => Call<JsonElement>(Tools.RunSentinelQuery, new SentinelQueryInput(query, timespan), ct);
     public Task<JsonElement> LookupEntityAsync(string kind, string value, CancellationToken ct = default) => Call<JsonElement>(Tools.LookupEntity, new LookupInput(kind, value), ct);
     public Task<JsonElement> LookupPurviewContextAsync(string user, bool includeLabels = true, CancellationToken ct = default) => Call<JsonElement>(Tools.LookupPurviewContext, new PurviewLookupInput(user, includeLabels), ct);
     public Task<JsonElement> LookupIntelAsync(string key, CancellationToken ct = default) => Call<JsonElement>(Tools.LookupIntel, new IntelLookupInput(key), ct);
     public Task<JsonElement> CheckCveExposureAsync(string[] cveIds, CancellationToken ct = default) => Call<JsonElement>(Tools.CheckCveExposure, new ExposureInput(cveIds), ct);
+    public Task<BacktestResult> BacktestDetectionAsync(BacktestInput input, CancellationToken ct = default) => Call<BacktestResult>(Tools.BacktestDetection, input, ct);
+    public Task<JsonElement> ListExposureRecommendationsAsync(ExposureRecommendationsQuery? query = null, CancellationToken ct = default) =>
+        Call<JsonElement>(Tools.ListExposureRecommendations, query ?? new ExposureRecommendationsQuery(), ct);
+    public Task<JsonElement> GetAttackPathsAsync(AttackPathsQuery? query = null, CancellationToken ct = default) => Call<JsonElement>(Tools.GetAttackPaths, query ?? new AttackPathsQuery(), ct);
+    public Task<ExposureItem[]> PrioritizeExposuresAsync(PrioritizeExposuresQuery? query = null, CancellationToken ct = default) =>
+        Call<ExposureItem[]>(Tools.PrioritizeExposures, query ?? new PrioritizeExposuresQuery(), ct);
     public Task<JsonElement> ListTiWatchesAsync(CancellationToken ct = default) => Call<JsonElement>(Tools.ListTiWatches, null, ct);
     public Task<TiFinding[]> ListTiFindingsAsync(TiFindingsQuery? query = null, CancellationToken ct = default) => Call<TiFinding[]>(Tools.ListTiFindings, query ?? new TiFindingsQuery(), ct);
     public Task<TiFinding> PostTiFindingAsync(TiFindingInput finding, CancellationToken ct = default) => Call<TiFinding>(Tools.PostTiFinding, finding, ct);
@@ -175,6 +189,11 @@ public sealed class BoardConnection : IAsyncDisposable
     public Task<Subscription[]> ListSubscriptionsAsync(CancellationToken ct = default) => Call<Subscription[]>(Tools.ListSubscriptions, null, ct);
     public Task<Followup> ScheduleFollowupAsync(Guid messageId, string note, int inMinutes, CancellationToken ct = default) => Call<Followup>(Tools.ScheduleFollowup, new FollowupInput(messageId, note, inMinutes), ct);
     public Task<JsonElement> ListFollowupsAsync(CancellationToken ct = default) => Call<JsonElement>(Tools.ListFollowups, null, ct);
+    /// <summary>Report the LLM tokens one model call used. The board prices it and counts it against your budget. Allowed when over budget.</summary>
+    public Task<UsageReceipt> ReportUsageAsync(UsageReportInput usage, CancellationToken ct = default) => Call<UsageReceipt>(Tools.ReportUsage, usage, ct);
+    /// <summary>Feedback people gave on your verdicts, findings and IOCs, and incidents resolved differently from your verdict (read only).</summary>
+    public Task<AgentFeedbackResult> GetAgentFeedbackAsync(AgentFeedbackQuery? query = null, CancellationToken ct = default) =>
+        Call<AgentFeedbackResult>(Tools.GetAgentFeedback, query ?? new AgentFeedbackQuery(), ct);
 
     public ValueTask DisposeAsync() => _transport.DisposeAsync();
 

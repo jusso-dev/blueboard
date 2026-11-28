@@ -17,6 +17,7 @@ if (Environment.GetEnvironmentVariable("WEBSITE_INSTANCE_ID") is not null || Env
 var fixtures = Environment.GetEnvironmentVariable("FIXTURES_DIR") ?? Path.Combine(AppContext.BaseDirectory, "fixtures");
 var incidents = Fixtures.LoadIncidents(Path.Combine(fixtures, "incidents"));
 var entities = JsonNode.Parse(File.ReadAllText(Path.Combine(fixtures, "entities.json")))!.AsObject();
+var exposure = JsonNode.Parse(File.ReadAllText(Path.Combine(fixtures, "exposure.json")))!.AsObject();
 var writes = new ConcurrentQueue<object>();
 Console.WriteLine($"mock-msapi: {incidents.Count} incidents from {fixtures}");
 
@@ -35,6 +36,8 @@ app.MapPost("/v1.0/security/runHuntingQuery", async (HttpRequest req) =>
 {
     var body = await JsonNode.ParseAsync(req.Body);
     var query = body?["query"]?.GetValue<string>() ?? "";
+    // Board-built exposure queries and the demo's back-testable detection get canned rows (fixtures/exposure.json).
+    if (Demo.HuntingRows(exposure, query) is { } canned) return Results.Json(canned);
     return Results.Json(new
     {
         schema = new[] { new { name = "Query", type = "String" }, new { name = "Matches", type = "Int64" } },
@@ -101,6 +104,7 @@ app.MapPost("/v1/workspaces/{id}/query", async (HttpRequest req) =>
 {
     var body = await JsonNode.ParseAsync(req.Body);
     var query = body?["query"]?.GetValue<string>() ?? "";
+    if (Demo.LogAnalyticsRows(exposure, query) is { } canned) return Results.Json(canned);
     return Results.Json(new
     {
         tables = new[]
@@ -120,7 +124,9 @@ app.MapGet("/api/machines", (HttpRequest req) =>
 {
     var filter = req.Query["$filter"].ToString();
     var all = entities["machines"]!.AsObject().Select(kv => kv.Value!.DeepClone()).ToList();
-    var match = all.Where(m => filter.Contains(m!["computerDnsName"]!.GetValue<string>(), StringComparison.OrdinalIgnoreCase)).ToList();
+    // $filter=computerDnsName eq '…' (lookups) or aadDeviceId eq … (Intune alias resolution).
+    var match = all.Where(m => filter.Contains(m!["computerDnsName"]!.GetValue<string>(), StringComparison.OrdinalIgnoreCase)
+                               || (m["aadDeviceId"]?.GetValue<string>() is { } aad && filter.Contains(aad, StringComparison.OrdinalIgnoreCase))).ToList();
     return Results.Json(new { value = match });
 });
 app.MapGet("/api/machines/{id}", (string id) => Entity("machines", id));
@@ -131,6 +137,18 @@ app.MapGet("/api/ips/{ip}/alerts", (string ip) => Results.Json(new { value = Arr
 app.MapGet("/api/files/{hash}", (string hash) => Entity("files", hash));
 app.MapGet("/api/files/{hash}/stats", (string hash) => Results.Json(new { sha256 = hash, orgPrevalence = 1, globalPrevalence = 3 }));
 app.MapGet("/api/domains/{domain}/stats", (string domain) => Entity("domains", domain, new { host = domain, orgPrevalence = 1 }));
+app.MapGet("/api/recommendations", () => Results.Json(new { value = exposure["recommendations"]!.DeepClone() }));
+
+// ── Intune and Windows Autopatch (exposure remediation) ──────────────────────────────────────────
+app.MapGet("/v1.0/deviceManagement/managedDevices", (HttpRequest req) =>
+{
+    var filter = req.Query["$filter"].ToString();
+    var all = exposure["managedDevices"]!.AsArray().Select(d => d!.DeepClone()).ToList();
+    return Results.Json(new { value = all.Where(d => filter.Contains(d!["azureADDeviceId"]!.GetValue<string>(), StringComparison.OrdinalIgnoreCase)).ToList() });
+});
+app.MapGet("/v1.0/deviceManagement/managedDevices/{id}", (string id) =>
+    exposure["managedDevices"]!.AsArray().FirstOrDefault(d => d!["id"]!.GetValue<string>() == id) is { } d ? Results.Json(d.DeepClone()) : NotFound());
+app.MapGet("/beta/admin/windows/updates/catalog/entries", () => Results.Json(new { value = exposure["qualityUpdates"]!.DeepClone() }));
 
 // Brokered writes. The demo runs the broker in dry run, so these normally aren't reached; if BROKER_EXECUTE is
 // turned on they record the call and answer like Defender/Graph would.
@@ -145,6 +163,9 @@ foreach (var (method, pattern) in new[]
     ("PATCH", "/v1.0/servicePrincipals/{id}"),
     ("POST", "/beta/security/collaboration/analyzedEmails/remediate"),
     ("PATCH", "/v1.0/security/incidents/{id}"), ("POST", "/v1.0/security/incidents/{id}/comments"),
+    ("POST", "/v1.0/security/rules/detectionRules"), ("PATCH", "/v1.0/security/rules/detectionRules/{id}"),
+    ("POST", "/v1.0/deviceManagement/managedDevices/{id}/syncDevice"), ("POST", "/v1.0/deviceManagement/managedDevices/{id}/windowsDefenderUpdateSignatures"),
+    ("POST", "/beta/admin/windows/updates/deployments"), ("POST", "/beta/admin/windows/updates/deployments/{id}/audience/updateAudience"),
 })
 {
     app.MapMethods(pattern, [method], async (HttpRequest req) =>
@@ -155,6 +176,104 @@ foreach (var (method, pattern) in new[]
     });
 }
 
+// ── Okta, ServiceNow and Jira (WS5 connectors) ─────────────────────────────────────────────────
+// The board's connectors point here in the demo (OKTA_ORG_URL, SERVICENOW_INSTANCE_URL, JIRA_BASE_URL). No credential is
+// ever sent in demo mode; these answer the exact paths the connectors call. Users mirror the fixture incidents' UPNs.
+var oktaUsers = new Dictionary<string, JsonObject>(StringComparer.OrdinalIgnoreCase);
+foreach (var (id, login, first, last, status, lastLogin) in new[]
+{
+    ("00udemoana00000000001", "ana.lopez@contoso.com", "Ana", "Lopez", "ACTIVE", -35),
+    ("00udemosam00000000002", "sam.patel@contoso.com", "Sam", "Patel", "ACTIVE", -240),
+    ("00udemojch00000000003", "j.chen@contoso.com", "Jun", "Chen", "ACTIVE", -12),
+})
+{
+    var u = new JsonObject
+    {
+        ["id"] = id, ["status"] = status, ["created"] = "2024-02-01T00:00:00.000Z",
+        ["lastLogin"] = DateTimeOffset.UtcNow.AddMinutes(lastLogin).ToString("O"),
+        ["passwordChanged"] = "2026-09-12T03:14:00.000Z",
+        ["profile"] = new JsonObject { ["login"] = login, ["email"] = login, ["firstName"] = first, ["lastName"] = last },
+    };
+    oktaUsers[id] = u;
+    oktaUsers[login] = u;
+}
+IResult OktaUser(string id) => oktaUsers.TryGetValue(id, out var u) ? Results.Json(u.DeepClone()) : Results.Json(new { errorCode = "E0000007", errorSummary = $"Not found: Resource not found: {id} (User)" }, statusCode: 404);
+app.MapPost("/oauth2/v1/token", () => Results.Json(new { access_token = "mock-not-a-token", token_type = "Bearer", expires_in = 3600 }));
+app.MapGet("/api/v1/users", (HttpRequest req) => Results.Json(oktaUsers.Values.Distinct().Take(1).Select(u => u.DeepClone())));
+app.MapGet("/api/v1/users/{id}", (string id) => OktaUser(id));
+app.MapGet("/api/v1/users/{id}/factors", (string id) => Results.Json(id.Contains("jch")
+    ? new object[] { new { factorType = "sms", provider = "OKTA", status = "ACTIVE", created = "2026-11-27T00:40:00.000Z" } }
+    : new object[] { new { factorType = "push", provider = "OKTA", status = "ACTIVE", created = "2024-02-01T00:00:00.000Z" }, new { factorType = "webauthn", provider = "FIDO", status = "ACTIVE", created = "2025-03-10T00:00:00.000Z" } }));
+app.MapGet("/api/v1/users/{id}/groups", (string id) => Results.Json(new[] { new { profile = new { name = "Everyone" } }, new { profile = new { name = id.Contains("sam") ? "Engineering" : "Finance" } } }));
+app.MapGet("/api/v1/users/{id}/roles", (string id) => Results.Json(id.Contains("sam") ? new[] { new { type = "APP_ADMIN", label = "Application Administrator" } } : Array.Empty<object>()));
+app.MapGet("/api/v1/logs", () => Results.Json(new object[]
+{
+    new
+    {
+        published = DateTimeOffset.UtcNow.AddMinutes(-14).ToString("O"), eventType = "user.authentication.auth_via_mfa", displayMessage = "Authentication of user via MFA",
+        severity = "INFO", outcome = new { result = "SUCCESS" }, actor = new { alternateId = "j.chen@contoso.com" },
+        client = new { ipAddress = "185.220.101.4", userAgent = new { rawUserAgent = "Mozilla/5.0" }, geographicalContext = new { city = "Frankfurt", country = "Germany" } },
+    },
+    new
+    {
+        published = DateTimeOffset.UtcNow.AddMinutes(-15).ToString("O"), eventType = "system.mfa.factor.activate", displayMessage = "Activate factor or authenticator (new SMS factor)",
+        severity = "INFO", outcome = new { result = "SUCCESS" }, actor = new { alternateId = "j.chen@contoso.com" },
+        client = new { ipAddress = "185.220.101.4", userAgent = new { rawUserAgent = "Mozilla/5.0" }, geographicalContext = new { city = "Frankfurt", country = "Germany" } },
+    },
+}));
+
+var tickets = new ConcurrentDictionary<string, JsonObject>();
+var ticketSeq = 10000;
+app.MapPost("/oauth_token.do", () => Results.Json(new { access_token = "mock-not-a-token", token_type = "Bearer", expires_in = 1800 }));
+app.MapGet("/api/now/table/{table}", (string table) => Results.Json(new { result = tickets.Values.Take(1).Select(t => t.DeepClone()) }));
+app.MapPost("/api/now/table/{table}", async (string table, HttpRequest req) =>
+{
+    var body = (await JsonNode.ParseAsync(req.Body))?.AsObject() ?? new JsonObject();
+    var sysId = Guid.NewGuid().ToString("N");
+    var number = $"INC{Interlocked.Increment(ref ticketSeq):0000000}";
+    body["sys_id"] = sysId;
+    body["number"] = number;
+    tickets[sysId] = body;
+    writes.Enqueue(new { at = DateTimeOffset.UtcNow, method = "POST", path = req.Path.Value, body = body.DeepClone() });
+    return Results.Json(new { result = new { sys_id = sysId, number } }, statusCode: 201);
+});
+app.MapMethods("/api/now/table/{table}/{sysId}", ["PATCH"], async (string table, string sysId, HttpRequest req) =>
+{
+    var body = await JsonNode.ParseAsync(req.Body);
+    writes.Enqueue(new { at = DateTimeOffset.UtcNow, method = "PATCH", path = req.Path.Value, body });
+    return tickets.ContainsKey(sysId) ? Results.Json(new { result = new { sys_id = sysId } }) : NotFound();
+});
+var jiraSeq = 0;
+app.MapGet("/rest/api/3/project/{key}", (string key) => Results.Json(new { id = "10000", key, name = "Security Operations" }));
+app.MapPost("/rest/api/3/issue", async (HttpRequest req) =>
+{
+    var body = await JsonNode.ParseAsync(req.Body);
+    var n = Interlocked.Increment(ref jiraSeq);
+    writes.Enqueue(new { at = DateTimeOffset.UtcNow, method = "POST", path = req.Path.Value, body });
+    return Results.Json(new { id = (10000 + n).ToString(), key = $"SOC-{n}", self = $"/rest/api/3/issue/{10000 + n}" }, statusCode: 201);
+});
+app.MapPost("/rest/api/3/issue/{id}/comment", async (string id, HttpRequest req) =>
+{
+    writes.Enqueue(new { at = DateTimeOffset.UtcNow, method = "POST", path = req.Path.Value, body = await JsonNode.ParseAsync(req.Body) });
+    return Results.Json(new { id = Guid.NewGuid().ToString("N")[..8] }, statusCode: 201);
+});
+app.MapPost("/rest/api/3/issue/{id}/transitions", () => Results.NoContent());
+// Okta brokered writes (reached only if BROKER_EXECUTE is turned on in the demo).
+foreach (var pattern in new[] { "/api/v1/users/{id}/lifecycle/suspend", "/api/v1/users/{id}/lifecycle/unsuspend", "/api/v1/users/{id}/lifecycle/reset_factors" })
+    app.MapPost(pattern, (HttpRequest req) => { writes.Enqueue(new { at = DateTimeOffset.UtcNow, method = "POST", path = req.Path.Value }); return Results.Ok(); });
+app.MapDelete("/api/v1/users/{id}/sessions", (HttpRequest req) => { writes.Enqueue(new { at = DateTimeOffset.UtcNow, method = "DELETE", path = req.Path.Value }); return Results.NoContent(); });
+
+// Sentinel analytics rules (ARM, create/disable_detection_rule target sentinel). Demo mode routes ARM to this mock.
+var armRules = new ConcurrentDictionary<string, JsonNode>();
+app.MapPut("/subscriptions/{**rest}", async (HttpRequest req) =>
+{
+    var body = await JsonNode.ParseAsync(req.Body);
+    writes.Enqueue(new { at = DateTimeOffset.UtcNow, method = "PUT", path = req.Path.Value, body });
+    armRules[req.Path.Value!] = body!;
+    return Results.Json(body);
+});
+app.MapGet("/subscriptions/{**rest}", (HttpRequest req) => armRules.TryGetValue(req.Path.Value!, out var r) ? Results.Json(r) : NotFound());
+
 app.MapFallback((HttpRequest req) => Results.Json(new { error = new { code = "NotFound", message = $"mock-msapi has no route for {req.Method} {req.Path}" } }, statusCode: 404));
 app.Run();
 return 0;
@@ -163,6 +282,49 @@ IResult Entity(string kind, string key, object? fallback = null) =>
     entities[kind]?[key] is { } e ? Results.Json(e.DeepClone()) : fallback is not null ? Results.Json(fallback) : NotFound();
 
 static IResult NotFound() => Results.Json(new { error = new { code = "NotFound", message = "not in the demo fixtures" } }, statusCode: 404);
+
+/// <summary>Canned query results for the exposure page and the demo detection back-test.</summary>
+static class Demo
+{
+    /// <summary>The back-testable query in docs/guides/08: a demo rule for encoded PowerShell downloads.</summary>
+    public const string BacktestMarker = "EncodedCommand";
+
+    public static object? HuntingRows(JsonObject exposure, string query)
+    {
+        if (query.Contains("DeviceTvmSoftwareVulnerabilities", StringComparison.Ordinal) && query.Contains("DeviceInfo", StringComparison.Ordinal))
+            return new { schema = Array.Empty<object>(), results = exposure["vulnerabilities"]!.DeepClone() };
+        if (query.Contains("ExposureGraphEdges", StringComparison.Ordinal))
+            return new { schema = Array.Empty<object>(), results = exposure["attackPaths"]!.DeepClone() };
+        if (query.Contains(BacktestMarker, StringComparison.OrdinalIgnoreCase)) return new { schema = Array.Empty<object>(), results = BacktestHits() };
+        return null;
+    }
+
+    public static object? LogAnalyticsRows(JsonObject exposure, string query)
+    {
+        if (!query.Contains(BacktestMarker, StringComparison.OrdinalIgnoreCase)) return null;
+        var rows = BacktestHits().Select(h => new object[] { h["TimeGenerated"]!, h["DeviceName"]!, h["AccountUpn"]! }).ToArray();
+        return new
+        {
+            tables = new[] { new { name = "PrimaryResult", columns = new[] { new { name = "TimeGenerated", type = "datetime" }, new { name = "DeviceName", type = "string" }, new { name = "AccountUpn", type = "string" } }, rows } },
+        };
+    }
+
+    /// <summary>Two weeks of a handful of hits a day across three devices: a rule an approver would accept.</summary>
+    private static List<Dictionary<string, object>> BacktestHits()
+    {
+        var devices = new[] { ("ws-0142.contoso.com", "sam.patel@contoso.com"), ("ws-0077.contoso.com", "ana.lopez@contoso.com"), ("srv-build-02.contoso.com", "svc-build@contoso.com") };
+        var hits = new List<Dictionary<string, object>>();
+        var today = DateTimeOffset.UtcNow.Date;
+        for (var day = 0; day < 14; day++)
+            for (var n = 0; n < (day % 4) + (day == 2 ? 6 : 1); n++)
+            {
+                var (dev, upn) = devices[(day + n) % devices.Length];
+                var at = new DateTimeOffset(today.AddDays(-day).AddHours(8 + n), TimeSpan.Zero);
+                hits.Add(new() { ["Timestamp"] = at.ToString("O"), ["TimeGenerated"] = at.ToString("O"), ["DeviceName"] = dev, ["AccountUpn"] = upn, ["FileName"] = "powershell.exe" });
+            }
+        return hits;
+    }
+}
 
 static class Fixtures
 {
@@ -185,11 +347,38 @@ static class Fixtures
             o["incidentWebUrl"] = $"https://security.microsoft.com/incidents/{o["id"]}";
             foreach (var a in o["alerts"]!.AsArray())
             {
-                a!["firstActivityDateTime"] = created.ToString("O");
-                a["lastActivityDateTime"] = created.AddMinutes(2).ToString("O");
+                // Optional per-alert activity window (_firstMinutesAgo/_lastMinutesAgo), else the incident's creation time.
+                var first = a!["_firstMinutesAgo"] is { } fa ? started.AddMinutes(-fa.GetValue<int>()) : created;
+                var last = a["_lastMinutesAgo"] is { } la ? started.AddMinutes(-la.GetValue<int>()) : first.AddMinutes(2);
+                a.AsObject().Remove("_firstMinutesAgo");
+                a.AsObject().Remove("_lastMinutesAgo");
+                a["firstActivityDateTime"] = first.ToString("O");
+                a["lastActivityDateTime"] = last.ToString("O");
+                a["createdDateTime"] = last.AddMinutes(1).ToString("O");
             }
+            Relative(o, started);
             return o;
         }).ToList();
+    }
+
+    /// <summary>Evidence timestamps written as "@minutesAgo:N" in a fixture become real times relative to start, so the attack timeline renders.</summary>
+    private static void Relative(JsonNode? n, DateTimeOffset started)
+    {
+        switch (n)
+        {
+            case JsonObject o:
+                foreach (var (k, v) in o.ToList())
+                {
+                    if (v is JsonValue jv && jv.TryGetValue<string>(out var s) && s.StartsWith("@minutesAgo:", StringComparison.Ordinal)
+                        && int.TryParse(s["@minutesAgo:".Length..], out var m))
+                        o[k] = started.AddMinutes(-m).ToString("O");
+                    else Relative(v, started);
+                }
+                break;
+            case JsonArray a:
+                foreach (var x in a) Relative(x, started);
+                break;
+        }
     }
 
     /// <summary>Fixed for the process lifetime, so incidents don't look "updated" on every poll.</summary>

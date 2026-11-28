@@ -66,16 +66,7 @@ public sealed class Participants(Db db, Audit audit, BoardService board, SystemP
                     ? BoardException.Conflict($"@{handle} is already {(enabled ? "enabled" : "disabled")}")
                     : BoardException.NotFound("principal");
             }
-            if (!enabled)
-            {
-                await using var release = db.Command("""
-                    update messages set claim_state = 'open', claimed_by = null, claim_expires_at = null
-                    where claimed_by = @pid and claim_state = 'claimed';
-                    update agent_subscriptions set enabled = false, disabled_reason = 'principal disabled by admin'
-                    where principal_id = @pid and enabled;
-                    """).With("pid", pid);
-                await release.ExecuteNonQueryAsync(ct);
-            }
+            if (!enabled) await ReleaseAsync(pid, "principal disabled by admin", ct);
             await audit.WriteAsync(me.Id, enabled ? "principal.enabled" : "principal.disabled", handle, new { reason }, ct);
         }
         await board.PostAsync(await system.GetAsync(ct), new PostInput("general",
@@ -83,6 +74,44 @@ public sealed class Participants(Db db, Audit audit, BoardService board, SystemP
                     : $"@{me.Handle} **disabled** @{handle}: its requests are refused from now on. Reason: {reason}",
             "status", Json.Element(new { state = enabled ? "principal_enabled" : "principal_disabled", handle })), system: true, ct);
         return (await ListAsync(me, ct)).First(p => p.Handle == handle);
+    }
+
+    /// <summary>A disabled principal's claims go back to open and its webhooks stop.</summary>
+    private async Task ReleaseAsync(Guid pid, string why, CancellationToken ct)
+    {
+        await using var release = db.Command("""
+            update messages set claim_state = 'open', claimed_by = null, claim_expires_at = null
+            where claimed_by = @pid and claim_state = 'claimed';
+            update agent_subscriptions set enabled = false, disabled_reason = @why
+            where principal_id = @pid and enabled;
+            """).With("pid", pid).With("why", why);
+        await release.ExecuteNonQueryAsync(ct);
+    }
+
+    /// <summary>
+    /// The board disables an agent on its own (risk auto-quarantine): the same path as an admin disabling it (claims
+    /// released, webhooks off, audit principal.disabled by "board", #general notice). Only agents; returns false when it
+    /// was already disabled. An admin re-enables it on Admin → Participants.
+    /// </summary>
+    public async Task<bool> DisableBySystemAsync(string handle, string reason, CancellationToken ct = default)
+    {
+        var sys = await system.GetAsync(ct);
+        reason = reason.Length > 500 ? reason[..500] : reason;
+        Guid pid;
+        await using (var cmd = db.Command("""
+            update principals set enabled = false, disabled_reason = @r, disabled_by = @by, disabled_at = now()
+            where handle = @h and kind = 'agent' and enabled returning id
+            """).With("r", reason).With("by", sys.Id).With("h", handle))
+        {
+            if (await cmd.ExecuteScalarAsync(ct) is not Guid id) return false;
+            pid = id;
+        }
+        await ReleaseAsync(pid, "principal disabled by the board", ct);
+        await audit.WriteAsync(sys.Id, "principal.disabled", handle, new { reason, automatic = true }, ct);
+        await board.PostAsync(sys, new PostInput("general",
+            $"The board **disabled** @{handle}: its requests are refused from now on. Reason: {reason}. An admin can re-enable it on Admin → Participants.",
+            "status", Json.Element(new { state = "principal_disabled", handle })), system: true, ct);
+        return true;
     }
 
     /// <summary>
@@ -100,7 +129,7 @@ public sealed class Participants(Db db, Audit audit, BoardService board, SystemP
         await using (var cmd = db.Command("""
             with disabled as (
               update principals set enabled = false, disabled_reason = @r, disabled_by = @by, disabled_at = now()
-              where enabled and kind <> 'system' and id <> @by
+              where enabled and kind not in ('system', 'integration') and id <> @by
                 and coalesce(last_seen_at, created_at) < now() - make_interval(days => @d)
               returning id, handle
             ), released as (

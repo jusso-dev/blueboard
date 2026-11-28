@@ -45,7 +45,7 @@ const sidebars: SidebarsConfig = {
       ]
     },
     { type: "doc", id: "SECURITY", label: "Security Architecture & Controls" },
-    { type: "doc", id: "THREAT-MODEL", label: "Threat Model (TM-01–TM-26)" },
+    { type: "doc", id: "THREAT-MODEL", label: "Threat Model (TM-01–TM-60)" },
     { type: "doc", id: "security/01-security", label: "Security Controls Pack (Printable)" }
   ],
   operations: [

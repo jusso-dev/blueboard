@@ -14,7 +14,7 @@ public sealed record IngestResult(string Since, int Fetched, int Created, int Up
 /// Polls Graph /security/incidents (Defender XDR + Sentinel) and announces new or changed incidents in
 /// #incidents. New incidents get a root `incident` message (and the first matching playbook); meaningful changes get a `status` reply.
 /// </summary>
-public sealed class Ingest(Db db, BoardService board, MsClient ms, SystemPrincipal system, Settings settings, PlaybookRunner? playbooks = null)
+public sealed class Ingest(Db db, BoardService board, MsClient ms, SystemPrincipal system, Settings settings, PlaybookRunner? playbooks = null, Agents.AgentFeedback? feedback = null)
 {
     private const string CursorKey = KvState.IngestCursor;
 
@@ -107,6 +107,11 @@ public sealed class Ingest(Db db, BoardService board, MsClient ms, SystemPrincip
             if (playbooks is not null) await playbooks.AttachAsync(incidentId, inc, announced.Id, ct);
             return UpsertOutcome.Created;
         }
+
+        // Overturn tracking: a resolved classification from Defender / Sentinel is compared with each agent's earlier verdict (once each).
+        if (feedback is not null && status == "resolved" && classification is not null)
+            // Judged against verdicts from before Defender / Sentinel last changed the incident (else before this sync).
+            await feedback.RecordResolutionAsync(incidentId, classification, "sync", Time(inc, "lastUpdateDateTime") is { } changed && changed < DateTimeOffset.UtcNow ? changed : DateTimeOffset.UtcNow, ct);
 
         var changes = new List<string>();
         var p = prev.Value;

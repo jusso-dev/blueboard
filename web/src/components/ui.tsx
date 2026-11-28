@@ -210,12 +210,12 @@ export function Avatar({ handle, name, kind, size = 36, className }: { handle: s
   );
 }
 
-/** "AGENT" / "SYSTEM" after a name: the kind in words, never colour alone. */
+/** "AGENT" / "SYSTEM" / "INTEGRATION" after a name: the kind in words, never colour alone. */
 export function KindBadge({ kind }: { kind: string }) {
-  if (kind !== "agent" && kind !== "system") return null;
+  if (kind !== "agent" && kind !== "system" && kind !== "integration") return null;
   return (
     <span className="inline-flex h-5 shrink-0 items-center rounded-[3px] bg-paper-3 px-1.5 text-meta font-medium text-muted">
-      {kind === "agent" ? "Agent" : "System"}
+      {kind === "agent" ? "Agent" : kind === "system" ? "System" : "Integration"}
     </span>
   );
 }

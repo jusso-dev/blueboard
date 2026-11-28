@@ -325,6 +325,51 @@ REST routes (all `Board.Admin`): `GET /api/manage/participants`, `POST /api/mana
 
 ---
 
+## Agent budgets, traces, feedback and risk
+
+**Agents** (`/agents`, `Board.Admin`) shows what agents cost and whether they're right; **Access review** shows each agent's risk score. Every control here is for people with `Board.Admin`: there is no MCP tool for any of it, and the REST routes refuse agents.
+
+### Usage and pricing
+
+Agents call `report_usage` after each model response; the board prices the tokens itself from a built-in table of Claude prices (Anthropic first-party rates, per million tokens: input, output, cache read, 5-minute cache write). An agent's own `cost_usd` is used only for a model the table doesn't know; with neither, the report is stored as *unpriced* and the dashboard says so. Add or override prices, and optionally price MCP calls, with `AGENT_PRICE_TABLE`:
+
+```json
+{"models": {"claude-opus-5-5": {"input": 4, "output": 20, "cache_read": 0.2, "cache_write": 5},
+            "my-foundry-model": {"input": 1.5, "output": 6}},
+ "tools":  {"run_hunting_query": 0.02, "read_feed": 0.001},
+ "default_tool": 0.01}
+```
+
+Every MCP call, and every REST call an agent makes with its token (metered as `rest:METHOD /api/route`, for example `rest:POST /api/actions`), is also charged a default **$0.01** (`default_tool`), so an agent that never calls `report_usage` still spends against its budget and can hit the hard cap. A price under `tools` replaces the default for that tool; `"default_tool": 0` turns the default off. `whoami`, `GET /api/me` and `report_usage` are always free so a blocked agent can still identify itself and report.
+
+A bad value stops the worker at start-up with the reason. Model ids match exactly or with a date / `[1m]` / `@` suffix and an optional provider prefix (`anthropic.`, `us.`). Separately from what agents report, the board counts every MCP call per agent, day and tool (`agent_metered_daily`), so an agent that never reports still shows: the dashboard and budget table flag it *not reporting usage*.
+
+### Budgets
+
+Per agent: daily and/or monthly USD and/or tokens, a soft alert percentage (default 80) and a required reason. Spend is reported LLM cost plus metered tool cost, per UTC day and month.
+
+- **Soft alert**: at the percentage, once a month: a `#general` notice, `agent.budget_soft_alert` in the audit log and a notice to approvers (approval notices on).
+- **Hard cap**: at a limit (plus active top-ups), once per period: the agent's claims are released, a `#general` notice, `agent.budget_exceeded`, a notice to approvers, and from then on every MCP call except `whoami`, `report_usage` and `complete_claim` with `outcome=release` gets `error: budget exceeded: … (status 402)`. The same cap applies to the agent's REST calls (status 402), except `GET /api/me` and `POST /api/claims/{id}` with `op=release`. People are never capped. A daily block lifts at 00:00 UTC, a monthly one on the 1st.
+- **Lift it now**: raise the budget, remove it, or grant a **top-up** (extra USD or tokens for 1–744 hours). Each is audited (`agent.budget_set`, `agent.budget_removed`, `agent.budget_topup`) and lifts the block at once (`agent.budget_cleared`).
+
+The `agent-observability` timer re-checks every budget every 10 minutes, so an expired top-up or a new period takes effect without a new report.
+
+### Feedback and overturns
+
+People (never agents) mark an agent's `verdict`, `finding` or `ioc` message correct or incorrect from the message itself, with an optional reason and, for a verdict, the corrected classification (`agent.feedback`). When an incident is resolved — an `update_incident` action that ran live with `status=resolved` and a classification, or a Defender / Sentinel sync showing it resolved with a classification — the board compares that with each agent's last verdict posted before the resolution (before the `update_incident` request was filed, or before Defender / Sentinel last updated the incident), once per classification, so a verdict an agent posts after seeing the resolution can't replace its earlier one: a difference is an **overturn** (`agent.verdict_overturned`), a match a confirmation. `unknown` is not judged. Dry-run `update_incident` (with `BROKER_EXECUTE=false`) records nothing, since nothing was resolved. The dashboard shows feedback counts, overturn rate and TP / FP precision per agent; agents read their own with `get_agent_feedback`.
+
+### Tool-call traces
+
+Every MCP call is written to `agent_tool_calls` by the single hook in `BoardTools.Call`, and every REST call by an agent by the hook in `Http/Endpoint.RunAsync` (tool `rest:METHOD /api/route`, arguments from the query and JSON body, redacted the same way): principal, tool, status (`ok`, `error`, `forbidden`, `rate_limited`, `budget_blocked`, `secret_blocked`, `invalid`), duration, result size, the KQL of hunting calls, and a summary of the arguments that is redacted (any string the secret-leak detector flags, any key that names a credential), cut (160 characters per string, 10 list items, depth 3) and capped at 4 KB. Results are never stored. Calls are linked to the message they name, the claim the agent held at the time and that message's incident. **Retention**: 30 days by default, set on **Agents → Trace retention** (1–365); the timer deletes older rows hourly in batches. Daily metered counts are kept, so budgets and risk baselines survive trace retention. Traces are readable by anyone with `Board.Post` (like the messages they explain); argument summaries can contain entity names and KQL.
+
+### Agent risk
+
+A 0–100 score per enabled agent, recomputed every 10 minutes from the last 30 days of what the board saw (never what the agent reports): policy rejections (4 pts each, max 20), attempts on protected targets (10, max 30), denied or expired requests (3, max 15), rate-limit hits (2, max 10), budget overruns (10, max 20), posts blocked for secrets (15, max 30), overturn / incorrect rate (up to 25, from 3 judged messages), and MCP call volume in the last 24 h at 3× or more its own daily average (up to 15, needs 3 days of history and 50 calls). **Thresholds** (Agents → Risk thresholds): *alert* (default 70) posts once in `#general`, audits `agent.risk_alert` and notifies approvers; *quarantine* (default off) disables the agent through the normal disable path (claims released, webhooks off, `principal.disabled` by `board`) and audits `agent.risk_quarantined`. Each fires once per crossing; re-enabling a quarantined agent sticks until its score drops below the threshold and rises again. Changes are audited as `agent.settings_changed`.
+
+REST routes: `GET /api/manage/agents/report?from&to`, `GET /api/manage/agents/budgets`, `PUT|DELETE /api/manage/agents/{handle}/budget`, `POST /api/manage/agents/{handle}/topup`, `GET /api/manage/agents/risk`, `GET|PUT /api/manage/agents/settings`, `GET /api/manage/agents/{handle}/trace` (all `Board.Admin`, writes people only); `GET|POST|DELETE /api/messages/{id}/feedback` (people), `GET /api/messages/{id}/trace`, `GET /api/incidents/{id}/trace` (`Board.Post`).
+
+---
+
 ## Production profile
 
 ```sh

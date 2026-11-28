@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Blueboard.Api.Auth;
 using Blueboard.Api.Core;
+using Blueboard.Api.Mcp;
 using Blueboard.Contracts;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -15,17 +16,38 @@ namespace Blueboard.Api.Http;
 /// Every caller sends an Entra bearer token (MSAL in the browser, workload identity for agents). There are no
 /// cookies, so cross-site request forgery has nothing to ride on.
 /// </summary>
-public sealed class Endpoint(Authenticator auth, ILogger<Endpoint> log)
+/// <remarks>
+/// Agents may call REST with their workload token as well as MCP, so an agent's REST call passes the same observability
+/// hook as an MCP tool (<see cref="McpObserver"/>): the hard budget cap before the handler, then metering, the
+/// tool-call trace and risk inputs, labelled "rest:METHOD /api/route". People are never budgeted or traced here.
+/// </remarks>
+public sealed class Endpoint(Authenticator auth, ILogger<Endpoint> log, McpObserver? observer = null)
 {
     public async Task<IActionResult> RunAsync(HttpRequest req, Func<Principal, Task<object?>> handler, string? role = Roles.Poster)
     {
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
+        Principal? me = null;
+        string? label = null;
+        JsonElement? args = null;
+        object? result = null;
+        IActionResult response;
+        var status = "ok";
+        string? error = null;
         try
         {
             var headers = req.Headers.ToDictionary(h => h.Key.ToLowerInvariant(), h => h.Value.ToString());
-            var me = await auth.AuthenticateAsync(headers, req.HttpContext.RequestAborted);
+            me = await auth.AuthenticateAsync(headers, req.HttpContext.RequestAborted);
+            if (observer is not null && !me.IsHuman)
+            {
+                label = RouteLabel(req.Method, req.Path);
+                args = await PeekArgumentsAsync(req);
+            }
             if (role is not null) me.Require(role);
-            var result = await handler(me);
-            return result switch
+            if (label is not null)
+                await observer!.BeforeRestAsync(me, label, label == McpObserver.RestClaim && args is { } a && a.TryGetProperty("body", out var b) ? McpObserver.ClaimOp(b) : null,
+                    req.HttpContext.RequestAborted);
+            result = await handler(me);
+            response = result switch
             {
                 IActionResult r => r,
                 null => new NoContentResult(),
@@ -35,21 +57,60 @@ public sealed class Endpoint(Authenticator auth, ILogger<Endpoint> log)
         catch (BoardException ex)
         {
             if (ex.RetryAfterSeconds is { } retry) req.HttpContext.Response.Headers.RetryAfter = retry.ToString(System.Globalization.CultureInfo.InvariantCulture);
-            return Error(ex.Status, ex.Message);
+            (status, error) = (McpObserver.StatusOf(ex), ex.Message);
+            response = Error(ex.Status, ex.Message);
         }
         catch (ContractException ex)
         {
-            return Error(400, ex.Message);
+            (status, error) = ("invalid", ex.Message);
+            response = Error(400, ex.Message);
         }
         catch (JsonException)
         {
-            return Error(400, "invalid JSON body");
+            (status, error) = ("invalid", "invalid JSON body");
+            response = Error(400, "invalid JSON body");
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             log.LogError(ex, "unhandled error in {Path}", req.Path);
-            return Error(500, "internal error");
+            (status, error) = ("error", "internal error");
+            response = Error(500, "internal error");
         }
+        if (label is not null && me is not null)
+            await observer!.AfterAsync(new Agents.TraceEntry(me, label, status, args, error,
+                (int)System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds,
+                response is ContentResult { Content: { } c } ? System.Text.Encoding.UTF8.GetByteCount(c) : 0, McpObserver.MessageIdOf(result)));
+        return response;
+    }
+
+    /// <summary>
+    /// "rest:METHOD /api/route" for an agent's REST call: ids (GUIDs, digits, Okta-style ids) become {id}, so the label
+    /// names the route, not the record. Public for tests.
+    /// </summary>
+    public static string RouteLabel(string method, PathString path)
+    {
+        var segments = (path.Value ?? "").Split('/', StringSplitOptions.RemoveEmptyEntries)
+            .Select(s => Guid.TryParse(s, out _) || s.All(char.IsAsciiDigit) ? "{id}" : s.Length > 40 ? "{id}" : s);
+        return $"rest:{method.ToUpperInvariant()} /{string.Join('/', segments)}";
+    }
+
+    /// <summary>
+    /// The agent call's query and JSON body as trace arguments ({"query": {...}, "body": {...}}), read from a buffered
+    /// copy so the handler still reads the body. Never throws: a body that isn't JSON is simply not summarised.
+    /// </summary>
+    private static async Task<JsonElement?> PeekArgumentsAsync(HttpRequest req)
+    {
+        var o = new JsonObject();
+        if (req.Query.Count > 0)
+            o["query"] = new JsonObject(req.Query.Take(30).Select(q => KeyValuePair.Create(q.Key, (JsonNode?)q.Value.ToString())));
+        if (req.ContentLength is > 0 and <= 1_000_000 || (req.ContentLength is null && req.Method is "POST" or "PUT" or "PATCH"))
+        {
+            req.EnableBuffering();
+            try { o["body"] = JsonNode.Parse((await ReadJsonAsync(req)).GetRawText()); }
+            catch (Exception ex) when (ex is BoardException or JsonException) { }
+            finally { req.Body.Position = 0; }
+        }
+        return o.Count == 0 ? null : JsonSerializer.SerializeToElement(o);
     }
 
     /// <summary>Reads a JSON body with a hard streaming byte cap (enforced even under chunked transfer encoding).</summary>

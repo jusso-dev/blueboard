@@ -36,11 +36,46 @@ public sealed partial class BoardService(Db db, Audit audit, Settings settings, 
     [GeneratedRegex(@"(?:^|[^\w@])@([a-z0-9][a-z0-9-]{0,40})")]
     private static partial Regex MentionRegex();
 
-    [GeneratedRegex(@"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----|Bearer\s+eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}|sk-ant-api03-[A-Za-z0-9_-]{20,}|sk-(?:proj|svcacct)-[A-Za-z0-9_-]{20,}|ghp_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,}|whsec_[A-Za-z0-9_-]{24,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{20,}|AccountKey=[A-Za-z0-9+/=]{40,}", RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----|Bearer\s+eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}|sk-ant-api03-[A-Za-z0-9_-]{20,}|sk-(?:proj|svcacct)-[A-Za-z0-9_-]{20,}|ghp_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,}|whsec_[A-Za-z0-9_-]{24,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{20,}|AccountKey=[A-Za-z0-9+/=]{40,}"
+        // Connection strings: SharedAccessKey (Service Bus, Event Hubs, IoT Hub) is a base64 key; Password=/Pwd= count
+        // only inside a connection string (another key=value; pair before it), so prose such as "password=reset" passes.
+        + @"|SharedAccessKey=[A-Za-z0-9+/=]{20,}|(?i:(?:server|data source|host|user id|uid|username|initial catalog|database)=[^;\r\n]{1,200};(?:[^;\r\n]{0,200};){0,8}\s*(?:password|pwd)=[^;\s'""]{4,})"
+        // Azure Storage SAS: a signature (sig=, 43+ base64 chars, often URL-encoded) next to sv= or se= in the same query.
+        + @"|(?i:[?&](?:sv|se|sp|sr)=[^&\s]{1,100}(?:&[^&\s]{0,200}){0,12}&sig=[A-Za-z0-9%+/=]{30,})", RegexOptions.CultureInvariant)]
     private static partial Regex SecretLeakRegex();
 
-    public static string? DetectSecretLeak(string? text) =>
-        string.IsNullOrEmpty(text) ? null : SecretLeakRegex().Match(text) is { Success: true } m ? m.Value[..Math.Min(16, m.Length)] : null;
+    /// <summary>A JWT shape anywhere (three base64url segments, the first starting eyJ). Confirmed by decoding the header.</summary>
+    [GeneratedRegex(@"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}", RegexOptions.CultureInvariant)]
+    private static partial Regex JwtShape();
+
+    /// <summary>
+    /// The first characters of a credential in <paramref name="text"/>, or null. Recognised formats only (private keys,
+    /// bearer and bare JWTs, vendor API keys, connection-string keys and passwords, SAS signatures), so ordinary SOC text
+    /// (hashes, device ids, base64 blobs, URLs without a signature) passes.
+    /// </summary>
+    public static string? DetectSecretLeak(string? text)
+    {
+        if (string.IsNullOrEmpty(text)) return null;
+        if (SecretLeakRegex().Match(text) is { Success: true } m) return m.Value[..Math.Min(16, m.Length)];
+        foreach (Match j in JwtShape().Matches(text))
+            if (IsJwt(j.Value)) return j.Value[..Math.Min(16, j.Length)];
+        return null;
+    }
+
+    /// <summary>A bare JWT: three base64url segments whose first decodes to a JSON object with an "alg" member.</summary>
+    internal static bool IsJwt(string candidate)
+    {
+        var parts = candidate.Split('.');
+        if (parts.Length != 3 || parts.Any(p => p.Length == 0)) return false;
+        try
+        {
+            var b64 = parts[0].Replace('-', '+').Replace('_', '/');
+            b64 = b64.PadRight(b64.Length + (4 - b64.Length % 4) % 4, '=');
+            using var header = JsonDocument.Parse(Convert.FromBase64String(b64));
+            return header.RootElement.ValueKind == JsonValueKind.Object && header.RootElement.TryGetProperty("alg", out _);
+        }
+        catch (Exception ex) when (ex is FormatException or JsonException or ArgumentException) { return false; }
+    }
 
     public static string[] ParseMentions(string body) =>
         MentionRegex().Matches(body).Select(m => m.Groups[1].Value).Distinct().ToArray();
@@ -172,7 +207,7 @@ public sealed partial class BoardService(Db db, Audit audit, Settings settings, 
             ? Payloads.Validate(type, p, system)
             : (JsonElement?)null;
         if (!system && (DetectSecretLeak(input.Body) is not null || DetectSecretLeak(payload?.GetRawText()) is not null))
-            throw new BoardException("refusing to post raw credentials, private keys or bearer tokens to the shared board");
+            throw new BoardException("refusing to post raw credentials, private keys or bearer tokens to the shared board") { Bucket = Mcp.McpObserver.SecretLeakBucket };
         // Playbook steps are posted only by the board; a participant's checklist payload would forge step progress.
         if (!system && PlaybookRunner.IsChecklist(payload)) throw new BoardException("payload.checklist is reserved for the board's playbook steps");
 

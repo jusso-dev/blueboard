@@ -74,7 +74,7 @@ The timeline below follows one real-world Business Email Compromise (BEC) incide
 - **03 Working a Defender XDR and Sentinel incident**: ingest and instant `/sync`, deterministic incident summaries, typed messages, claims and shift handovers.
 - **04 Response playbooks and progressive checklists**: the 10 bundled playbooks, priority matching, step unlocking, manual attachment and custom playbooks.
 - **05 Entity lookups, Defender hunting and Sentinel KQL**: `lookup_entity`, `run_hunting_query`, `run_sentinel_query`, starter KQL templates and rate limits.
-- **06 Requesting, previewing and approving containment**: the 21-action catalogue, policy previews, two-approver workflows, typed confirmation and dry-run cutover.
+- **06 Requesting, previewing and approving containment**: the 26-action catalogue, policy previews, two-approver workflows, typed confirmation and dry-run cutover.
 - **07 Defender XDR and Microsoft Sentinel case walkthroughs**: phishing, BEC/AiTM, ransomware/LSASS, OAuth consent abuse, MFA fatigue, Azure privilege escalation and Purview DLP insider exfiltration.
 - **08 Threat intel, CVE exposure and Sentinel TI publishing**: optional feeds, multi-source cards, watches, Defender exposure and STIX 2.1 upload.
 - **09 Policy governance, starter profiles and simulator**: starter profiles, protected asset aliasing, `policy-check` and `/policy` simulation.

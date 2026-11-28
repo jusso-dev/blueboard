@@ -14,7 +14,7 @@ This walkthrough takes a containment, eradication, recovery or incident-update a
 - For live execution, the required Microsoft Graph / Defender for Endpoint write permissions have been granted with `ACTIONS="…" ./infra/grant-permissions.sh` and `BROKER_EXECUTE=true` is enabled.
 - Remember the non-self-approval rule: the person who files a request cannot approve it, so ensure at least two people hold `Board.Approve` on shift.
 
-## The 21-action catalogue
+## The 26-action catalogue
 
 Every brokered action is defined in `api/Blueboard.Api/Actions/Catalog.cs`. Destructive actions always require human approval even if mistakenly added to `auto_approve`.
 
@@ -44,6 +44,11 @@ Every brokered action is defined in `api/Blueboard.Api/Actions/Catalog.cs`. Dest
 | `update_incident` | record | Yes | `SecurityIncident.ReadWrite.All` (Graph) | `incident_id`, `status`, `classification`, `determination`, `assigned_to` |
 | `add_incident_comment` | record | No | `SecurityIncident.ReadWrite.All` (Graph) | `incident_id`, `comment` |
 | `publish_ti_indicator` | contain | Yes | **Microsoft Sentinel Contributor** (Azure RBAC) | `kind`, `value`, `confidence`, `valid_days` (1–90), `tlp`, `description` |
+| `create_detection_rule` | record | No (never auto-approved) | `CustomDetection.ReadWrite.All` (Graph) / **Microsoft Sentinel Contributor** for `target: sentinel` | `target`, `name`, `query`, `frequency`, `lookback`, `severity`, `mitre`, `entity_mappings`, `enabled`, `backtest_id` (required; see guide 08) |
+| `disable_detection_rule` | recover | Yes | as `create_detection_rule` | `rule_action_id` (a succeeded `create_detection_rule`) |
+| `intune_sync_device` | eradicate | No | `DeviceManagementManagedDevices.PrivilegedOperations.All` (Graph) | `machine_id` or `managed_device_id` |
+| `intune_update_defender_signatures` | eradicate | No | `DeviceManagementManagedDevices.PrivilegedOperations.All` (Graph) | `machine_id` or `managed_device_id` |
+| `intune_expedite_quality_update` | eradicate | Yes | `WindowsUpdates.ReadWrite.All` (Graph **beta**) | `machine_id` or `managed_device_id`, `quality_update_id`, `days_until_forced_reboot` (0–2) |
 
 ## Steps
 

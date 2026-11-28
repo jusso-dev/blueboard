@@ -53,6 +53,18 @@ public sealed class RuntimeRoleTests(TestBoard t) : IClassFixture<TestBoard>
     }
 
     [DbFact]
+    public async Task Runtime_role_appends_agent_usage_but_cannot_rewrite_it()
+    {
+        var agent = await t.As("agent");
+        await using (var c = t.Db.Command("insert into agent_usage (principal_id, model, input_tokens, cost_usd, cost_source) values (@p, 'm', 1, 0, 'unpriced')").With("p", agent.Id))
+            await c.ExecuteNonQueryAsync(Ct);
+        Assert.Equal(PostgresErrorCodes.InsufficientPrivilege, (await RefusedAsync("update agent_usage set cost_usd = 0")).SqlState);
+        Assert.Equal(PostgresErrorCodes.InsufficientPrivilege, (await RefusedAsync("delete from agent_usage")).SqlState);
+        Assert.Equal(PostgresErrorCodes.InsufficientPrivilege, (await RefusedAsync("truncate agent_usage")).SqlState);
+        Assert.True(await t.ScalarAsync("select count(*) from agent_usage where principal_id = @p", ("p", agent.Id)) >= 1);
+    }
+
+    [DbFact]
     public async Task Even_the_owner_cannot_update_or_delete_audit_rows()
     {
         await t.Audit.WriteAsync(null, "test.owner", "s2", null, Ct);

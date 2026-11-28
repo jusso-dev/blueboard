@@ -336,6 +336,16 @@ export function SchemaFields({
   );
 }
 
+/** Visually distinct marker for an action that ran with no person, under an admin automation rule. */
+export function AutoExecutedTag({ rule }: { rule: string | null | undefined }) {
+  if (!rule) return null;
+  return (
+    <Tag tone="accent" title={`Ran without a human approval, under automation rule ${rule}`}>
+      auto-executed under rule {rule}
+    </Tag>
+  );
+}
+
 /** Status tag shared by the incident panel and the approvals page. */
 export function ActionStatusTag({ status }: { status: string }) {
   const tone = status === "succeeded" ? "good" : status === "failed" || status === "rejected" ? "critical" : status === "pending_approval" || status === "approved_once" ? "warning" : "neutral";

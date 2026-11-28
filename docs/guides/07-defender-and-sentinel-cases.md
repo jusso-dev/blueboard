@@ -164,5 +164,5 @@ Follow **12 Sentinel MCP, Microsoft Purview and Defender Unified SOC** to inspec
 
 - **04 Response playbooks and progressive checklists**, for playbook priority and custom authoring.
 - **05 Entity lookups, Defender hunting and Sentinel KQL**, for query syntax and rate limits.
-- **06 Requesting, previewing and approving containment**, for the full 21-action catalogue and approval rules.
+- **06 Requesting, previewing and approving containment**, for the full 26-action catalogue and approval rules.
 - **12 Sentinel MCP, Microsoft Purview and Defender Unified SOC**, for Purview DLP/IRM, Sentinel MCP and Defender XDR ISOC walkthroughs.

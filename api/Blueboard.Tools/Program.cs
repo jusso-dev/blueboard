@@ -112,7 +112,14 @@ switch (cmd)
         var http = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
         var ms = new MsClient(http);
         var notifier = new Notifier(new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false }), db, new Audit(db), ms, settings);
-        var report = await new Setup(db, settings, Policy.Load(settings), ms, notifier).RunAsync();
+        var policy = Policy.Load(settings);
+        // Connector health is read from the database only (connector_status): no connector is called from the CLI.
+        var audit = new Audit(db);
+        var board = new BoardService(db, audit, settings);
+        var sys = new SystemPrincipal(db);
+        var connectors = Blueboard.Api.Connectors.ConnectorHub.Create(db, audit, board, sys, settings, policy,
+            new PlaybookRunner(db, board, sys, PlaybookSet.Empty), new RateLimiter(db, audit, policy), Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance);
+        var report = await new Setup(db, settings, policy, ms, notifier, connectors).RunAsync();
         Console.Write(args.Contains("--json") ? Json.Serialize(report) + "\n" : Setup.Format(report));
         return report.Ok ? 0 : 1;
     }

@@ -9,8 +9,12 @@ import { statusWords } from "../lib/queue";
 import { targetsFromEntities, type ActionTarget, type IncidentEntities } from "../lib/actions";
 import { RequestActionButton, useCanRequest } from "../components/request-action";
 import { safeHref } from "../lib/gifs";
-import { Button, Empty, Severity, useStoredState } from "../components/ui";
+import { Button, Empty, Segmented, Severity, useStoredState } from "../components/ui";
 import { CveRef } from "../components/cve";
+import { TraceList } from "../components/agent-trace";
+import type { TraceCall } from "../lib/agents";
+import { AttackViews } from "../components/attack";
+import { ConnectorStrip } from "../components/connectors";
 
 type IncidentDetail = {
   id: string;
@@ -41,6 +45,7 @@ export default function IncidentPage() {
     // Short or narrow screens start with the summary folded so the feed keeps most of the height.
     typeof window !== "undefined" && (window.innerHeight < 720 || window.innerWidth < 640) ? "hidden" : "shown",
   );
+  const [panel, setPanel] = useStoredState<"summary" | "attack">("bb_incident_panel", "summary");
   const targets = useMemo(() => (inc ? targetsFromEntities(inc.entities, inc.graph_id) : []), [inc]);
   if (error) return <Empty title="Couldn't load this incident">{error.message}</Empty>;
   if (!inc) return null;
@@ -89,13 +94,32 @@ export default function IncidentPage() {
           </a>
         )}
       </PageHeader>
+      <ConnectorStrip incident={inc.id} canRequest={canRequest} />
       {/* Capped so the feed always keeps most of the height; it scrolls on its own when the roll-up is long. */}
-      <div id="incident-summary" hidden={summary === "hidden"} className="max-h-[38dvh] shrink-0 overflow-y-auto overflow-x-hidden">
-        <SummaryPanel
-          s={inc.summary}
-          onOpenThread={setThread}
-          entityAction={canRequest ? (ent) => <EntityAction entity={ent} targets={targets} incident={inc.id} /> : undefined}
-        />
+      <div id="incident-summary" hidden={summary === "hidden"} className={`${panel === "attack" ? "max-h-[70dvh]" : "max-h-[38dvh]"} shrink-0 overflow-y-auto overflow-x-hidden`}>
+        <div className="px-6 pt-2 max-sm:px-4">
+          <Segmented
+            label="Incident view"
+            value={panel}
+            onChange={setPanel}
+            options={[
+              { value: "summary", label: "Summary" },
+              { value: "attack", label: "Timeline & graph" },
+            ]}
+          />
+        </div>
+        {panel === "summary" ? (
+          <>
+            <SummaryPanel
+              s={inc.summary}
+              onOpenThread={setThread}
+              entityAction={canRequest ? (ent) => <EntityAction entity={ent} targets={targets} incident={inc.id} /> : undefined}
+            />
+            <IncidentTrace id={inc.id} />
+          </>
+        ) : (
+          <AttackViews incident={inc.id} targets={targets} onOpenThread={setThread} />
+        )}
       </div>
       <Feed
         query={`incident=${inc.id}`}
@@ -107,6 +131,21 @@ export default function IncidentPage() {
         onThread={setThread}
       />
     </>
+  );
+}
+
+/** Every agent MCP call linked to this incident, fetched when opened (how the agents got to their conclusions). */
+function IncidentTrace({ id }: { id: string }) {
+  const [open, setOpen] = useState(false);
+  const { data, error } = useLiveQuery<TraceCall[]>(open ? `/incidents/${id}/trace` : null);
+  return (
+    <details className="border-b border-rule px-6 py-2 max-sm:px-4" onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}>
+      <summary className="cursor-pointer text-sm font-semibold text-ink-2 hover:text-ink">Agent trace{data ? ` (${data.length} calls)` : ""}</summary>
+      <div className="mt-2 max-h-[40dvh] overflow-y-auto">
+        {error && <p className="text-xs text-critical">{error.message}</p>}
+        {data && <TraceList calls={data} showAgent />}
+      </div>
+    </details>
   );
 }
 

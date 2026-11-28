@@ -57,6 +57,26 @@ This walkthrough takes a SOC engineer from connecting **Microsoft Sentinel MCP S
 12. Import [`templates/security-copilot/blueboard-mcp-plugin.yaml`](../../templates/security-copilot/blueboard-mcp-plugin.yaml) into Microsoft Security Copilot and configure the `Endpoint` setting to your Function App's `/runtime/webhooks/mcp` URL.
 13. Test an analyst prompt such as *"Read blueboard incident 1008 summary, call lookup_purview_context on m.chen@contoso.com, and post a handover note if any open asks remain"* — Security Copilot calls the read/post tools under the signed-in analyst's `Board.*` roles and respects all board approvals and audit trails.
 
+### Step 5 — Put blueboard over Microsoft Perception MCP (preview)
+
+Microsoft Perception's MCP server (`https://perception.microsoft.com/mcp`, **preview**) runs Perception playbooks such as
+Attack Investigation as asynchronous sessions. blueboard doesn't replace it: Perception investigates, blueboard
+coordinates, gates and records. Details and sources are in [INTEGRATIONS.md section 6](../INTEGRATIONS.md#6-microsoft-perception-mcp-preview).
+
+14. Register an Entra app for your MCP client with the delegated **Security Copilot API** permissions
+    `Perception.Read.All`, `Perception.Operate.All` and `Perception.Manage.All`, and grant consent. For Claude, add
+    `https://claude.ai/api/mcp/auth_callback` as a Web redirect URI.
+15. Configure the client from [`templates/mcp/dual-mcp-perception-blueboard.json`](../../templates/mcp/dual-mcp-perception-blueboard.json):
+    Perception through the client's OAuth connector, blueboard with the agent's Entra token.
+16. Try: *"Claim blueboard incident 1002. Use Perception to investigate Defender incident 1002 and wait for the session.
+    Post its summary as a finding with the session link, add any timestamped activity with add_timeline_events, then
+    compare with get_incident_graph and request containment only for entities that aren't protected."*
+17. Open the incident's **Timeline & graph** view: Perception's events show as *reported* by your agent, the graph shows
+    which entities are compromised or protected, and any containment request waits in **Approvals**.
+
+Treat Perception output like any agent's: it is a claim to check, not an instruction, and only a person with
+`Board.Approve` (who didn't request it) can approve a destructive action.
+
 ## What blueboard checks
 
 | Check | Error / behaviour | Why |
@@ -74,6 +94,6 @@ This walkthrough takes a SOC engineer from connecting **Microsoft Sentinel MCP S
 
 ## Related guides
 
-- **06 Requesting, previewing and approving containment**, for the 21-action containment catalogue.
+- **06 Requesting, previewing and approving containment**, for the 26-action catalogue.
 - **10 Connecting AI agents and multi-agent SOC topology**, for Entra Agent ID setup and signed push webhooks.
-- [INTEGRATIONS.md](../INTEGRATIONS.md) and [THREAT-MODEL.md](../THREAT-MODEL.md) (`TM-02`, `TM-06`, `TM-14`, `TM-25`, `TM-26`).
+- [INTEGRATIONS.md](../INTEGRATIONS.md) and [THREAT-MODEL.md](../THREAT-MODEL.md) (`TM-02`, `TM-06`, `TM-14`, `TM-25`, `TM-26`, `TM-43`).

@@ -99,6 +99,15 @@ public sealed record Settings
     /// <summary>Master key that per-subscription signing secrets are derived from (base64, 32+ bytes). Never logged.</summary>
     public string? WebhookSigningKey { get; init; }
 
+    /// <summary>
+    /// Agent LLM price table overrides (AGENT_PRICE_TABLE, JSON): {"models":{"model-prefix":{"input":4,"output":20,
+    /// "cache_read":0.2,"cache_write":5}}, "tools":{"run_hunting_query":0.002}}. USD per million tokens; tool prices are
+    /// USD per call (board-side metering). Merged over the built-in Claude prices. See Agents/PriceTable.cs.
+    /// </summary>
+    public string? AgentPriceTableJson { get; init; }
+    /// <summary>Third-party connectors: Okta, ServiceNow and Jira (all off unless configured). See docs/INTEGRATIONS.md.</summary>
+    public ConnectorSettings Connectors { get; init; } = new();
+
     public static Settings FromEnvironment() => FromEnvironment(k => Environment.GetEnvironmentVariable(k));
 
     /// <summary>Reads settings from a variable source (tests pass a dictionary).</summary>
@@ -161,7 +170,9 @@ public sealed record Settings
             GifsEnabled = Env("GIFS_ENABLED") is not ("false" or "0" or "False"),
             GiphyApiKey = Env("GIPHY_API_KEY"),
             TenorApiKey = Env("TENOR_API_KEY"),
+            AgentPriceTableJson = Env("AGENT_PRICE_TABLE"),
         };
+        s = s with { Connectors = ConnectorSettings.From(Env, List, s.DemoMode && s.DevAuth) };
         // WEBSITE_INSTANCE_ID / WEBSITE_SITE_NAME are set on every Azure Functions host, and AZURE_TENANT_ID means a
         // real tenant is configured: never allow dev auth or the demo in either case.
         var inAzure = Env("WEBSITE_INSTANCE_ID") is not null || Env("WEBSITE_SITE_NAME") is not null || s.TenantId is not null;

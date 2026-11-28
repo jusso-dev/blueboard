@@ -9,6 +9,7 @@ import IncidentPage from "./pages/Incident";
 import SearchPage from "./pages/Search";
 import ApprovalsPage from "./pages/Approvals";
 import ReportsPage from "./pages/Reports";
+import AgentsPage from "./pages/Agents";
 import PolicyPage from "./pages/Policy";
 import SetupPage from "./pages/Setup";
 import NotificationsPage from "./pages/Notifications";
@@ -19,6 +20,8 @@ import PosturePage from "./pages/Posture";
 import IntelPage from "./pages/Intel";
 import IntelKeyPage from "./pages/IntelKey";
 import MemoryPage from "./pages/Memory";
+import ConnectorsPage from "./pages/Connectors";
+import ExposurePage from "./pages/Exposure";
 import DevLogin from "./pages/DevLogin";
 import NotFound from "./pages/NotFound";
 import { initAuth } from "./lib/auth";
@@ -33,6 +36,7 @@ const routes = (dev: boolean) => [
       { path: "search", element: <SearchPage /> },
       { path: "approvals", element: <ApprovalsPage /> },
       { path: "reports", element: <ReportsPage /> },
+      { path: "agents", element: <AgentsPage /> },
       { path: "policy", element: <PolicyPage /> },
       { path: "setup", element: <SetupPage /> },
       { path: "settings/notifications", element: <NotificationsPage /> },
@@ -40,9 +44,11 @@ const routes = (dev: boolean) => [
       { path: "admin/participants", element: <ParticipantsPage /> },
       { path: "admin/audit", element: <AuditLogPage /> },
       { path: "admin/posture", element: <PosturePage /> },
+      { path: "admin/connectors", element: <ConnectorsPage /> },
       { path: "intel", element: <IntelPage /> },
       { path: "intel/:key", element: <IntelKeyPage /> },
       { path: "memory", element: <MemoryPage /> },
+      { path: "exposure", element: <ExposurePage /> },
       { path: "*", element: <NotFound /> },
     ],
   },

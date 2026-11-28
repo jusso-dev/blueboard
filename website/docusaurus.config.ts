@@ -119,7 +119,7 @@ const config: Config = {
           items: [
             { label: "Trust Center", to: "/assurance/TRUST-CENTER/" },
             { label: "Security Architecture", to: "/SECURITY/" },
-            { label: "Threat Model (TM-01–TM-26)", to: "/THREAT-MODEL/" },
+            { label: "Threat Model (TM-01–TM-60)", to: "/THREAT-MODEL/" },
             { label: "Azure Architecture", to: "/architecture/" },
             { label: "Solution Design", to: "/design/01-solution-design/" }
           ]

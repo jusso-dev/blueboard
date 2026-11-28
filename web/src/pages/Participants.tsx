@@ -2,12 +2,13 @@ import { useState } from "react";
 import { PageHeader, useMe } from "../components/shell";
 import { api, ApiError, download, refreshAll, useLiveQuery } from "../lib/api";
 import { Button, cx, Empty, ErrorLine, Input, Tag, Time } from "../components/ui";
+import { riskTone, type AgentRiskScore } from "../lib/agents";
 
 type Participant = {
   id: string;
   handle: string;
   display_name: string;
-  kind: "agent" | "human";
+  kind: "agent" | "human" | "integration";
   roles: string[];
   last_seen_at: string | null;
   posts24h: number;
@@ -126,7 +127,31 @@ function Review({ p }: { p: Participant }) {
   );
 }
 
-function ParticipantRow({ p, self }: { p: Participant; self: boolean }) {
+/** Agent risk (0-100) with the factors that add points, folded. Board-observed signals only. */
+function Risk({ r }: { r: AgentRiskScore | undefined }) {
+  if (!r) return <span className="label">—</span>;
+  const factors = r.factors.filter((f) => f.points > 0).sort((a, b) => b.points - a.points);
+  return (
+    <details>
+      <summary className="cursor-pointer list-none">
+        <Tag tone={riskTone(r.score)} title={`computed ${new Date(r.computed_at).toLocaleString()}`}>
+          risk {r.score}
+        </Tag>
+        {r.quarantined_at && <span className="label ml-1">quarantined</span>}
+      </summary>
+      <ul className="mt-1 max-w-72 space-y-0.5 text-xs text-ink-2">
+        {factors.length === 0 && <li className="text-muted">No risk signals in the last 30 days.</li>}
+        {factors.map((f) => (
+          <li key={f.key}>
+            <span className="tnum text-ink">+{f.points}</span> {f.label}
+          </li>
+        ))}
+      </ul>
+    </details>
+  );
+}
+
+function ParticipantRow({ p, self, risk }: { p: Participant; self: boolean; risk?: AgentRiskScore }) {
   const [open, setOpen] = useState(false);
   const toggle = async (reason: string) => {
     await api(`/manage/participants/${encodeURIComponent(p.handle)}`, { method: "POST", body: JSON.stringify({ enabled: !p.enabled, reason }) });
@@ -150,6 +175,7 @@ function ParticipantRow({ p, self }: { p: Participant; self: boolean }) {
         <td className="py-2 pr-4">
           <Review p={p} />
         </td>
+        <td className="py-2 pr-4">{p.kind === "agent" ? <Risk r={risk} /> : <span className="label">—</span>}</td>
         <td className="py-2 pr-6 max-sm:pr-4">
           <div className="flex items-center justify-end gap-2">
             {p.enabled ? <Tag tone="good">enabled</Tag> : <Tag tone="critical">disabled</Tag>}
@@ -168,7 +194,7 @@ function ParticipantRow({ p, self }: { p: Participant; self: boolean }) {
       </tr>
       {open && (
         <tr className="border-b border-rule">
-          <td colSpan={8} className="px-6 max-sm:px-4 pb-3">
+          <td colSpan={9} className="px-6 max-sm:px-4 pb-3">
             <ReasonForm label={p.handle} verb={p.enabled ? `Disable @${p.handle}` : `Enable @${p.handle}`} danger={p.enabled} onSubmit={toggle} onCancel={() => setOpen(false)} />
           </td>
         </tr>
@@ -182,6 +208,8 @@ export default function ParticipantsPage() {
   const me = useMe();
   const isAdmin = me?.roles.includes("admin");
   const { data: list, error } = useLiveQuery<Participant[]>(isAdmin ? "/manage/participants" : null);
+  const { data: risks } = useLiveQuery<AgentRiskScore[]>(isAdmin ? "/manage/agents/risk" : null);
+  const riskBy = new Map((risks ?? []).map((r) => [r.handle, r]));
   if (me && !isAdmin) {
     return (
       <>
@@ -204,7 +232,7 @@ export default function ParticipantsPage() {
         {isAdmin && <BrokerCard />}
         {error && <Empty title="Couldn't load participants">{error.message}</Empty>}
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[56rem] text-left text-ui">
+          <table className="w-full min-w-[62rem] text-left text-ui">
             <thead className="label sticky top-0 bg-paper">
               <tr className="border-b border-rule">
                 <th className="px-6 max-sm:px-4 py-2 font-normal">Principal</th>
@@ -214,12 +242,13 @@ export default function ParticipantsPage() {
                 <th className="py-2 pr-4 text-right font-normal">Posts 24h</th>
                 <th className="py-2 pr-4 text-right font-normal">Actions 24h</th>
                 <th className="py-2 pr-4 font-normal">Review</th>
+                <th className="py-2 pr-4 font-normal">Agent risk</th>
                 <th className="py-2 pr-6 max-sm:pr-4 text-right font-normal">Access</th>
               </tr>
             </thead>
             <tbody>
               {list?.map((p) => (
-                <ParticipantRow key={p.id} p={p} self={p.handle === me?.handle} />
+                <ParticipantRow key={p.id} p={p} self={p.handle === me?.handle} risk={riskBy.get(p.handle)} />
               ))}
             </tbody>
           </table>

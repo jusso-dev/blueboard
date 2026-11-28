@@ -410,6 +410,7 @@ function FindingsSection({ watches, initial }: { watches: WatchRow[]; initial?: 
                                 Discuss in #intel
                               </Link>
                             )}
+                            <RunPlaybookButton findingId={f.id} />
                           </div>
                         </div>
                       )}
@@ -477,6 +478,37 @@ function FindingsSection({ watches, initial }: { watches: WatchRow[]; initial?: 
         </div>
       )}
     </section>
+  );
+}
+
+/**
+ * "Run emerging-threat playbook": posts the emerging-threat-detection checklist (intel → exposure → hunt → detection →
+ * human review) as claimable steps in a #intel thread for this finding. No incident is created; running it twice
+ * opens the existing run.
+ */
+function RunPlaybookButton({ findingId }: { findingId: string }) {
+  const navigate = useNavigate();
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const run = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      const r = await api<{ root_message_id: string | null; existing: boolean }>(`/intel/findings/${findingId}/playbook`, { method: "POST", body: "{}" });
+      refreshAll();
+      navigate(`/channels/intel${r.root_message_id ? `#m-${r.root_message_id}` : ""}`);
+    } catch (e) {
+      setErr((e as Error).message);
+      setBusy(false);
+    }
+  };
+  return (
+    <>
+      <Button size="sm" variant="secondary" disabled={busy} onClick={() => void run()} title="Post the emerging-threat-detection checklist in #intel for this finding">
+        Run emerging-threat playbook
+      </Button>
+      {err && <ErrorLine>{err}</ErrorLine>}
+    </>
   );
 }
 

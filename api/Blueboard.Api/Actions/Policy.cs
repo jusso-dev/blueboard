@@ -38,6 +38,35 @@ public sealed record Policy
     public double ExpiryHours { get; init; } = 4;
     public Dictionary<string, double> ExpiryHoursByKind { get; init; } = [];
     public Limits Limits { get; init; } = new();
+    /// <summary>Ceiling for conditional automation of destructive kinds (docs/POLICY.md). Empty by default: nothing destructive runs on its own.</summary>
+    public AutomationPolicy Automation { get; init; } = new();
+
+    private readonly IReadOnlyDictionary<string, ActiveRule>? _rules;
+    /// <summary>
+    /// Conditional rules in force, by kind. For a policy read from a file: the file's rules that fit its ceiling
+    /// (computed on each read, so a <c>with</c> copy never carries a stale set). For the effective policy
+    /// (<see cref="AutomationRules.Merge"/>): file ∩ admin overrides, set explicitly. Not a policy key.
+    /// </summary>
+    [JsonIgnore]
+    public IReadOnlyDictionary<string, ActiveRule> ActiveRules
+    {
+        get => _rules ?? (Automation.Rules.Count == 0 ? NoRules : Catalog.All.Keys
+            .Select(k => (k, r: AutomationRules.Effective(k, this, null).Rule))
+            .Where(x => x.r is not null).ToDictionary(x => x.k, x => new ActiveRule($"{x.k}@file", x.r!)));
+        init => _rules = value;
+    }
+    private static readonly IReadOnlyDictionary<string, ActiveRule> NoRules = new Dictionary<string, ActiveRule>();
+    /// <summary>Set while an admin has paused automation: every automatic decision becomes a request for approval. Not a policy key.</summary>
+    [JsonIgnore] public AutomationPause? Pause { get; init; }
+    /// <summary>The policy.json this effective policy was built from (the ceiling for overrides). Not a policy key.</summary>
+    [JsonIgnore] public Policy? FileCeiling { get; init; }
+    /// <summary>
+    /// protected_users entries that are Entra object ids, resolved to their UPN through Graph (ProtectedUserResolver), so a
+    /// protected person listed by object id is matched on Okta kinds and outside the evidence too. Not a policy key.
+    /// </summary>
+    [JsonIgnore] public IReadOnlyDictionary<string, string> ResolvedProtectedUsers { get; init; } = new Dictionary<string, string>();
+    /// <summary>protected_users object ids the board could not resolve to a UPN just now. Not a policy key.</summary>
+    [JsonIgnore] public IReadOnlyList<string> UnresolvedProtectedUsers { get; init; } = [];
 
     public TimeSpan ExpiryFor(string kind) => TimeSpan.FromHours(ExpiryHoursByKind.TryGetValue(kind, out var h) ? h : ExpiryHours);
     public int ApprovalsFor(string kind) => RequireTwoApprovers.Contains(kind) ? 2 : 1;
@@ -97,6 +126,7 @@ public sealed record Policy
         foreach (var (k, h) in ExpiryHoursByKind.Append(new("default", ExpiryHours)))
             if (h is not (> 0 and <= 720)) errors.Add($"expiry hours for {k} must be more than 0 and at most 720");
         errors.AddRange(Limits.Validate());
+        errors.AddRange(Automation.Validate(this));
         return errors;
     }
 }
@@ -166,44 +196,73 @@ public sealed record Limits
 }
 
 public enum Outcome { Reject, NeedsApproval, Auto }
-public sealed record PolicyDecision(Outcome Outcome, IReadOnlyList<string> Notes);
+/// <param name="AutoRule">Set when a destructive kind runs on its own under a conditional automation rule (its id).</param>
+public sealed record PolicyDecision(Outcome Outcome, IReadOnlyList<string> Notes, string? AutoRule = null);
 /// <param name="MaliciousIocs">"kind:value" (normalised) of every indicator marked malicious in an ioc message on the incident.</param>
-public sealed record IncidentContext(string GraphId, JsonElement Data, IReadOnlySet<string>? MaliciousIocs = null);
+/// <param name="IdentityLinks">
+/// Outside-IdP identities (Okta) that share a name with someone in the evidence or the request: each is every name one
+/// outside user is known by (id, login, emails). PolicyEngine links them to the Entra aliases (UPN ↔ object id).
+/// </param>
+public sealed record IncidentContext(string GraphId, JsonElement Data, IReadOnlySet<string>? MaliciousIocs = null,
+    IReadOnlyList<IReadOnlyList<string>>? IdentityLinks = null);
 
 /// <summary>
 /// What the board would do with a request, before anything is written. The broker's request path, the preview
 /// endpoint and the policy simulator all build this the same way (<see cref="PolicyEngine.Assess"/>).
 /// </summary>
 public sealed record Assessment(string Kind, string Title, bool Destructive, Outcome Outcome, string Status, int ApprovalsRequired,
-    bool ConfirmTarget, double ExpiresInHours, IReadOnlyList<string> Notes, string Summary, string Describe);
+    bool ConfirmTarget, double ExpiresInHours, IReadOnlyList<string> Notes, string Summary, string Describe,
+    string? AutoRule = null, int? RevertAfterMinutes = null);
 
 public static class PolicyEngine
 {
     /// <summary>Policy decision plus everything that follows from it (status, approvals, expiry). One code path for request, preview and simulate.</summary>
-    public static Assessment Assess(ActionDef def, JsonObject p, IncidentContext? incident, Policy policy)
+    /// <param name="automationFacts">Verdicts and auto-run counts for conditional rules (WS1); null when the kind has no rule in force.</param>
+    /// <param name="revertAfterMinutes">The request's own revert_after_minutes, if any.</param>
+    /// <param name="actionFacts">What the kind's resolver looked up (Resolvers.cs): device aliases, back-test binding, rule to disable.</param>
+    public static Assessment Assess(ActionDef def, JsonObject p, IncidentContext? incident, Policy policy, AutomationFacts? automationFacts = null, int? revertAfterMinutes = null,
+        ActionFacts? actionFacts = null)
     {
-        var d = Evaluate(def, p, incident, policy);
+        var d = Evaluate(def, p, incident, policy, automationFacts, actionFacts);
         var status = d.Outcome switch { Outcome.Reject => "rejected", Outcome.Auto => "approved", _ => "pending_approval" };
         var approvals = d.Outcome == Outcome.NeedsApproval ? policy.ApprovalsFor(def.Kind) : 0;
         var summary = d.Outcome switch
         {
             Outcome.Reject => $"Will be rejected: {d.Notes[0]}",
+            Outcome.Auto when d.AutoRule is not null => $"Runs automatically under rule {d.AutoRule}",
             Outcome.Auto => "Runs automatically",
             _ when approvals == 2 => "Needs two approvals",
             _ => "Needs approval",
         };
         return new Assessment(def.Kind, def.Title, def.Destructive, d.Outcome, status, approvals,
-            d.Outcome == Outcome.NeedsApproval && policy.ConfirmsTarget(def.Kind), policy.ExpiryFor(def.Kind).TotalHours, d.Notes, summary, def.Describe(p));
+            d.Outcome == Outcome.NeedsApproval && policy.ConfirmsTarget(def.Kind), policy.ExpiryFor(def.Kind).TotalHours, d.Notes, summary, def.Describe(p),
+            d.AutoRule, d.Outcome == Outcome.Reject ? null : RevertAfter(def.Kind, policy, d.AutoRule, revertAfterMinutes));
+    }
+
+    /// <summary>
+    /// Minutes after success at which the board undoes the action: the request's own value, capped by the rule's when it
+    /// ran under one (an automatic run always reverts). Null when nothing is scheduled.
+    /// </summary>
+    public static int? RevertAfter(string kind, Policy policy, string? autoRule, int? requested)
+    {
+        if (!Reversal.IsReversible(kind)) return null;
+        var rule = autoRule is not null && policy.ActiveRules.TryGetValue(kind, out var r) ? r.Spec.RevertAfterMinutes : null;
+        return (rule, requested) switch
+        {
+            ({ } a, { } b) => Math.Min(a, b),
+            ({ } a, null) => a,
+            (null, var b) => b,
+        };
     }
 
     /// <summary>
     /// Names an approver may type to confirm the target: every target and every alias the incident evidence gives it
     /// (for a device: MDE id, DNS name and host name). The first is the friendliest to show as the prompt.
     /// </summary>
-    public static IReadOnlyList<string> ConfirmNames(ActionDef def, JsonObject p, IncidentContext? incident)
+    public static IReadOnlyList<string> ConfirmNames(ActionDef def, JsonObject p, IncidentContext? incident, ActionFacts? actionFacts = null)
     {
         var targets = def.TargetsOf(p);
-        var (users, devices, apps) = Aliases(incident is null ? null : Entities.Extract(incident.Data));
+        var (users, devices, apps, _) = Aliases(incident is null ? null : Entities.Extract(incident.Data), incident?.IdentityLinks, actionFacts);
         var names = new List<string>();
         foreach (var d in targets.Devices)
         {
@@ -217,28 +276,58 @@ public static class PolicyEngine
         return names.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
     }
 
-    public static PolicyDecision Evaluate(ActionDef def, JsonObject p, IncidentContext? incident, Policy policy)
+    /// <summary>
+    /// The one policy decision for request, preview, simulate, approval, run-now and execution. Two kinds of looked-up
+    /// facts feed it: <paramref name="automationFacts"/> (verdicts and auto-run counts, only for conditional rules) and
+    /// <paramref name="actionFacts"/> (the kind's own resolver: device aliases, back-test binding, the rule a disable
+    /// refers to).
+    /// </summary>
+    public static PolicyDecision Evaluate(ActionDef def, JsonObject p, IncidentContext? incident, Policy policy,
+        AutomationFacts? automationFacts = null, ActionFacts? actionFacts = null)
     {
         var notes = new List<string>();
         if (policy.Disabled.Contains(def.Kind)) return new(Outcome.Reject, [$"{def.Kind} is disabled by policy"]);
+        // A kind's own precondition (Resolvers.cs), e.g. create_detection_rule's back-test binding.
+        if (actionFacts?.Reject is { } refused) return new(Outcome.Reject, [refused]);
 
         var targets = def.TargetsOf(p);
-        var pu = Lower(policy.ProtectedUsers);
+        // A protected person listed by Entra object id also matches by the UPN the board resolved for it.
+        var pu = Lower(policy.ProtectedUsers.Concat(policy.ResolvedProtectedUsers.Values));
         var pd = Lower(policy.ProtectedDevices);
         var pa = Lower(policy.ProtectedApps);
         var pi = Lower(policy.ProtectedIndicators);
         var entities = incident is null ? null : Entities.Extract(incident.Data);
-        var (userAliases, deviceAliases, appAliases) = Aliases(entities);
+        var (userAliases, deviceAliases, appAliases, conflicts) = Aliases(entities, incident?.IdentityLinks, actionFacts, policy);
 
         foreach (var u in targets.Users)
         {
-            if (NamesFor(userAliases, u).Any(pu.Contains)) return new(Outcome.Reject, [$"{u} is a protected user"]);
+            var names = NamesFor(userAliases, u).ToHashSet();
+            if (names.Any(pu.Contains)) return new(Outcome.Reject, [$"{u} is a protected user"]);
             if (pu.Count > 0 && !userAliases.ContainsKey(u.ToLowerInvariant()) && !u.Contains('@'))
                 notes.Add($"{u} could not be matched to a UPN, so the protected-user list was checked by object id only");
+            // An outside identity that would join two different Entra people is never merged silently (it could make
+            // anyone "protected", or lend someone else's evidence): the approver sees it and decides.
+            foreach (var c in conflicts.Where(c => c.Names.Overlaps(names)))
+                notes.Add($"identity link conflict: Okta user {c.OktaId} is linked to {string.Join(" and ", c.Entra)}, which are different Entra users, so the link was not used; check who this is before approving");
+            foreach (var oid in policy.UnresolvedProtectedUsers.Where(o => !names.Contains(o.ToLowerInvariant())))
+                notes.Add($"protected user {oid} (an Entra object id) could not be resolved to a UPN just now, so {u} was not checked against it by name");
         }
+        // Okta kinds (cross-IdP): the Okta identity links that resolve an Okta id to its login and emails (and so to a
+        // protected UPN) are loaded with the incident, so these kinds must be linked to one (fail closed).
+        if (Catalog.OktaKinds.Contains(def.Kind) && incident is null)
+            return new(Outcome.Reject, [$"{def.Kind} must be linked to an incident so the Okta user can be checked against protected users"]);
         foreach (var d in targets.Devices)
         {
             if (NamesFor(deviceAliases, d).Any(pd.Contains)) return new(Outcome.Reject, [$"{d} is a protected device"]);
+            // Intune reports short device names (dc01) while protected lists usually hold FQDNs: for names the board
+            // resolved itself, a protected FQDN also matches by its host label. This only ever adds rejections.
+            if (actionFacts?.DeviceAliases?.ContainsKey(d.ToLowerInvariant()) == true && NamesFor(deviceAliases, d).Any(n => !n.Contains('.') && pd.Any(x => x.Split('.')[0] == n)))
+                return new(Outcome.Reject, [$"{d} is a protected device (matched by host name)"]);
+            if (actionFacts?.UnresolvedDevices?.Contains(d, StringComparer.OrdinalIgnoreCase) == true)
+            {
+                notes.Add($"{d} could not be resolved to its other device names, so the protected-device list was checked by id only");
+                continue;
+            }
             if (pd.Count > 0 && !deviceAliases.ContainsKey(d.ToLowerInvariant()))
                 notes.Add($"{d} is not in the incident evidence, so its host name is unknown and the protected-device list was checked by id only");
         }
@@ -258,7 +347,11 @@ public static class PolicyEngine
             else if (policy.RequireTargetInIncident && all.Count > 0)
             {
                 var keys = entities!.Keys();
-                var missing = all.Where(t => !keys.Contains(t)).ToList();
+                // A target counts as in the evidence under any of its names: an Okta id whose login or email is a UPN
+                // in evidence, or an Intune device id whose MDE id is in the alert.
+                var missing = all.Where(t => !keys.Contains(t)
+                    && !(Catalog.OktaKinds.Contains(def.Kind) && NamesFor(userAliases, t).Any(keys.Contains))
+                    && !(targets.Devices.Contains(t) && NamesFor(deviceAliases, t).Any(keys.Contains))).ToList();
                 if (missing.Count > 0) notes.Add($"not in incident {incident.GraphId} evidence: {string.Join(", ", missing)}");
             }
         }
@@ -279,9 +372,30 @@ public static class PolicyEngine
         }
 
         // Destructive kinds always wait for a person, whatever auto_approve says; two-approver kinds never run on their own.
+        // The resolver's notes (back-test volumes, resolved update) are for the approver; they don't block automation.
+        var resolverNotes = actionFacts?.Notes ?? [];
+        // NeverAuto kinds (create_detection_rule) always wait for a person: not via auto_approve, not via a rule.
+        if (Catalog.NeverAuto.Contains(def.Kind)) return new(Outcome.NeedsApproval, [.. notes, .. resolverNotes]);
         var auto = !def.Destructive && policy.AutoApprove.Contains(def.Kind) && !policy.RequireTwoApprovers.Contains(def.Kind) && notes.Count == 0;
-        return new(auto ? Outcome.Auto : Outcome.NeedsApproval, notes);
+        if (auto && policy.Pause is { Paused: true } pause)
+            return new(Outcome.NeedsApproval, [PausedNote(pause), .. resolverNotes]);
+        if (auto) return new(Outcome.Auto, [.. notes, .. resolverNotes]);
+
+        // Conditional automation: a destructive kind may run on its own only under a rule in force (within the
+        // policy.json ceiling) and only when every condition holds. Anything short of that is the normal approval path.
+        if (def.Destructive && policy.ActiveRules.TryGetValue(def.Kind, out var rule) && !policy.RequireTwoApprovers.Contains(def.Kind) && !policy.Disabled.Contains(def.Kind))
+        {
+            if (policy.Pause is { Paused: true } paused) return new(Outcome.NeedsApproval, [.. notes, PausedNote(paused), .. resolverNotes]);
+            var unmet = AutomationRules.Unmet(def, p, incident, rule.Spec, automationFacts);
+            if (notes.Count > 0) unmet.Insert(0, "the policy notes above need a person to look");
+            if (unmet.Count == 0) return new(Outcome.Auto, [.. notes, .. resolverNotes], rule.Id);
+            return new(Outcome.NeedsApproval, [.. notes, .. unmet.Select(u => $"automation rule {rule.Id} not applied: {u}"), .. resolverNotes]);
+        }
+        return new(Outcome.NeedsApproval, [.. notes, .. resolverNotes]);
     }
+
+    private static string PausedNote(AutomationPause p) =>
+        $"automation is paused{(p.By is null ? "" : $" by @{p.By}")}, so this waits for a person{(p.Reason is { Length: > 0 } r ? $" ({r})" : "")}";
 
     private static HashSet<string> Lower(IEnumerable<string> xs) => xs.Select(x => x.ToLowerInvariant().TrimEnd('.')).ToHashSet();
 
@@ -327,13 +441,23 @@ public static class PolicyEngine
         return u.IdnHost.Trim('[', ']').ToLowerInvariant().TrimEnd('.');
     }
 
-    /// <summary>Every name a target is known by in the evidence: device MDE id ↔ DNS name ↔ host name; user oid ↔ UPN; app object id ↔ app id ↔ display name.</summary>
-    private static (Dictionary<string, HashSet<string>> Users, Dictionary<string, HashSet<string>> Devices, Dictionary<string, HashSet<string>> Apps) Aliases(IncidentEntities? e)
+    /// <summary>
+    /// Every name a target is known by: names the board resolved itself for this action (Intune managed device id ↔
+    /// Entra device id ↔ MDE id ↔ name), then the evidence's: device MDE id ↔ DNS name ↔ host name; user oid ↔ UPN; app
+    /// object id ↔ app id ↔ display name. Outside-IdP identities (Okta id ↔ login ↔ emails) are merged into the user
+    /// groups transitively, so an Okta user whose login or email equals an Entra UPN shares that UPN's object id too.
+    /// </summary>
+    /// <summary>An outside identity that would have joined two different Entra users: not merged, shown to the approver.</summary>
+    private sealed record LinkConflict(string OktaId, IReadOnlyList<string> Entra, HashSet<string> Names);
+
+    private static (Dictionary<string, HashSet<string>> Users, Dictionary<string, HashSet<string>> Devices, Dictionary<string, HashSet<string>> Apps, List<LinkConflict> Conflicts) Aliases(
+        IncidentEntities? e, IReadOnlyList<IReadOnlyList<string>>? identityLinks = null, ActionFacts? facts = null, Policy? policy = null)
     {
         var users = new Dictionary<string, HashSet<string>>();
         var devices = new Dictionary<string, HashSet<string>>();
         var apps = new Dictionary<string, HashSet<string>>();
-        if (e is null) return (users, devices, apps);
+        // Names the board looked up itself (Intune managed device id ↔ Entra device id ↔ MDE id ↔ name), then the evidence's.
+        foreach (var (target, names) in facts?.DeviceAliases ?? new Dictionary<string, string[]>()) Link(devices, [target, .. names]);
         static void Link(Dictionary<string, HashSet<string>> map, IEnumerable<string?> names)
         {
             var all = names.OfType<string>().Where(n => n.Length > 0).Select(n => n.ToLowerInvariant()).ToList();
@@ -343,11 +467,64 @@ public static class PolicyEngine
                 set.UnionWith(all);
             }
         }
-        foreach (var d in e.Devices) Link(devices, [d.MdeDeviceId, d.Name, d.Name?.Split('.')[0]]);
-        foreach (var u in e.Users) Link(users, [u.AadUserId, u.Upn]);
-        foreach (var a in e.CloudApps) Link(apps, [a.ObjectId, a.AppId, a.DisplayName]);
-        return (users, devices, apps);
+        // Outside identities merge with every group a name already belongs to, so links chain
+        // (Okta id ↔ email = UPN ↔ Entra oid) and every member sees the whole group.
+        static HashSet<string> Merged(Dictionary<string, HashSet<string>> map, IEnumerable<string?> names)
+        {
+            var merged = names.OfType<string>().Where(n => n.Length > 0).Select(n => n.ToLowerInvariant()).ToHashSet();
+            foreach (var n in merged.ToList()) if (map.TryGetValue(n, out var existing)) merged.UnionWith(existing);
+            return merged;
+        }
+        if (e is not null)
+        {
+            foreach (var d in e.Devices)
+            {
+                // Linking unions alias sets, so an MDE id the resolver tied to an Intune id picks up the evidence's names too.
+                var known = new[] { d.MdeDeviceId, d.Name }.OfType<string>().SelectMany(n => devices.TryGetValue(n.ToLowerInvariant(), out var s) ? s : []).ToList();
+                Link(devices, [d.MdeDeviceId, d.Name, d.Name?.Split('.')[0], .. known]);
+            }
+            foreach (var u in e.Users) Link(users, [u.AadUserId, u.Upn]);
+            foreach (var a in e.CloudApps) Link(apps, [a.ObjectId, a.AppId, a.DisplayName]);
+        }
+        // Distinct Entra people the board knows of: each evidence user (object id ↔ UPN), and "protected" as one class
+        // (every protected_users name, the UPNs resolved for protected object ids, and any evidence user carrying one).
+        // An outside link may tie an Okta user to one of them, never two: that would make an ordinary user "protected"
+        // through someone else's name (a containment DoS), or lend them another person's evidence. Such a link is
+        // recorded as a conflict and not merged. Joining protected names to each other is harmless (protected either way).
+        const int Protected = 0;
+        var protectedNames = (policy?.ProtectedUsers ?? []).Concat(policy?.ResolvedProtectedUsers.Keys ?? []).Concat(policy?.ResolvedProtectedUsers.Values ?? [])
+            .Select(n => n.Trim().ToLowerInvariant().TrimEnd('.')).ToHashSet();
+        var anchors = new Dictionary<string, int>();
+        foreach (var n in protectedNames) anchors[n] = Protected;
+        foreach (var u in e?.Users ?? [])
+        {
+            var names = new[] { u.AadUserId, u.Upn }.OfType<string>().Where(n => n.Length > 0).Select(n => n.ToLowerInvariant()).ToList();
+            var id = names.Any(protectedNames.Contains) ? Protected
+                : names.Select(n => anchors.TryGetValue(n, out var a) ? a : -1).FirstOrDefault(a => a >= 0, anchors.Values.DefaultIfEmpty(0).Max() + 1);
+            foreach (var n in names) anchors[n] = id;
+        }
+
+        var conflicts = new List<LinkConflict>();
+        foreach (var link in identityLinks ?? [])
+        {
+            var merged = Merged(users, link);
+            var touched = merged.Where(anchors.ContainsKey).GroupBy(n => anchors[n]).ToList();
+            if (touched.Count > 1)
+            {
+                conflicts.Add(new LinkConflict(link[0],
+                    touched.Select(g => g.Key == Protected ? "a protected user" : g.OrderByDescending(n => n.Contains('@')).ThenBy(n => n, StringComparer.Ordinal).First())
+                        .Order(StringComparer.Ordinal).ToList(),
+                    link.Where(n => n.Length > 0).Select(n => n.ToLowerInvariant()).ToHashSet()));
+                continue;
+            }
+            foreach (var n in merged) users[n] = merged;
+        }
+        return (users, devices, apps, conflicts);
     }
+
+    /// <summary>The user aliases (lower case) the policy check would use for <paramref name="target"/>. For tests and the preview.</summary>
+    internal static IReadOnlyCollection<string> UserAliases(string target, IncidentContext? incident, Policy? policy = null) =>
+        NamesFor(Aliases(incident is null ? null : Entities.Extract(incident.Data), incident?.IdentityLinks, null, policy).Users, target).ToHashSet();
 
     private static IEnumerable<string> NamesFor(Dictionary<string, HashSet<string>> map, string t) =>
         map.TryGetValue(t.ToLowerInvariant(), out var names) ? names : [t.ToLowerInvariant()];

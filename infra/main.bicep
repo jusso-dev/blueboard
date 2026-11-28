@@ -103,6 +103,57 @@ param sentinelWorkspaceResourceId string = ''
 @description('publish_ti_indicator: assign Microsoft Sentinel Contributor on that workspace to the board identity. Needs Owner or User Access Administrator on the workspace.')
 param assignSentinelContributor bool = false
 
+// Third-party connectors (docs/INTEGRATIONS.md § Okta, § Ticketing). All off unless the base URL is set. Secrets are secure
+// params (never in deployment history); in the production profile they are Key Vault secrets read through Key Vault
+// references. The Okta private_key_jwt signing key is a Key Vault KEY (not exportable), created out of band: see SOP-15.
+@description('Okta org URL, e.g. https://contoso.okta.com (or your Okta custom domain). Empty: Okta off.')
+param oktaOrgUrl string = ''
+@description('Okta custom domain host (e.g. login.contoso.com) when oktaOrgUrl uses it.')
+param oktaCustomDomain string = ''
+@description('private_key_jwt (preferred: Key Vault signs, nothing exportable) or ssws (API token; less preferred).')
+@allowed(['private_key_jwt', 'ssws'])
+param oktaAuthMode string = 'private_key_jwt'
+@description('Client id of the Okta API service app (private_key_jwt).')
+param oktaClientId string = ''
+@description('Key Vault key id of the RSA signing key whose public JWK is registered on the Okta service app (private_key_jwt).')
+param oktaSigningKeyUrl string = ''
+@description('kid of that public key as registered in Okta (optional).')
+param oktaJwkKid string = ''
+@secure()
+@description('SSWS API token (only with oktaAuthMode=ssws).')
+param oktaApiToken string = ''
+@description('ServiceNow instance URL, e.g. https://contoso.service-now.com. Empty: ServiceNow off.')
+param serviceNowInstanceUrl string = ''
+@description('ServiceNow OAuth client id (client credentials grant).')
+param serviceNowClientId string = ''
+@secure()
+@description('ServiceNow OAuth client secret.')
+param serviceNowClientSecret string = ''
+@description('ServiceNow table tickets are created in (incident, or sn_si_incident for Security Incident Response).')
+param serviceNowTable string = 'incident'
+@description('ServiceNow assignment group sys_id or name (optional).')
+param serviceNowAssignmentGroup string = ''
+@secure()
+@description('Shared secret (32+ characters) that signs inbound ServiceNow updates. Empty: inbound off.')
+param serviceNowWebhookSecret string = ''
+@description('Jira Cloud site, e.g. https://contoso.atlassian.net. Empty: Jira off.')
+param jiraBaseUrl string = ''
+@description('Jira integration account email.')
+param jiraEmail string = ''
+@secure()
+@description('Jira API token of the integration account.')
+param jiraApiToken string = ''
+@description('Jira project key tickets are created in, e.g. SOC.')
+param jiraProjectKey string = ''
+@secure()
+@description('Shared secret (32+ characters) that signs inbound Jira updates. Empty: inbound off.')
+param jiraWebhookSecret string = ''
+@description('Lowest incident severity that opens a ticket automatically: off, informational, low, medium or high.')
+param ticketMinSeverity string = 'high'
+@description('Also open a ticket when a playbook is attached / when a containment action is approved.')
+param ticketOnPlaybook bool = false
+param ticketOnActionApproved bool = false
+
 @description('Data retention in days: 0 keeps everything (default); otherwise at least 30. A daily job removes resolved incidents, threads and finished actions older than this; audit_log is never removed (docs/assurance/DATA-FLOWS.md).')
 param retentionDays int = 0
 @description('Disable people and agents not seen for this many days: 0 is off (default); otherwise at least 30.')
@@ -155,6 +206,7 @@ var roles = {
   storageTableDataContributor: '0a9a7e1f-b9d0-4cc4-a60d-0319b160aaa3'
   monitoringMetricsPublisher: '3913510d-42f4-4e42-8a64-420c390055eb'
   keyVaultSecretsUser: '4633458b-17de-408a-b874-0445c86b69e6'
+  keyVaultCryptoUser: '12338af0-0e69-4776-bea7-57ae8d297424'
   sentinelContributor: 'ab8e14d6-4a74-4f29-9ba8-549422addade'
 }
 // /subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.OperationalInsights/workspaces/{name}; a placeholder when unset (never deployed).
@@ -399,6 +451,32 @@ var tiSettings = {
   TI_MSTI_ENABLED: string(tiMstiEnabled)
   NVD_API_KEY: isProd && !empty(nvdApiKey) ? '@Microsoft.KeyVault(VaultName=${vaultName};SecretName=nvd-api-key)' : nvdApiKey
   SENTINEL_WORKSPACE_ID: empty(sentinelWorkspaceResourceId) ? '' : sentinelWorkspace!.properties.customerId
+  SENTINEL_WORKSPACE_RESOURCE_ID: sentinelWorkspaceResourceId
+}
+// Connector settings. Secrets: Key Vault references in production, secure params in mvp. Empty values mean off.
+var kvRef = 'VaultName=${vaultName};SecretName='
+var connectorSettings = {
+  OKTA_ORG_URL: oktaOrgUrl
+  OKTA_CUSTOM_DOMAIN: oktaCustomDomain
+  OKTA_AUTH_MODE: oktaAuthMode
+  OKTA_CLIENT_ID: oktaClientId
+  OKTA_SIGNING_KEY_URL: oktaSigningKeyUrl
+  OKTA_JWK_KID: oktaJwkKid
+  OKTA_API_TOKEN: isProd && !empty(oktaApiToken) ? '@Microsoft.KeyVault(${kvRef}okta-api-token)' : oktaApiToken
+  SERVICENOW_INSTANCE_URL: serviceNowInstanceUrl
+  SERVICENOW_CLIENT_ID: serviceNowClientId
+  SERVICENOW_CLIENT_SECRET: isProd && !empty(serviceNowClientSecret) ? '@Microsoft.KeyVault(${kvRef}servicenow-client-secret)' : serviceNowClientSecret
+  SERVICENOW_TABLE: serviceNowTable
+  SERVICENOW_ASSIGNMENT_GROUP: serviceNowAssignmentGroup
+  SERVICENOW_WEBHOOK_SECRET: isProd && !empty(serviceNowWebhookSecret) ? '@Microsoft.KeyVault(${kvRef}servicenow-webhook-secret)' : serviceNowWebhookSecret
+  JIRA_BASE_URL: jiraBaseUrl
+  JIRA_EMAIL: jiraEmail
+  JIRA_API_TOKEN: isProd && !empty(jiraApiToken) ? '@Microsoft.KeyVault(${kvRef}jira-api-token)' : jiraApiToken
+  JIRA_PROJECT_KEY: jiraProjectKey
+  JIRA_WEBHOOK_SECRET: isProd && !empty(jiraWebhookSecret) ? '@Microsoft.KeyVault(${kvRef}jira-webhook-secret)' : jiraWebhookSecret
+  TICKET_MIN_SEVERITY: ticketMinSeverity
+  TICKET_ON_PLAYBOOK: string(ticketOnPlaybook)
+  TICKET_ON_ACTION_APPROVED: string(ticketOnActionApproved)
 }
 var notifySettings = union(notifySecretSettings, {
   NOTIFY_ALLOWED_HOSTS: notifyAllowedHosts
@@ -456,7 +534,7 @@ resource apiSettings 'Microsoft.Web/sites/config@2024-04-01' = {
     BOARD_PROFILE: profile
     BOARD_EDGE: frontDoor ? 'front_door_waf' : 'none'
     BOARD_WAF_MODE: frontDoor ? wafMode : 'none'
-  }, dbSettings, productionSettings, notifySettings, tiSettings)
+  }, dbSettings, productionSettings, notifySettings, tiSettings, connectorSettings)
   dependsOn: isProd ? [kvSecretsRole, kvPolicySecret] : []
 }
 
@@ -605,6 +683,48 @@ resource kvSigningKeySecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = if 
   parent: kv
   name: 'webhook-signing-key'
   properties: { value: webhookSigningKey }
+}
+
+resource kvOktaToken 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = if (isProd && !empty(oktaApiToken)) {
+  parent: kv
+  name: 'okta-api-token'
+  properties: { value: oktaApiToken }
+}
+
+resource kvServiceNowSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = if (isProd && !empty(serviceNowClientSecret)) {
+  parent: kv
+  name: 'servicenow-client-secret'
+  properties: { value: serviceNowClientSecret }
+}
+
+resource kvServiceNowHook 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = if (isProd && !empty(serviceNowWebhookSecret)) {
+  parent: kv
+  name: 'servicenow-webhook-secret'
+  properties: { value: serviceNowWebhookSecret }
+}
+
+resource kvJiraToken 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = if (isProd && !empty(jiraApiToken)) {
+  parent: kv
+  name: 'jira-api-token'
+  properties: { value: jiraApiToken }
+}
+
+resource kvJiraHook 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = if (isProd && !empty(jiraWebhookSecret)) {
+  parent: kv
+  name: 'jira-webhook-secret'
+  properties: { value: jiraWebhookSecret }
+}
+
+// Okta private_key_jwt: the board identity may only sign with keys in this vault (Key Vault Crypto User). The key
+// itself is created by an operator (SOP-15) so it never passes through deployment history.
+resource kvCryptoRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (isProd && !empty(oktaOrgUrl) && oktaAuthMode == 'private_key_jwt') {
+  name: guid(resourceGroup().id, vaultName, idApi.id, roles.keyVaultCryptoUser)
+  scope: kv
+  properties: {
+    principalId: idApi.properties.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roles.keyVaultCryptoUser)
+  }
 }
 
 resource kvSecretsRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (isProd) {

@@ -1,0 +1,16 @@
+{
+  "_comment": "Microsoft Perception MCP (preview) for read-only triage and investigation, blueboard for claims, approvals and audit. Perception's URL and scopes are from Microsoft Learn (agentic-security-mcp-connectors, Nov 2026); confirm them in your tenant. Perception authenticates with an Entra app registration (delegated Security Copilot API permissions Perception.Read.All, Perception.Operate.All, Perception.Manage.All) through your MCP client's OAuth flow, not a static bearer token: configure it as an OAuth connector in Claude or ChatGPT, or let your client discover OAuth. blueboard takes an Entra token for api://blueboard-<env>. See docs/INTEGRATIONS.md#microsoft-perception-mcp-preview.",
+  "mcpServers": {
+    "blueboard": {
+      "type": "http",
+      "url": "https://<your-blueboard-api>.azurewebsites.net/runtime/webhooks/mcp",
+      "headers": {
+        "Authorization": "Bearer ${BLUEBOARD_ENTRA_TOKEN}"
+      }
+    },
+    "perception": {
+      "type": "http",
+      "url": "https://perception.microsoft.com/mcp"
+    }
+  }
+}
